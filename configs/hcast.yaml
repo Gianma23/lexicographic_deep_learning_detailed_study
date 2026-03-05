@@ -1,0 +1,56 @@
+﻿model:
+  name: hcast
+  variant: cast_small
+  hidden_dim: 512      # fallback-only when timm stack unavailable
+  dropout: 0.2         # fallback-only when timm stack unavailable
+
+dataset:
+  name: breeds
+  root: ./data/imagenet
+  hierarchy_depth: 2
+  image_size: 224
+  levels: [coarse, species]
+  allow_synthetic_fallback: true
+
+  # If set, this file is loaded from dataset.root
+  taxonomy_file: null
+
+  # Unified JSON annotations (optional)
+  annotations:
+    train: train.json
+    val: val.json
+    test: test.json
+
+  # H-CAST breeds defaults (used when annotations are missing)
+  breeds_sort: entity13
+  breeds_train_source: true
+
+dataloader:
+  batch_size: 16
+  num_workers: 2
+  pin_memory: true
+
+train:
+  epochs: 2
+  seed: 42
+  device: cuda
+  amp: true
+  resume: ""
+  output_dir: ./outputs/hcast
+
+optim:
+  name: adamw
+  lr: 0.0003
+  weight_decay: 0.0001
+
+scheduler:
+  name: cosine
+
+loss:
+  beta_hv: 0.1
+  alpha_tree_kl: 0.1
+  globalkl: true
+  gk_weight: 0.2
+
+runtime:
+  deterministic: true

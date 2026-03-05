@@ -1,0 +1,66 @@
+﻿model:
+  name: ht_capsnet
+  caps_dim: 16
+  secondary_dims: [16, 16, 16]
+  routing_iters: 3
+
+  # Backbone (PyTorch translation of upstream custom blocks)
+  num_blocks: 4
+  initial_filters: 64
+  filter_increment: 2
+
+  # Taxonomy-guided routing controls
+  taxonomy_temperature: 5.0
+  mask_threshold_high: 0.9
+  mask_threshold_low: 0.1
+  mask_temperature: 0.5
+  mask_center: 0.5
+
+  # Cross-capsule attention
+  attn_heads: 4
+  attn_dropout: 0.0
+
+dataset:
+  name: cub
+  root: ./data/cub
+  hierarchy_depth: 3
+  image_size: 224
+  levels: [order, family, species]
+  allow_synthetic_fallback: true
+  taxonomy_file: null
+
+  annotations:
+    train: train.json
+    val: val.json
+    test: test.json
+
+dataloader:
+  batch_size: 16
+  num_workers: 2
+  pin_memory: true
+
+train:
+  epochs: 2
+  seed: 42
+  device: cuda
+  amp: true
+  resume: ""
+  output_dir: ./outputs/ht_capsnet
+
+optim:
+  name: adamw
+  lr: 0.0003
+  weight_decay: 0.0001
+
+scheduler:
+  name: cosine
+
+loss:
+  margin_m_pos: 0.9
+  margin_m_neg: 0.1
+  lambda_downweight: 0.5
+  hier_weight: 0.2
+  level_weights: [0.2, 0.3, 0.5]
+
+runtime:
+  deterministic: true

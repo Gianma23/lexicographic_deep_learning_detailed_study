@@ -1,0 +1,9 @@
+﻿torch>=2.2.0
+torchvision>=0.17.0
+omegaconf>=2.3.0
+pillow>=10.0.0
+numpy>=1.26.0
+PyYAML>=6.0.0
+timm>=0.9.0
+# Optional for exact H-CAST graph pooling FPS acceleration:
+# dgl>=1.1.0
