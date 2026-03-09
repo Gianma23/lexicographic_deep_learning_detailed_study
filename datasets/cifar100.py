@@ -1,0 +1,102 @@
+﻿import warnings
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from PIL import Image
+from torchvision.datasets import CIFAR100
+
+from .base import (
+    BaseHierDataset,
+    resolve_split_seed,
+    resolve_val_split_ratio,
+    stratified_train_val_indices,
+    taxonomy_from_parent_of,
+)
+
+# Canonical CIFAR-100 fine->coarse mapping aligned with torchvision fine-label order.
+_FINE_TO_COARSE = [
+    4, 1, 14, 8, 0, 6, 7, 7, 18, 3,
+    3, 14, 9, 18, 7, 11, 3, 9, 7, 11,
+    6, 11, 5, 10, 7, 6, 13, 15, 3, 15,
+    0, 11, 1, 10, 12, 14, 16, 9, 11, 5,
+    5, 19, 8, 8, 15, 13, 14, 17, 18, 10,
+    16, 4, 17, 4, 2, 0, 17, 4, 18, 17,
+    10, 3, 2, 12, 12, 16, 12, 1, 9, 19,
+    2, 10, 0, 1, 16, 12, 9, 13, 15, 13,
+    16, 19, 2, 4, 6, 19, 5, 5, 8, 19,
+    18, 1, 2, 15, 6, 0, 17, 8, 14, 13,
+]
+
+
+class CIFAR100Dataset(BaseHierDataset):
+    """CIFAR-100 adapter with canonical 2-level coarse->fine hierarchy."""
+
+    def __init__(self, cfg: Any, split: str, transform=None):
+        self._cifar_images = None
+        self._cifar_targets: List[int] = []
+        super().__init__(cfg=cfg, split=split, transform=transform)
+
+    def load_samples(self) -> List[Dict[str, Any]]:
+        ann_file = self._annotation_file_for_split()
+        if ann_file is not None:
+            return self._read_json_samples(ann_file)
+
+        if len(_FINE_TO_COARSE) != 100:
+            raise RuntimeError("Invalid CIFAR-100 fine->coarse mapping. Expected 100 entries.")
+
+        split_is_train_pool = self.split in {"train", "val"}
+        download = bool(self.cfg.dataset.get("download", False))
+
+        try:
+            dataset = CIFAR100(root=str(self.root), train=split_is_train_pool, download=download)
+        except RuntimeError as exc:
+            warnings.warn(f"Could not load CIFAR-100 from root={self.root}: {exc}", RuntimeWarning)
+            return []
+
+        self._cifar_images = dataset.data
+        self._cifar_targets = [int(x) for x in dataset.targets]
+
+        if split_is_train_pool:
+            train_idx, val_idx = stratified_train_val_indices(
+                self._cifar_targets,
+                val_ratio=resolve_val_split_ratio(self.cfg),
+                seed=resolve_split_seed(self.cfg),
+            )
+            chosen = train_idx if self.split == "train" else val_idx
+        else:
+            chosen = list(range(len(self._cifar_targets)))
+
+        samples: List[Dict[str, Any]] = []
+        for idx in chosen:
+            fine = int(self._cifar_targets[idx])
+            coarse = int(_FINE_TO_COARSE[fine])
+            samples.append(
+                {
+                    "image": int(idx),
+                    "labels": [coarse, fine],
+                    "meta": {
+                        "source": "cifar100_torchvision",
+                        "index": int(idx),
+                        "split": self.split,
+                    },
+                }
+            )
+
+        return samples
+
+    def _load_image(self, image_ref: Optional[Path]):
+        if isinstance(image_ref, int):
+            if self._cifar_images is None:
+                image_size = int(self.cfg.dataset.get("image_size", 32))
+                return Image.new("RGB", (image_size, image_size), color=(127, 127, 127))
+            return Image.fromarray(self._cifar_images[image_ref]).convert("RGB")
+        return super()._load_image(image_ref)
+
+    def load_taxonomy(self):
+        tax = super().load_taxonomy()
+        if tax is not None:
+            return tax
+
+        parent_of = {1: {fine: coarse for fine, coarse in enumerate(_FINE_TO_COARSE)}}
+        levels = list(self.cfg.dataset.get("levels", [])) or ["coarse", "fine"]
+        return taxonomy_from_parent_of(parent_of, levels)

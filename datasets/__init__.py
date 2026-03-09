@@ -6,6 +6,7 @@ from torchvision import transforms
 
 from .aircraft import AircraftDataset
 from .breeds import BreedsDataset
+from .cifar100 import CIFAR100Dataset
 from .cub import CUBDataset
 from .inat import INatDataset
 
@@ -15,6 +16,15 @@ _DATASET_REGISTRY = {
     "cub": CUBDataset,
     "aircraft": AircraftDataset,
     "inat": INatDataset,
+    "cifar100": CIFAR100Dataset,
+}
+
+_DATASET_ALIASES = {
+    "cifar-100": "cifar100",
+    "cub-200-2011": "cub",
+    "fgvc-aircraft": "aircraft",
+    "inat21-mini": "inat",
+    "inat21_mini": "inat",
 }
 
 
@@ -50,9 +60,12 @@ def _collate_fn(batch):
 
 
 def build_dataloader(cfg: Any, split: str):
-    dataset_name = str(cfg.dataset.name).lower()
+    dataset_name_raw = str(cfg.dataset.name).lower()
+    dataset_name = _DATASET_ALIASES.get(dataset_name_raw, dataset_name_raw)
+
     if dataset_name not in _DATASET_REGISTRY:
-        raise ValueError(f"Unsupported dataset '{dataset_name}'. Expected one of {list(_DATASET_REGISTRY)}")
+        supported = sorted(set(_DATASET_REGISTRY.keys()) | set(_DATASET_ALIASES.keys()))
+        raise ValueError(f"Unsupported dataset '{dataset_name_raw}'. Expected one of {supported}")
 
     dataset_cls = _DATASET_REGISTRY[dataset_name]
     dataset = dataset_cls(cfg=cfg, split=split, transform=build_transforms(cfg, split))

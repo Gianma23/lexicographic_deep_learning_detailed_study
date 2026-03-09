@@ -12,6 +12,19 @@ python -m train.train --config configs/hcast.yaml
 python -m train.train --config configs/capsnet.yaml
 ```
 
+Dataset-ready configs:
+
+```bash
+python -m train.train --config configs/cifar100.yaml
+python -m train.train --config configs/cub200.yaml
+python -m train.train --config configs/aircraft.yaml
+python -m train.train --config configs/inat21mini.yaml
+```
+## Setup
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
+```
 ## File Reference
 
 Full file-by-file documentation is available at:
@@ -68,15 +81,62 @@ Each model forward returns:
 Implemented adapters:
 
 - `datasets/breeds.py`
+- `datasets/cifar100.py`
 - `datasets/cub.py`
 - `datasets/aircraft.py`
 - `datasets/inat.py`
 
+Supported dataset names:
+
+- `breeds`
+- `cifar100`, `cifar-100`
+- `cub`, `cub-200-2011`
+- `aircraft`, `fgvc-aircraft`
+- `inat`, `inat21-mini`, `inat21_mini`
+
 Priority order per dataset:
 
 1. Use `dataset.annotations.{train,val,test}` JSON/TXT if present.
-2. Use dataset-specific canonical formats (BREEDS txt, CUB folder, FGVC-Aircraft txt, iNat txt).
+2. Use dataset-specific canonical formats.
 3. If enabled, use synthetic fallback (`dataset.allow_synthetic_fallback: true`) for smoke tests.
+
+### Expected canonical formats
+
+- CIFAR-100:
+  - Loaded via `torchvision.datasets.CIFAR100`.
+  - Canonical hierarchy is 2-level `coarse -> fine` (20/100).
+
+- CUB-200-2011:
+  - Pre-split folders: `root/train/<class>/...` and `root/test/<class>/...`.
+  - Also supported: `root/images_split/{train,test}/...`.
+  - Official raw layout fallback: `images.txt`, `image_class_labels.txt`, `train_test_split.txt`, and `images/` under `root` or `root/CUB_200_2011`.
+
+- FGVC-Aircraft:
+  - Official txt files under `.../data/`:
+    - `images_variant_train.txt`
+    - `images_variant_val.txt`
+    - `images_variant_test.txt`
+  - Fallback: `images_variant_trainval.txt` + deterministic train/val split.
+
+- iNat21-Mini:
+  - Primary list format: `path species family order`.
+  - Expected hierarchy: 3-level `order -> family -> species`.
+  - Auto-detects common split-list names in `dataset.root`, `dataset.root/data`, and `./data`.
+
+### Split fallback policy
+
+If a dataset has no explicit validation split:
+
+- A deterministic stratified validation subset is created from train data.
+- Controls:
+  - `dataset.val_split_ratio` (default: `0.1`)
+  - `dataset.split_seed` (default fallback: `train.seed`)
+
+For iNat test split fallback:
+
+- Use explicit test file if present.
+- Else use val file.
+- Else use the deterministic val subset derived from train/trainval.
 
 ## Taxonomy JSON Schema
 

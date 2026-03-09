@@ -1,6 +1,8 @@
 ﻿import json
+import random
 import warnings
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,6 +33,101 @@ def taxonomy_from_parent_of(parent_of: Optional[Dict[int, Dict[int, int]]], leve
         "levels": levels,
         "parent_of": {int(k): {int(ck): int(pk) for ck, pk in v.items()} for k, v in parent_of.items()},
     }
+
+
+def resolve_split_seed(cfg: Any) -> int:
+    split_seed = cfg.dataset.get("split_seed", None)
+    if split_seed is not None:
+        return int(split_seed)
+
+    train_cfg = cfg.get("train", None) if hasattr(cfg, "get") else getattr(cfg, "train", None)
+    if train_cfg is not None:
+        seed = train_cfg.get("seed", None) if hasattr(train_cfg, "get") else getattr(train_cfg, "seed", None)
+        if seed is not None:
+            return int(seed)
+
+    return 42
+
+
+def resolve_val_split_ratio(cfg: Any) -> float:
+    raw = cfg.dataset.get("val_split_ratio", 0.1)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.1
+    return min(max(value, 0.0), 0.99)
+
+
+def stratified_train_val_indices(stratify_labels: List[int], val_ratio: float, seed: int) -> Tuple[List[int], List[int]]:
+    if not stratify_labels:
+        return [], []
+    if val_ratio <= 0.0:
+        return list(range(len(stratify_labels))), []
+
+    per_class: Dict[int, List[int]] = defaultdict(list)
+    for idx, label in enumerate(stratify_labels):
+        per_class[int(label)].append(idx)
+
+    train_indices: List[int] = []
+    val_indices: List[int] = []
+    for cls_id, indices in sorted(per_class.items(), key=lambda item: item[0]):
+        shuffled = list(indices)
+        random.Random(seed * 1_000_003 + cls_id).shuffle(shuffled)
+
+        n = len(shuffled)
+        if n <= 1:
+            n_val = 0
+        else:
+            n_val = int(round(n * val_ratio))
+            if n_val <= 0:
+                n_val = 1
+            if n_val >= n:
+                n_val = n - 1
+
+        val_indices.extend(shuffled[:n_val])
+        train_indices.extend(shuffled[n_val:])
+
+    if not val_indices and len(stratify_labels) > 1:
+        shuffled = list(range(len(stratify_labels)))
+        random.Random(seed).shuffle(shuffled)
+        val_indices = [shuffled[0]]
+        train_indices = shuffled[1:]
+
+    return sorted(train_indices), sorted(val_indices)
+
+
+def split_train_val_samples(
+    samples: List[Dict[str, Any]],
+    split: str,
+    cfg: Any,
+    stratify_level: int = -1,
+) -> List[Dict[str, Any]]:
+    if split not in {"train", "val"}:
+        return samples
+    if not samples:
+        return []
+
+    val_ratio = resolve_val_split_ratio(cfg)
+    if val_ratio <= 0.0:
+        return samples if split == "train" else []
+
+    stratify_labels: List[int] = []
+    for sample in samples:
+        labels = [int(x) for x in sample.get("labels", [])]
+        if not labels:
+            stratify_labels.append(0)
+            continue
+        level = stratify_level
+        if level < 0:
+            level = len(labels) + level
+        if level < 0 or level >= len(labels):
+            level = len(labels) - 1
+        stratify_labels.append(int(labels[level]))
+
+    seed = resolve_split_seed(cfg)
+    train_idx, val_idx = stratified_train_val_indices(stratify_labels, val_ratio=val_ratio, seed=seed)
+    chosen = train_idx if split == "train" else val_idx
+    return [samples[i] for i in chosen]
 
 
 class BaseHierDataset(Dataset, ABC):

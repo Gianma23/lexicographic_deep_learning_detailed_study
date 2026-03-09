@@ -1,4 +1,4 @@
-# File Documentation
+﻿# File Documentation
 
 This document describes every project file in the repository (source, configs, and root metadata; excludes `.git/` internals).
 
@@ -10,7 +10,7 @@ This document describes every project file in the repository (source, configs, a
 
 ### `README.md`
 - Purpose: Main project overview and quickstart for the unified H-CAST + HT-CapsNet training pipeline.
-- Notes: Describes unified dataset/model APIs, taxonomy schema, and reproducibility options.
+- Notes: Describes unified dataset/model APIs, taxonomy schema, split fallback policy, and dataset-specific run configs.
 
 ### `requirements.txt`
 - Purpose: Python dependency list for training/evaluation.
@@ -32,27 +32,48 @@ This document describes every project file in the repository (source, configs, a
 - Purpose: Default training config for the HT-CapsNet model path.
 - Key settings: Capsule routing parameters, taxonomy-mask controls, CUB dataset options, optimization/loss/runtime knobs.
 
+### `configs/cifar100.yaml`
+- Purpose: Ready-to-run config for CIFAR-100 hierarchical training.
+- Key settings: `cifar-100` alias, 2-level hierarchy (`coarse/fine`), optional download flag, split fallback knobs.
+
+### `configs/cub200.yaml`
+- Purpose: Ready-to-run config for CUB-200-2011 hierarchical training.
+- Key settings: `cub-200-2011` alias, 3-level hierarchy (`order/family/species`), split fallback knobs.
+
+### `configs/aircraft.yaml`
+- Purpose: Ready-to-run config for FGVC-Aircraft hierarchical training.
+- Key settings: `fgvc-aircraft` alias, 3-level hierarchy (`manufacturer/family/variant`), split fallback knobs.
+
+### `configs/inat21mini.yaml`
+- Purpose: Ready-to-run config for iNat21-Mini hierarchical training.
+- Key settings: `inat21-mini` alias, 3-level hierarchy (`order/family/species`), split fallback knobs.
+
 ## Dataset Package (`datasets/`)
 
 ### `datasets/__init__.py`
 - Purpose: Dataset factory and dataloader assembly.
 - Key APIs: `build_transforms`, `_collate_fn`, `build_dataloader`.
-- Notes: Registers dataset adapters and returns `(loader, num_classes_per_level, taxonomy)`.
+- Notes: Registers dataset adapters, supports dataset-name aliases, and returns `(loader, num_classes_per_level, taxonomy)`.
 
 ### `datasets/base.py`
-- Purpose: Abstract base dataset with shared hierarchy/taxonomy utilities.
-- Key APIs: `BaseHierDataset`, `infer_parent_of_from_samples`, `taxonomy_from_parent_of`.
-- Notes: Handles annotation loading, synthetic fallback, contiguous label remap, and taxonomy inference/remap.
+- Purpose: Abstract base dataset with shared hierarchy/taxonomy and split utilities.
+- Key APIs: `BaseHierDataset`, `infer_parent_of_from_samples`, `taxonomy_from_parent_of`, `stratified_train_val_indices`, `split_train_val_samples`.
+- Notes: Handles annotation loading, synthetic fallback, deterministic stratified train/val split, contiguous label remap, and taxonomy inference/remap.
 
 ### `datasets/breeds.py`
 - Purpose: BREEDS adapter.
 - Key API: `BreedsDataset`.
 - Notes: Reads optional unified JSON or H-CAST-style BREEDS txt files; provides coarse-to-species taxonomy.
 
+### `datasets/cifar100.py`
+- Purpose: CIFAR-100 adapter.
+- Key API: `CIFAR100Dataset`.
+- Notes: Uses torchvision CIFAR-100, applies canonical coarse/fine taxonomy, and synthesizes val split from train deterministically when needed.
+
 ### `datasets/cub.py`
 - Purpose: CUB-200 adapter.
 - Key API: `CUBDataset`.
-- Notes: Reads optional JSON or class-folder structure; maps species to order/family using `cub_tree.py`.
+- Notes: Supports both pre-split folders and official raw metadata files; maps species to order/family using `cub_tree.py`.
 
 ### `datasets/cub_tree.py`
 - Purpose: Static hierarchy table for CUB classes.
@@ -62,7 +83,7 @@ This document describes every project file in the repository (source, configs, a
 ### `datasets/aircraft.py`
 - Purpose: FGVC-Aircraft adapter.
 - Key API: `AircraftDataset`.
-- Notes: Parses official split txt files and `Air.csv`, then maps variant/family/manufacturer via `aircraft_tree.py`.
+- Notes: Parses official split txt files (`train/val/test`), falls back to `trainval` split synthesis, and maps variant/family/manufacturer via `aircraft_tree.py`.
 
 ### `datasets/aircraft_tree.py`
 - Purpose: Static hierarchy table for Aircraft classes.
@@ -72,7 +93,7 @@ This document describes every project file in the repository (source, configs, a
 ### `datasets/inat.py`
 - Purpose: iNaturalist adapter (iNat18 + iNat21-mini style).
 - Key API: `INatDataset`.
-- Notes: Supports JSON annotations, txt annotations, iNat18 tree-based decoding, and inferred taxonomy.
+- Notes: Supports JSON/txt annotations, common iNat21 list naming conventions, iNat18 tree-based decoding, and deterministic val/test fallback behavior.
 
 ## Model Package (`models/`)
 
