@@ -27,14 +27,44 @@ _FINE_TO_COARSE = [
     18, 1, 2, 15, 6, 0, 17, 8, 14, 13,
 ]
 
+# HT-CapsNet CIFAR-100 coarse(20)->super(8) mapping.
+_COARSE_TO_SUPER = [
+    0, 0, 1, 2, 1, 2, 2, 3, 4, 5,
+    5, 4, 4, 3, 6, 4, 4, 1, 7, 7,
+]
+
 
 class CIFAR100Dataset(BaseHierDataset):
-    """CIFAR-100 adapter with canonical 2-level coarse->fine hierarchy."""
+    """CIFAR-100 adapter with hierarchy super->coarse->fine."""
 
     def __init__(self, cfg: Any, split: str, transform=None):
         self._cifar_images = None
         self._cifar_targets: List[int] = []
         super().__init__(cfg=cfg, split=split, transform=transform)
+
+    def _label_path(self, fine: int, coarse: int) -> List[int]:
+        if self.depth == 2:
+            return [coarse, fine]
+        if self.depth == 3:
+            super_cls = int(_COARSE_TO_SUPER[coarse])
+            return [super_cls, coarse, fine]
+        raise ValueError(
+            f"CIFAR-100 supports hierarchy_depth in {{2, 3}}, got {self.depth}. "
+            "Use 3 for super->coarse->fine."
+        )
+
+    def _default_parent_of(self) -> Dict[int, Dict[int, int]]:
+        if self.depth == 2:
+            return {1: {fine: coarse for fine, coarse in enumerate(_FINE_TO_COARSE)}}
+        if self.depth == 3:
+            return {
+                1: {coarse: super_cls for coarse, super_cls in enumerate(_COARSE_TO_SUPER)},
+                2: {fine: coarse for fine, coarse in enumerate(_FINE_TO_COARSE)},
+            }
+        raise ValueError(
+            f"CIFAR-100 supports hierarchy_depth in {{2, 3}}, got {self.depth}. "
+            "Use 3 for super->coarse->fine."
+        )
 
     def load_samples(self) -> List[Dict[str, Any]]:
         ann_file = self._annotation_file_for_split()
@@ -43,6 +73,8 @@ class CIFAR100Dataset(BaseHierDataset):
 
         if len(_FINE_TO_COARSE) != 100:
             raise RuntimeError("Invalid CIFAR-100 fine->coarse mapping. Expected 100 entries.")
+        if len(_COARSE_TO_SUPER) != 20:
+            raise RuntimeError("Invalid CIFAR-100 coarse->super mapping. Expected 20 entries.")
 
         split_is_train_pool = self.split in {"train", "val"}
         download = bool(self.cfg.dataset.get("download", False))
@@ -73,7 +105,7 @@ class CIFAR100Dataset(BaseHierDataset):
             samples.append(
                 {
                     "image": int(idx),
-                    "labels": [coarse, fine],
+                    "labels": self._label_path(fine=fine, coarse=coarse),
                     "meta": {
                         "source": "cifar100_torchvision",
                         "index": int(idx),
@@ -97,6 +129,6 @@ class CIFAR100Dataset(BaseHierDataset):
         if tax is not None:
             return tax
 
-        parent_of = {1: {fine: coarse for fine, coarse in enumerate(_FINE_TO_COARSE)}}
-        levels = list(self.cfg.dataset.get("levels", [])) or ["coarse", "fine"]
+        parent_of = self._default_parent_of()
+        levels = list(self.cfg.dataset.get("levels", [])) or ["coarse1", "coarse2", "fine"]
         return taxonomy_from_parent_of(parent_of, levels)

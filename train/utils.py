@@ -8,16 +8,19 @@ import torch
 
 
 def seed_everything(seed: int, deterministic: bool = True):
+    """Seed Python/NumPy/PyTorch RNGs and configure cuDNN determinism."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+    # Deterministic mode improves reproducibility, benchmark improves speed.
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
 
 
 def build_optimizer(cfg: Any, model: torch.nn.Module):
+    """Build an optimizer from cfg.optim."""
     name = str(cfg.optim.name).lower()
     lr = float(cfg.optim.lr)
     wd = float(cfg.optim.get("weight_decay", 0.0))
@@ -34,6 +37,7 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
 
 
 def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
+    """Build an LR scheduler from cfg.scheduler; returns None if disabled."""
     name = str(cfg.scheduler.get("name", "none")).lower()
     if name == "none":
         return None
@@ -58,6 +62,7 @@ def save_checkpoint(
     best_metric: float,
     cfg_resolved: Dict[str, Any],
 ):
+    """Persist training state so runs can be resumed exactly."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "model_state": model.state_dict(),
@@ -78,6 +83,7 @@ def resume_if_available(
     scheduler,
     scaler,
 ) -> Tuple[int, float]:
+    """Load checkpoint state if present and return (start_epoch, best_metric)."""
     if not resume_path:
         return 0, float("-inf")
 
@@ -94,16 +100,22 @@ def resume_if_available(
     if scaler is not None and ckpt.get("scaler_state") is not None:
         scaler.load_state_dict(ckpt["scaler_state"])
 
+    # Resume from the next epoch after the one saved in the checkpoint.
     start_epoch = int(ckpt.get("epoch", 0)) + 1
     best_metric = float(ckpt.get("best_metric", float("-inf")))
     return start_epoch, best_metric
 
 
 def metric_for_best(eval_metrics: Dict[str, float]) -> float:
+    """Select the checkpoint ranking score from validation metrics.
+
+    Prefers the deepest available level accuracy; breaks ties with acc_path.
+    """
     deepest = [k for k in eval_metrics if k.startswith("acc_level_")]
     if not deepest:
         return eval_metrics.get("acc_path", 0.0)
     deepest_idx = max(int(k.split("_")[-1]) for k in deepest)
     primary = eval_metrics.get(f"acc_level_{deepest_idx}", 0.0)
     tie = eval_metrics.get("acc_path", 0.0)
+    # Tiny path-accuracy term stabilizes ordering when primary scores are tied.
     return float(primary + 1e-3 * tie)

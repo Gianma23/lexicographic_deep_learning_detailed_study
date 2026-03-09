@@ -25,6 +25,7 @@ from .utils import (
 
 
 class AttrDict(dict):
+    # Lightweight dict wrapper to support attribute-style access (`cfg.train.seed`).
     def __getattr__(self, item):
         try:
             return self[item]
@@ -60,6 +61,7 @@ def _coerce_scalar(raw: str):
 
 
 def _apply_dotlist(cfg: Dict[str, Any], dotlist):
+    # Apply CLI overrides like `train.lr=1e-3` into nested config dictionaries
     for item in dotlist:
         if "=" not in item:
             continue
@@ -76,6 +78,7 @@ def _apply_dotlist(cfg: Dict[str, Any], dotlist):
 
 
 def _load_config(path: str, overrides):
+    # Prefer OmegaConf when available; otherwise use a minimal YAML + dotlist fallback
     if OmegaConf is not None:
         cfg = OmegaConf.load(path)
         if overrides:
@@ -88,15 +91,17 @@ def _load_config(path: str, overrides):
     return _to_attr(cfg_dict), cfg_dict
 
 
-def parse_args():
+def _parse_args():
     parser = argparse.ArgumentParser(description="Unified hierarchical image classification training")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("overrides", nargs="*", default=[])
     return parser.parse_args()
 
-
+# ======================================================================== #
+#                    M A I N   T R A I N I N G   L O O P                   #
+# ======================================================================== #
 def main():
-    args = parse_args()
+    args = _parse_args()
     cfg, cfg_resolved = _load_config(args.config, args.overrides)
 
     seed_everything(int(cfg.train.seed), bool(cfg.runtime.get("deterministic", True)))
@@ -109,6 +114,7 @@ def main():
     model = build_model(cfg, num_classes_per_level, taxonomy).to(device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
+    # Enable AMP only on CUDA; GradScaler is a no-op when disabled.
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
     scaler = torch.amp.GradScaler(device=device.type, enabled=use_amp)
 
@@ -130,6 +136,7 @@ def main():
         score = metric_for_best(val_metrics)
         if score > best_metric:
             best_metric = score
+            # Keep the best checkpoint according to validation metric
             save_checkpoint(
                 str(best_ckpt),
                 model,
@@ -141,6 +148,7 @@ def main():
                 cfg_resolved,
             )
 
+        # Always refresh latest checkpoint for resumable training
         save_checkpoint(
             str(latest_ckpt),
             model,

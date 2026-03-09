@@ -10,4 +10,9 @@ Rivedere il codice di:
 ### Train
 Rivedere
 - [ ] engine
-- [ ] train
+- [ ] eval
+- [ ] metrics (ci sarebbe anche da decidere le metriche)
+- [x] train
+
+### Riproducibilità e tuning
+- [ ] Salvare configs nell'output, così da sapere cosa ha generato quei risultati
