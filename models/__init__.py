@@ -13,7 +13,11 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         from .ht_capsnet.factory import build_model as build_caps
 
         return build_caps(cfg, num_classes_per_level, taxonomy)
-    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'ht_capsnet']")
+    if name == "hd_capsnet":
+        from .hd_capsnet.factory import build_model as build_caps
+
+        return build_caps(cfg, num_classes_per_level, taxonomy)
+    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'ht_capsnet', 'hd_capsnet']")
 
 
 def compute_loss(
@@ -31,7 +35,11 @@ def compute_loss(
         from .ht_capsnet.losses import compute_loss as loss_caps
 
         return loss_caps(output, targets, cfg, taxonomy)
-    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'ht_capsnet']")
+    if name == "hd_capsnet":
+        from .hd_capsnet.losses import compute_loss as loss_caps
+
+        return loss_caps(output, targets, cfg, taxonomy)
+    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'ht_capsnet', 'hd_capsnet']")
 
 
 __all__ = ["build_model", "compute_loss"]

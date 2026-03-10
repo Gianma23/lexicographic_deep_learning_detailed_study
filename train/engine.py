@@ -37,6 +37,8 @@ def train_one_epoch(
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
 
+        # TODO: data augmentation could be applied here if needed, e.g., mixup/cutmix on images and labels
+
         optimizer.zero_grad(set_to_none=True)
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
