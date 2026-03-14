@@ -1,114 +1,110 @@
-﻿from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 
 
-def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
-    if not taxonomy or "parent_of" not in taxonomy:
-        return {}
-    raw = taxonomy["parent_of"]
-    out: Dict[int, Dict[int, int]] = {}
-    for k, v in raw.items():
-        lk = int(k)
-        out[lk] = {int(ck): int(pk) for ck, pk in v.items()}
-    return out
+HcastTargets = Union[torch.Tensor, Dict[str, Any]]
 
 
-def _project_children_to_parent(child_probs: torch.Tensor, parent_dim: int, mapping: Dict[int, int]) -> torch.Tensor:
-    proj = torch.zeros((child_probs.size(0), parent_dim), device=child_probs.device, dtype=child_probs.dtype)
-    for child_idx, parent_idx in mapping.items():
-        if child_idx < child_probs.size(-1) and parent_idx < parent_dim:
-            proj[:, parent_idx] = proj[:, parent_idx] + child_probs[:, child_idx]
-    return proj / proj.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+def _one_hot_with_smoothing(target: torch.Tensor, num_classes: int, smoothing: float) -> torch.Tensor:
+    smoothing = min(max(float(smoothing), 0.0), 1.0)
+    off_value = smoothing / num_classes
+    on_value = 1.0 - smoothing + off_value
+    return torch.full((target.size(0), num_classes), off_value, device=target.device).scatter_(
+        1, target.long().view(-1, 1), on_value
+    )
 
 
-def _hierarchy_violation_loss(probs_per_level: List[torch.Tensor], parent_of: Dict[int, Dict[int, int]]) -> torch.Tensor:
-    if not parent_of:
-        return torch.zeros((), device=probs_per_level[0].device)
-
-    penalties = []
-    for level in range(1, len(probs_per_level)):
-        mapping = parent_of.get(level)
-        if not mapping:
-            continue
-
-        child_probs = probs_per_level[level]
-        parent_probs = probs_per_level[level - 1]
-
-        gather_parent = torch.zeros_like(child_probs)
-        for child_idx, parent_idx in mapping.items():
-            if child_idx < child_probs.size(-1) and parent_idx < parent_probs.size(-1):
-                gather_parent[:, child_idx] = parent_probs[:, parent_idx]
-
-        # Expected mismatch probability mass across invalid parent-child links.
-        mismatch = 1.0 - (child_probs * gather_parent).sum(dim=-1)
-        penalties.append(mismatch.mean())
-
-    if not penalties:
-        return torch.zeros((), device=probs_per_level[0].device)
-    return torch.stack(penalties).mean()
+def _soft_target_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor) -> torch.Tensor:
+    target_probs = target_probs.to(dtype=logits.dtype)
+    log_probs = F.log_softmax(logits, dim=-1)
+    return -(target_probs * log_probs).sum(dim=-1).mean()
 
 
-def _tree_path_kl_loss(probs_per_level: List[torch.Tensor], parent_of: Dict[int, Dict[int, int]]) -> torch.Tensor:
-    if not parent_of:
-        return torch.zeros((), device=probs_per_level[0].device)
-
-    kls = []
-    for level in range(1, len(probs_per_level)):
-        mapping = parent_of.get(level)
-        if not mapping:
-            continue
-
-        child_probs = probs_per_level[level]
-        parent_probs = probs_per_level[level - 1]
-        projected = _project_children_to_parent(child_probs, parent_probs.size(-1), mapping)
-        kls.append(F.kl_div(projected.log(), parent_probs, reduction="batchmean"))
-
-    if not kls:
-        return torch.zeros((), device=probs_per_level[0].device)
-    return torch.stack(kls).mean()
+def _hard_targets_from_input(targets: HcastTargets) -> torch.Tensor:
+    if isinstance(targets, torch.Tensor):
+        return targets
+    labels_a = targets.get("labels_a")
+    if not isinstance(labels_a, torch.Tensor):
+        raise TypeError("Expected hard targets tensor or mixup target dict with `labels_a` tensor.")
+    return labels_a
 
 
-def _global_kl_loss(logits_per_level: List[torch.Tensor], targets: torch.Tensor) -> torch.Tensor:
-    # Upstream H-CAST option (`globalkl`): KL between concatenated logits and one-hot targets.
+def _mixup_target_distributions(logits_per_level: List[torch.Tensor], targets: HcastTargets, cfg: Any):
+    if not isinstance(targets, dict):
+        return None
+
+    labels_a = targets.get("labels_a")
+    labels_b = targets.get("labels_b")
+    lam = targets.get("lam")
+    if not isinstance(labels_a, torch.Tensor) or not isinstance(labels_b, torch.Tensor) or lam is None:
+        return None
+
+    lam = float(lam)
+    default_smoothing = float(cfg.train.get("smoothing", 0.1))
+    smoothing = float(targets.get("label_smoothing", default_smoothing))
+    smoothing = min(max(smoothing, 0.0), 1.0)
+
+    mixed_targets = []
+    for level, logits in enumerate(logits_per_level):
+        num_classes = logits.size(-1)
+        y_a = _one_hot_with_smoothing(labels_a[:, level], num_classes, smoothing)
+        y_b = _one_hot_with_smoothing(labels_b[:, level], num_classes, smoothing)
+        mixed_targets.append(y_a * lam + y_b * (1.0 - lam))
+    return mixed_targets
+
+
+def _global_kl_loss(
+    logits_per_level: List[torch.Tensor],
+    hard_targets: Optional[torch.Tensor] = None,
+    target_probs_per_level: Optional[List[torch.Tensor]] = None,
+) -> torch.Tensor:
+    # Upstream H-CAST option (`globalkl`): KL between concatenated logits and (possibly mixed) targets.
     probs = [F.log_softmax(logits, dim=-1) for logits in logits_per_level]
     all_outputs = torch.cat(probs, dim=1)
 
-    onehots = []
-    for level, logits in enumerate(logits_per_level):
-        onehots.append(F.one_hot(targets[:, level], num_classes=logits.size(-1)).float())
-    all_targets = torch.cat(onehots, dim=1)
-    all_targets = all_targets / all_targets.sum(dim=1, keepdim=True).clamp_min(1e-8)
+    if target_probs_per_level is not None:
+        all_targets = torch.cat([target_probs.to(dtype=all_outputs.dtype) for target_probs in target_probs_per_level], dim=1)
+    else:
+        if hard_targets is None:
+            raise ValueError("Either `hard_targets` or `target_probs_per_level` must be provided for global KL.")
+        onehots = []
+        for level, logits in enumerate(logits_per_level):
+            onehots.append(F.one_hot(hard_targets[:, level], num_classes=logits.size(-1)).float())
+        all_targets = torch.cat(onehots, dim=1)
 
+    all_targets = all_targets / all_targets.sum(dim=1, keepdim=True).clamp_min(1e-8)
     return F.kl_div(all_outputs, all_targets, reduction="batchmean")
 
 
 def compute_loss(
     output: Dict[str, Any],
-    targets: torch.Tensor,
+    targets: HcastTargets,
     cfg: Any,
     taxonomy: Optional[Dict[str, Any]] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
+    _ = taxonomy
     logits_per_level = output["logits_per_level"]
-    probs_per_level = output.get("probs_per_level") or [F.softmax(logits, dim=-1) for logits in logits_per_level]
+    hard_targets = _hard_targets_from_input(targets)
+    mixup_target_probs = _mixup_target_distributions(logits_per_level, targets, cfg)
 
-    level_losses = [F.cross_entropy(logits, targets[:, level]) for level, logits in enumerate(logits_per_level)]
-    ce_loss = torch.stack(level_losses).mean()
+    if mixup_target_probs is not None:
+        level_losses = [
+            _soft_target_cross_entropy(logits, mixup_target_probs[level]) for level, logits in enumerate(logits_per_level)
+        ]
+    else:
+        level_losses = [F.cross_entropy(logits, hard_targets[:, level]) for level, logits in enumerate(logits_per_level)]
+    ce_loss = torch.stack(level_losses).sum()
+    total = ce_loss
 
-    parent_of = _normalize_parent_of(taxonomy)
-    hv_loss = _hierarchy_violation_loss(probs_per_level, parent_of)
-    tree_kl = _tree_path_kl_loss(probs_per_level, parent_of)
-
-    hv_w = float(cfg.loss.get("beta_hv", 0.1))
-    tree_kl_w = float(cfg.loss.get("alpha_tree_kl", 0.1))
-
-    total = ce_loss + hv_w * hv_loss + tree_kl_w * tree_kl
-
-    # Preserve upstream-style optional global KL term.
     if bool(cfg.loss.get("globalkl", False)):
         gk_w = float(cfg.loss.get("gk_weight", 1.0))
-        gk_loss = _global_kl_loss(logits_per_level, targets)
+        gk_loss = _global_kl_loss(
+            logits_per_level,
+            hard_targets=hard_targets,
+            target_probs_per_level=mixup_target_probs,
+        )
         total = total + gk_w * gk_loss
     else:
         gk_loss = torch.zeros((), device=total.device)
@@ -116,8 +112,6 @@ def compute_loss(
     metrics = {
         "total": float(total.detach().item()),
         "level_ce": float(ce_loss.detach().item()),
-        "hv_loss": float(hv_loss.detach().item()),
-        "tree_kl": float(tree_kl.detach().item()),
         "gk_loss": float(gk_loss.detach().item()),
     }
     for level, level_loss in enumerate(level_losses):

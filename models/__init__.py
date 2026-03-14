@@ -19,7 +19,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
 def compute_loss(
     cfg: Any,
     output: Dict[str, Any],
-    targets: torch.Tensor,
+    targets: Any,
     taxonomy: Optional[Dict[str, Any]] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     name = str(cfg.model.name).lower()

@@ -17,6 +17,7 @@ Rivedere
 - [ ] metrics (ci sarebbe anche da decidere le metriche)
 - [x] train
 - [x] utils
+- [ ] serve calcolare le metriche nel train set?
 - [ ] Definire insiemi di optimizer, scheduler, preprocessing e data augmentation che si utilizzano
 
 ### Riproducibilità e tuning
@@ -24,6 +25,10 @@ Rivedere
 
 ### Leggibilità
 - [ ] logger
+
+# H-CAST
+- [ ] Check loss
+- [ ] Ricontrollare iperparametri
 
 # HT-CapsNet
 - [ ] Sostituire backbone generico con EfficientNetB7

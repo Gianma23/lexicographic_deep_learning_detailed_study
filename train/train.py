@@ -17,6 +17,7 @@ from .eval import pretty_metrics
 from .utils import (
     build_optimizer,
     build_scheduler,
+    load_finetune_checkpoint,
     metric_for_best,
     resume_if_available,
     save_checkpoint,
@@ -113,7 +114,9 @@ def main():
     train_loader, num_classes_per_level, taxonomy = build_dataloader(cfg, split="train")
     val_loader, _, _ = build_dataloader(cfg, split="val")
 
-    model = build_model(cfg, num_classes_per_level, taxonomy).to(device)
+    model = build_model(cfg, num_classes_per_level, taxonomy)
+    load_finetune_checkpoint(cfg, model)
+    model = model.to(device)
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer)
     # Enable AMP only on CUDA; GradScaler is a no-op when disabled.

@@ -32,6 +32,7 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/inat21mini
+  smoothing: 0.1
 
 optim:
   name: adamw
@@ -57,8 +58,6 @@ scheduler:
   use_timm: true
 
 loss:
-  beta_hv: 0.1
-  alpha_tree_kl: 0.1
   globalkl: true
   gk_weight: 0.2
 

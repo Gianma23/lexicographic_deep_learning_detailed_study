@@ -30,7 +30,7 @@ dataloader:
   windows_spawn_safe: true
 
 train:
-  epochs: 50
+  epochs: 100
   seed: 42
   device: cuda
   amp: true
@@ -43,6 +43,7 @@ train:
   mixup_prob: 1.0
   mixup_switch_prob: 0.5
   mixup_mode: batch
+  smoothing: 0.1
 
 optim:
   name: adamw
@@ -68,8 +69,6 @@ scheduler:
   use_timm: true
 
 loss:
-  beta_hv: 0.1
-  alpha_tree_kl: 0.5
   globalkl: true
   gk_weight: 0.5
 

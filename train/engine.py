@@ -27,6 +27,8 @@ def train_one_epoch(
     batch_metrics = []
     running_loss_total = 0.0
     running_loss_count = 0
+    model_name = str(cfg.model.name).lower()
+    mixup_label_smoothing = float(cfg.train.get("smoothing", 0.1))
 
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
     use_pbar = bool(cfg.train.get("progress_bar", True)) and tqdm is not None
@@ -44,10 +46,19 @@ def train_one_epoch(
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
             output = model(images_mixed, targets=labels_a)
             if mixup_applied:
-                loss_a, loss_dict_a = compute_loss(cfg, output, labels_a, taxonomy)
-                loss_b, loss_dict_b = compute_loss(cfg, output, labels_b, taxonomy)
-                loss = lam * loss_a + (1.0 - lam) * loss_b
-                loss_dict = blend_metrics(loss_dict_a, loss_dict_b, lam=lam)
+                if model_name == "hcast":
+                    mixup_targets = {
+                        "labels_a": labels_a,
+                        "labels_b": labels_b,
+                        "lam": float(lam),
+                        "label_smoothing": mixup_label_smoothing,
+                    }
+                    loss, loss_dict = compute_loss(cfg, output, mixup_targets, taxonomy)
+                else:
+                    loss_a, loss_dict_a = compute_loss(cfg, output, labels_a, taxonomy)
+                    loss_b, loss_dict_b = compute_loss(cfg, output, labels_b, taxonomy)
+                    loss = lam * loss_a + (1.0 - lam) * loss_b
+                    loss_dict = blend_metrics(loss_dict_a, loss_dict_b, lam=lam)
             else:
                 loss, loss_dict = compute_loss(cfg, output, labels_a, taxonomy)
 
@@ -111,10 +122,10 @@ def evaluate(
             output = model(images, targets=labels)
             _, loss_dict = compute_loss(cfg, output, labels, taxonomy)
 
-        loss_vals.append(loss_dict)
+        #loss_vals.append(loss_dict)
         batch_metrics.append(evaluate_batch(output, labels, taxonomy))
 
-    losses = merge_metric_batches(loss_vals)
+    #losses = merge_metric_batches(loss_vals)
     metrics = merge_metric_batches(batch_metrics)
-    losses.update(metrics)
-    return losses
+    #losses.update(metrics)
+    return metrics
