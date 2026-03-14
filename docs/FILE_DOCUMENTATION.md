@@ -28,19 +28,17 @@ Scope notes:
 ### 2.2. `configs/capsnet.yaml`
 - Purpose: Default configuration for HT-CapsNet training/evaluation runs.
 
-### 2.3. `configs/hd_capsnet.yaml`
-- Purpose: Default configuration for HD-CapsNet baseline training/evaluation runs.
 
-### 2.4. `configs/cifar100.yaml`
+### 2.3. `configs/cifar100.yaml`
 - Purpose: Dataset-focused run preset for CIFAR-100 hierarchy experiments.
 
-### 2.5. `configs/cub200.yaml`
+### 2.4. `configs/cub200.yaml`
 - Purpose: Dataset-focused run preset for CUB-200 hierarchy experiments.
 
-### 2.6. `configs/aircraft.yaml`
+### 2.5. `configs/aircraft.yaml`
 - Purpose: Dataset-focused run preset for FGVC-Aircraft hierarchy experiments.
 
-### 2.7. `configs/inat21mini.yaml`
+### 2.6. `configs/inat21mini.yaml`
 - Purpose: Dataset-focused run preset for iNat21-mini hierarchy experiments.
 
 ## 3. Data Folder (`data/`)
@@ -148,39 +146,8 @@ Scope notes:
 ### 6.1. `models/__init__.py`
 - Purpose: Unified model/loss dispatcher across model families.
 - Functions:
-  - `build_model`: Builds selected model backend (`hcast`, `ht_capsnet`, or `hd_capsnet`).
+  - `build_model`: Builds selected model backend (`hcast` or `ht_capsnet`).
   - `compute_loss`: Dispatches loss computation to the selected backend.
-
-### 6.2. `models/hd_capsnet/__init__.py`
-- Purpose: Public exports for HD-CapsNet model construction and loss API.
-
-### 6.3. `models/hd_capsnet/factory.py`
-- Purpose: HD-CapsNet-specific model constructor.
-- Functions:
-  - `build_model`: Builds `HDCapsNet` from model config and hierarchy metadata.
-
-### 6.4. `models/hd_capsnet/model.py`
-- Purpose: PyTorch implementation of HD-CapsNet baseline used in HT-CapsNet comparisons.
-- Class `_ConvBackbone`:
-  - `__init__`: Builds CNN feature extractor for primary capsules.
-  - `forward`: Produces feature maps for capsule projection.
-- Class `HDCapsNet`:
-  - `__init__`: Configures capsule hierarchy, routing, and skip-connections (coarse to fine).
-  - `_build_primary_caps`: Converts backbone features into primary capsules.
-  - `forward`: Runs per-level dynamic routing and returns unified logits payload.
-
-### 6.5. `models/hd_capsnet/routing.py`
-- Purpose: Standard dynamic-routing primitives for HD-CapsNet.
-- Functions:
-  - `squash`: Capsule squashing nonlinearity.
-  - `dynamic_routing`: Runs iterative routing-by-agreement without taxonomy masking.
-
-### 6.6. `models/hd_capsnet/losses.py`
-- Purpose: Margin-based HD-CapsNet training loss with static level weighting.
-- Functions:
-  - `_margin_loss`: Computes capsule-style per-level margin loss.
-  - `_level_weights`: Resolves level-wise loss weighting from config.
-  - `compute_loss`: Aggregates weighted per-level margin losses.
 
 ## 7. H-CAST Package (`models/hcast/`)
 
@@ -369,3 +336,5 @@ Scope notes:
   - Per-run folders (for example `cifar100/`, `smoke_capsnet/`).
   - `latest.pt`: Most recent checkpoint snapshot.
   - `best.pt`: Best-scoring checkpoint according to configured selection metric.
+
+

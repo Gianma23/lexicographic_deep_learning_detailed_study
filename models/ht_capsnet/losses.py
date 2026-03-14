@@ -71,15 +71,21 @@ def compute_loss(
 
     weights = _level_weights(len(logits_per_level), cfg)
     level_losses = []
+    weighted_level_losses = []
     for level, logits in enumerate(logits_per_level):
-        level_losses.append(weights[level] * _margin_loss(logits, targets[:, level], m_pos, m_neg, down_w))
+        level_loss = _margin_loss(logits, targets[:, level], m_pos, m_neg, down_w)
+        level_losses.append(level_loss)
+        weighted_level_losses.append(weights[level] * level_loss)
 
-    margin = torch.stack(level_losses).sum()
+    margin = torch.stack(weighted_level_losses).sum()
     cons = _hier_consistency_penalty(logits_per_level, _normalize_parent_of(taxonomy))
     total = margin + hier_w * cons
 
-    return total, {
+    metrics = {
         "total": float(total.detach().item()),
         "margin": float(margin.detach().item()),
         "consistency": float(cons.detach().item()),
     }
+    for level, level_loss in enumerate(level_losses):
+        metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
+    return total, metrics

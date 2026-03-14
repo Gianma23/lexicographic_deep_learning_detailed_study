@@ -1,17 +1,15 @@
 ﻿# Hierarchical Image Classification (Unified H-CAST + HT-CapsNet)
 
-This repo unifies three hierarchical models behind one PyTorch training/eval pipeline:
+This repo unifies two hierarchical models behind one PyTorch training/eval pipeline:
 
 - H-CAST (upstream commit: `b1a222bb32da5caf48691b5987d56b7483801907`)
 - HT-CapsNet (upstream commit: `8a0ea23f3e6b68b75d8add07674b4b0288380417`)
-- HD-CapsNet baseline (PyTorch port aligned with HT-CapsNet comparison setup)
 
 Single CLI entrypoint:
 
 ```bash
 python -m train.train --config configs/hcast.yaml
 python -m train.train --config configs/capsnet.yaml
-python -m train.train --config configs/hd_capsnet.yaml
 ```
 
 Dataset-ready configs:
@@ -43,7 +41,6 @@ Full file-by-file documentation is available at:
 | `hcast/cast_models/utils.py` | `models/hcast/internal/utils.py` |
 | `ht-capsnet/src/model_arch/HTRCapsNet.py` (routing logic) | `models/ht_capsnet/routing.py` + `models/ht_capsnet/model.py` (PyTorch translation) |
 | `ht-capsnet/src/models.py` (loss/config ideas) | `models/ht_capsnet/losses.py` + `models/ht_capsnet/factory.py` |
-| `ht-capsnet/src/model_arch/capsnet.py` (`HD_CapsNet`) | `models/hd_capsnet/model.py` + `models/hd_capsnet/routing.py` + `models/hd_capsnet/losses.py` |
 
 ## Unified APIs
 
@@ -169,4 +166,4 @@ Expected minimal structure:
 
 - H-CAST path uses upstream internals directly under `models/hcast/internal/`.
 - HT-CapsNet upstream is TensorFlow; this repo provides a PyTorch translation of the taxonomy-guided routing path while preserving the unified interfaces and training flow.
-- If optional deps for full H-CAST stack are missing (e.g., `timm`/`dgl`), model code falls back to a lightweight path so the CLI remains runnable.
+- If optional deps for full H-CAST stack are missing (e.g., `timm`), model code falls back to a lightweight path so the CLI remains runnable.

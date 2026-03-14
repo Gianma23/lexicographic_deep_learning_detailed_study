@@ -1,0 +1,32 @@
+# H-CAST optimizer/scheduler defaults from:
+# https://github.com/pseulki/HCAST (deit/main_suppix_hier.py)
+#
+# Note:
+# - train.epochs is included because timm scheduler creation uses it.
+# - lr/warmup_lr can be overridden per dataset (e.g., Aircraft/BREEDS README uses 0.001/0.0001).
+
+train:
+  epochs: 300
+
+optim:
+  name: adamw
+  lr: 0.0005
+  weight_decay: 0.05
+  momentum: 0.9
+  opt_eps: 1.0e-8
+  opt_betas: null
+  use_timm: true
+
+scheduler:
+  name: cosine
+  warmup_lr: 0.000001
+  min_lr: 0.00001
+  decay_epochs: 30
+  warmup_epochs: 5
+  cooldown_epochs: 10
+  patience_epochs: 10
+  decay_rate: 0.1
+  lr_noise: null
+  lr_noise_pct: 0.67
+  lr_noise_std: 1.0
+  use_timm: true

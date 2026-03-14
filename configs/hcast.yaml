@@ -35,16 +35,38 @@ train:
   seed: 42
   device: cuda
   amp: true
+  # H-CAST-style MixUp/CutMix defaults.
+  mixup: 0.8
+  cutmix: 1.0
+  cutmix_minmax: null
+  mixup_prob: 1.0
+  mixup_switch_prob: 0.5
+  mixup_mode: batch
   resume: ""
   output_dir: ./outputs/hcast
 
 optim:
   name: adamw
-  lr: 0.0003
-  weight_decay: 0.0001
+  lr: 0.001
+  weight_decay: 0.05
+  momentum: 0.9
+  opt_eps: 1.0e-8
+  opt_betas: null
+  use_timm: true
 
 scheduler:
   name: cosine
+  warmup_lr: 0.0001
+  min_lr: 0.00001
+  decay_epochs: 30
+  warmup_epochs: 5
+  cooldown_epochs: 10
+  patience_epochs: 10
+  decay_rate: 0.1
+  lr_noise: null
+  lr_noise_pct: 0.67
+  lr_noise_std: 1.0
+  use_timm: true
 
 loss:
   beta_hv: 0.1

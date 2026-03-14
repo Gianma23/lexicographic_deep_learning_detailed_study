@@ -20,7 +20,9 @@ from .utils import (
     metric_for_best,
     resume_if_available,
     save_checkpoint,
+    save_train_level_losses_plot,
     seed_everything,
+    step_scheduler,
 )
 
 
@@ -126,14 +128,31 @@ def main():
     start_epoch, best_metric = resume_if_available(str(cfg.train.get("resume", "")), model, optimizer, scheduler, scaler)
 
     epochs = int(cfg.train.epochs)
+    epoch_ids = []
+    level_loss_history = {}
     for epoch in range(start_epoch, epochs):
         train_metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, cfg, taxonomy)
         val_metrics = evaluate(model, val_loader, device, cfg, taxonomy)
 
-        if scheduler is not None:
-            scheduler.step()
+        # Collect per-level training losses for plotting.
+        epoch_ids.append(epoch + 1)
+        observed_level_losses = {}
+        for key, value in train_metrics.items():
+            if not key.startswith("loss_level_"):
+                continue
+            suffix = key[len("loss_level_") :]
+            if suffix.isdigit():
+                observed_level_losses[int(suffix)] = float(value)
+        for level_idx in observed_level_losses:
+            if level_idx not in level_loss_history:
+                level_loss_history[level_idx] = [float("nan")] * (len(epoch_ids) - 1)
+        for level_idx, series in level_loss_history.items():
+            series.append(observed_level_losses.get(level_idx, float("nan")))
 
         score = metric_for_best(val_metrics)
+        if scheduler is not None:
+            step_scheduler(scheduler, epoch=epoch, metric=score)
+
         if score > best_metric:
             best_metric = score
             # Keep the best checkpoint according to validation metric
@@ -162,6 +181,19 @@ def main():
 
         print(f"epoch={epoch:03d} train: {pretty_metrics(train_metrics)}")
         print(f"epoch={epoch:03d} val:   {pretty_metrics(val_metrics)}")
+
+    level_names = [str(name) for name in cfg.dataset.get("levels", [])]
+    plot_path = save_train_level_losses_plot(
+        out_dir=str(out_dir),
+        epoch_ids=epoch_ids,
+        level_loss_history=level_loss_history,
+        level_names=level_names,
+        model_name=str(cfg.model.name),
+    )
+    if plot_path:
+        print(f"saved_train_loss_plot: {plot_path}")
+    elif level_loss_history:
+        print("saved_train_loss_plot: skipped (matplotlib not installed)")
 
     test_loader, _, _ = build_dataloader(cfg, split="test")
     test_metrics = evaluate(model, test_loader, device, cfg, taxonomy)

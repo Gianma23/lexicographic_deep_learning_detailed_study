@@ -5,13 +5,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 try:
-    from .internal import cast_base, cast_base_deep, cast_small, cast_small_deep
+    # Import registers H-CAST variants into timm's global model registry.
+    from . import internal as _hcast_internal  # noqa: F401
 except Exception:  # pragma: no cover
-    cast_base = cast_base_deep = cast_small = cast_small_deep = None
+    _hcast_internal = None
+
+try:
+    from timm import create_model as timm_create_model
+except Exception:  # pragma: no cover
+    timm_create_model = None
 
 
 class HCASTLite(nn.Module):
-    """Fallback model when timm/DGL stack is unavailable."""
+    """Fallback model when the full timm-backed H-CAST stack is unavailable."""
 
     def __init__(self, num_classes_per_level: List[int], hidden_dim: int = 512, dropout: float = 0.2):
         super().__init__()
@@ -38,16 +44,15 @@ class HCASTLite(nn.Module):
 
 
 class HCASTModel(nn.Module):
-    """Unified wrapper around upstream H-CAST implementation."""
+    """Adapter that builds H-CAST via timm and normalizes output format."""
 
-    _VARIANT_MAP = {
-        "cast_small": cast_small,
-        "cast_small_deep": cast_small_deep,
-        "cast_base": cast_base,
-        "cast_base_deep": cast_base_deep,
-    }
-
-    def __init__(self, num_classes_per_level: List[int], variant: str = "cast_small", fallback_cfg: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        num_classes_per_level: List[int],
+        variant: str = "cast_small",
+        fallback_cfg: Optional[Dict[str, Any]] = None,
+        model_kwargs: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__()
         self.num_classes_per_level = list(num_classes_per_level)
         self.depth = len(self.num_classes_per_level)
@@ -56,8 +61,8 @@ class HCASTModel(nn.Module):
             raise ValueError("H-CAST requires at least 2 hierarchy levels.")
 
         fallback_cfg = fallback_cfg or {}
-        factory = self._VARIANT_MAP.get(variant, cast_small)
-        self._use_fallback = factory is None
+        model_kwargs = model_kwargs or {}
+        self._use_fallback = timm_create_model is None
 
         if self._use_fallback:
             self.fallback = HCASTLite(
@@ -71,7 +76,14 @@ class HCASTModel(nn.Module):
         # Upstream H-CAST expects classes from fine->coarse order.
         self.nb_classes_upstream = list(reversed(self.num_classes_per_level))
         try:
-            self.model = factory(nb_classes=self.nb_classes_upstream)
+            timm_kwargs = dict(model_kwargs)
+            pretrained = bool(timm_kwargs.pop("pretrained", False))
+            self.model = timm_create_model(
+                variant,
+                pretrained=pretrained,
+                nb_classes=self.nb_classes_upstream,
+                **timm_kwargs,
+            )
             self.fallback = None
         except Exception:
             self._use_fallback = True
@@ -84,6 +96,7 @@ class HCASTModel(nn.Module):
 
     @staticmethod
     def _build_default_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
+        #TODO: non sono sicuro serva. I segmenti(hyperpixels) iniziali servono sempre sennò non ha senso H-CAST 
         """Generate deterministic patch-aligned segment ids for H-CAST."""
         bsz, _, h, w = images.shape
         gh = max(1, h // patch_size)

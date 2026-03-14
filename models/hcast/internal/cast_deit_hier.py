@@ -39,14 +39,31 @@ __all__ = [
 class CAST(VisionTransformer):
     def __init__(self, nb_classes, *args, **kwargs):
         depths = kwargs['depth']
+        # timm factory may forward metadata kwargs that VisionTransformer
+        # does not accept in newer releases.
+        for _k in (
+            "pretrained_cfg",
+            "pretrained_cfg_overlay",
+            "checkpoint_path",
+            "cache_dir",
+            "scriptable",
+            "exportable",
+            "no_jit",
+        ):
+            kwargs.pop(_k, None)
+        if "num_classes" not in kwargs and len(nb_classes) > 0:
+            kwargs["num_classes"] = int(nb_classes[0])
         # These entries do not exist in timm.VisionTransformer.
         num_clusters = kwargs.pop('num_clusters', [64, 32, 16, 8])
         kwargs['depth'] = sum(kwargs['depth'])
         super().__init__(**kwargs)
+        if not hasattr(self, "pre_logits"):
+            self.pre_logits = nn.Identity()
 
-        # Do not tackle dist_token.
-        assert self.dist_token is None, 'dist_token is not None.'
-        assert self.head_dist is None, 'head_dist is not None.'
+        # Do not tackle distillation-token heads.
+        # In newer timm versions these attributes may be absent altogether.
+        assert getattr(self, "dist_token", None) is None, "dist_token is not None."
+        assert getattr(self, "head_dist", None) is None, "head_dist is not None."
  
         num_patches = self.patch_embed.num_patches
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, self.embed_dim))

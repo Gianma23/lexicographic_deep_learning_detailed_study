@@ -113,10 +113,13 @@ def compute_loss(
     else:
         gk_loss = torch.zeros((), device=total.device)
 
-    return total, {
+    metrics = {
         "total": float(total.detach().item()),
         "level_ce": float(ce_loss.detach().item()),
         "hv_loss": float(hv_loss.detach().item()),
         "tree_kl": float(tree_kl.detach().item()),
         "gk_loss": float(gk_loss.detach().item()),
     }
+    for level, level_loss in enumerate(level_losses):
+        metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
+    return total, metrics

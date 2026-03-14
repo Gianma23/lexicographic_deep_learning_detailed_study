@@ -1,4 +1,6 @@
-﻿from typing import Any
+﻿import os
+import warnings
+from typing import Any
 
 import torch
 from torch.utils.data import DataLoader
@@ -73,6 +75,24 @@ def build_dataloader(cfg: Any, split: str):
     batch_size = int(cfg.dataloader.batch_size)
     workers = int(cfg.dataloader.get("num_workers", 4))
     pin_memory = bool(cfg.dataloader.get("pin_memory", True))
+    windows_spawn_safe = bool(cfg.dataloader.get("windows_spawn_safe", True))
+
+    # On Windows, CUDA + worker spawning can hit WinError 1455 when each
+    # subprocess imports torch CUDA DLLs (e.g., cublas64_12.dll).
+    if os.name == "nt" and windows_spawn_safe and torch.cuda.is_available() and workers > 0:
+        warnings.warn(
+            "Windows + CUDA detected: forcing dataloader.num_workers=0 to avoid WinError 1455. "
+            "Set dataloader.windows_spawn_safe=false to opt out.",
+            RuntimeWarning,
+        )
+        workers = 0
+
+    if os.name == "nt" and windows_spawn_safe and torch.cuda.is_available() and workers == 0 and pin_memory:
+        warnings.warn(
+            "Windows + CUDA detected: forcing dataloader.pin_memory=false to reduce host memory pressure.",
+            RuntimeWarning,
+        )
+        pin_memory = False
 
     loader = DataLoader(
         dataset,

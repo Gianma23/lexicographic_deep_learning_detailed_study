@@ -8,11 +8,6 @@ import torch.nn.functional as F
 
 from timm.layers import DropPath
 
-try:
-    import dgl.geometry as dgl_geo  # type: ignore
-except Exception:  # pragma: no cover
-    dgl_geo = None
-
 from .utils import segment_mean_nd
 
 
@@ -123,6 +118,64 @@ class GraphPooling(nn.Module):
 
         return filled_src, mean_src
 
+    @staticmethod
+    @torch.no_grad()
+    def _farthest_point_sampler_torch(
+        points: torch.Tensor,
+        npoints: int,
+        start_idx: int = 0,
+    ) -> torch.Tensor:
+        """Batched farthest point sampling implemented in native PyTorch.
+
+        Args:
+          points: A `tensor` of shape `[batch_size, num_points, channels]`.
+          npoints: Number of sampled indices to return.
+          start_idx: Deterministic initial point index.
+
+        Returns:
+          sampled_inds: A `tensor` of shape `[batch_size, npoints]`.
+        """
+        bs, num_points, _ = points.shape
+        if npoints <= 0:
+            raise ValueError(f"npoints must be > 0, got {npoints}")
+        if num_points <= 0:
+            raise ValueError("points must have at least one entry for FPS")
+
+        # We sample unique points first; if more are requested, we pad by repeating
+        # the last valid index to preserve the expected output shape.
+        eff_npoints = min(npoints, num_points)
+        sampled_inds = torch.empty((bs, eff_npoints), dtype=torch.long, device=points.device)
+        batch_inds = torch.arange(bs, device=points.device)
+
+        start = torch.full((bs,), int(start_idx), dtype=torch.long, device=points.device)
+        start = start.clamp_(min=0, max=num_points - 1)
+        sampled_inds[:, 0] = start
+
+        min_dist = torch.full(
+            (bs, num_points),
+            float("inf"),
+            dtype=points.dtype,
+            device=points.device,
+        )
+        selected = points[batch_inds, start]  # [B, C]
+        dist = torch.sum((points - selected.unsqueeze(1)) ** 2, dim=-1)
+        min_dist = torch.minimum(min_dist, dist)
+        min_dist.scatter_(1, start.unsqueeze(1), -1.0)
+
+        for i in range(1, eff_npoints):
+            next_idx = torch.argmax(min_dist, dim=1)
+            sampled_inds[:, i] = next_idx
+            selected = points[batch_inds, next_idx]
+            dist = torch.sum((points - selected.unsqueeze(1)) ** 2, dim=-1)
+            min_dist = torch.minimum(min_dist, dist)
+            min_dist.scatter_(1, next_idx.unsqueeze(1), -1.0)
+
+        if eff_npoints < npoints:
+            pad = sampled_inds[:, -1:].expand(-1, npoints - eff_npoints)
+            sampled_inds = torch.cat([sampled_inds, pad], dim=1)
+
+        return sampled_inds
+
     def forward(self, cls_token, src, mask):
         """Feedforward for clustering with Transformer.
 
@@ -152,22 +205,13 @@ class GraphPooling(nn.Module):
         else:
             sampling_src = padded_src
 
-        if dgl_geo is not None:
-            sampled_inds = dgl_geo.farthest_point_sampler(
-                sampling_src.to(torch.float64),
-                self._num_clusters + 1,
-                0).long()
-            sampled_inds = sampled_inds[:, 1:] - 1
-        else:
-            # Fallback if DGL is unavailable: deterministic evenly-spaced sampling.
-            base = torch.linspace(
-                0,
-                max(0, sl - 1),
-                steps=self._num_clusters,
-                device=src.device,
-                dtype=torch.long,
-            )
-            sampled_inds = base.unsqueeze(0).expand(bs, -1).contiguous()
+        sampled_inds = self._farthest_point_sampler_torch(
+            sampling_src.to(torch.float32),
+            self._num_clusters + 1,
+            start_idx=0,
+        )
+        sampled_inds = sampled_inds[:, 1:] - 1
+        sampled_inds = sampled_inds.clamp_(min=0, max=max(0, sl - 1))
         assert((sampled_inds  >= 0).all()) # Make sure sampling from the squence
         unfold_sampled_inds = sampled_inds.unsqueeze(2).expand(-1, -1, cs)
 
