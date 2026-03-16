@@ -7,6 +7,8 @@ Rivedere il codice di:
 - [ ] CUB-200-2011
 - [ ] Aircraft  
 - [ ] iNat
+Da implementare:
+- [ ] create_transform di timm usata da H-CAST
 
 ### Train
 Rivedere
@@ -28,7 +30,9 @@ Rivedere
 
 # H-CAST
 - [ ] Check loss
+    - [ ] gk_loss negativa a volte?
 - [ ] Ricontrollare iperparametri
+- [ ] aggiungere SEEDS hyperpixels
 
 # HT-CapsNet
 - [ ] Sostituire backbone generico con EfficientNetB7

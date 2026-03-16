@@ -3,6 +3,15 @@
   variant: cast_small
   hidden_dim: 512      # fallback-only when timm stack unavailable
   dropout: 0.2         # fallback-only when timm stack unavailable
+  segments:
+    mode: seeds
+    num_superpixels: 196
+    num_levels: 1
+    prior: 2
+    histogram_bins: 5
+    double_step: false
+    num_iterations: 15
+    patch_size: 8
 
 dataset:
   name: breeds

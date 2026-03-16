@@ -1,8 +1,11 @@
-﻿from typing import Any, Dict, List, Optional
+﻿import warnings
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from .segments import build_seeds_segments, supports_seeds
 
 try:
     # Import registers H-CAST variants into timm's global model registry.
@@ -52,6 +55,7 @@ class HCASTModel(nn.Module):
         variant: str = "cast_small",
         fallback_cfg: Optional[Dict[str, Any]] = None,
         model_kwargs: Optional[Dict[str, Any]] = None,
+        segments_cfg: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         self.num_classes_per_level = list(num_classes_per_level)
@@ -62,7 +66,20 @@ class HCASTModel(nn.Module):
 
         fallback_cfg = fallback_cfg or {}
         model_kwargs = model_kwargs or {}
+        segments_cfg = segments_cfg or {}
+
         self._use_fallback = timm_create_model is None
+        self.segment_mode = str(segments_cfg.get("mode", "grid")).strip().lower()
+        self.segment_patch_size = int(segments_cfg.get("patch_size", 8))
+        self.segment_mean = list(segments_cfg.get("mean", [0.485, 0.456, 0.406]))
+        self.segment_std = list(segments_cfg.get("std", [0.229, 0.224, 0.225]))
+        self.seeds_num_superpixels = int(segments_cfg.get("num_superpixels", 196))
+        self.seeds_num_levels = int(segments_cfg.get("num_levels", 1))
+        self.seeds_prior = int(segments_cfg.get("prior", 2))
+        self.seeds_histogram_bins = int(segments_cfg.get("histogram_bins", 5))
+        self.seeds_double_step = bool(segments_cfg.get("double_step", False))
+        self.seeds_num_iterations = int(segments_cfg.get("num_iterations", 15))
+        self._seeds_warned = False
 
         if self._use_fallback:
             self.fallback = HCASTLite(
@@ -95,8 +112,7 @@ class HCASTModel(nn.Module):
             )
 
     @staticmethod
-    def _build_default_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
-        #TODO: non sono sicuro serva. I segmenti(hyperpixels) iniziali servono sempre sennò non ha senso H-CAST 
+    def _build_grid_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
         """Generate deterministic patch-aligned segment ids for H-CAST."""
         bsz, _, h, w = images.shape
         gh = max(1, h // patch_size)
@@ -104,6 +120,38 @@ class HCASTModel(nn.Module):
         grid = torch.arange(gh * gw, device=images.device, dtype=torch.float32).view(1, 1, gh, gw)
         segments = F.interpolate(grid, size=(h, w), mode="nearest").squeeze(1).long()
         return segments.expand(bsz, -1, -1).contiguous()
+
+    def _build_default_segments(self, images: torch.Tensor) -> torch.Tensor:
+        if self.segment_mode == "seeds":
+            segments = build_seeds_segments(
+                images=images,
+                mean=self.segment_mean,
+                std=self.segment_std,
+                num_superpixels=self.seeds_num_superpixels,
+                num_levels=self.seeds_num_levels,
+                prior=self.seeds_prior,
+                histogram_bins=self.seeds_histogram_bins,
+                double_step=self.seeds_double_step,
+                num_iterations=self.seeds_num_iterations,
+            )
+            if segments is not None:
+                return segments
+            if not self._seeds_warned:
+                self._seeds_warned = True
+                if not supports_seeds():
+                    warnings.warn(
+                        "H-CAST SEEDS mode requested, but OpenCV ximgproc is unavailable. "
+                        "Falling back to patch-grid segments.",
+                        RuntimeWarning,
+                    )
+                else:
+                    warnings.warn(
+                        "H-CAST SEEDS mode requested, but SEEDS generation failed on this input. "
+                        "Falling back to patch-grid segments.",
+                        RuntimeWarning,
+                    )
+
+        return self._build_grid_segments(images, patch_size=self.segment_patch_size)
 
     def forward(
         self,

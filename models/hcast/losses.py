@@ -60,9 +60,9 @@ def _global_kl_loss(
     hard_targets: Optional[torch.Tensor] = None,
     target_probs_per_level: Optional[List[torch.Tensor]] = None,
 ) -> torch.Tensor:
-    # Upstream H-CAST option (`globalkl`): KL between concatenated logits and (possibly mixed) targets.
-    probs = [F.log_softmax(logits, dim=-1) for logits in logits_per_level]
-    all_outputs = torch.cat(probs, dim=1)
+    # Match upstream H-CAST: concatenate raw logits first, then apply one global log_softmax.
+    all_outputs = torch.cat(logits_per_level, dim=1)
+    all_outputs = F.log_softmax(all_outputs, dim=1)
 
     if target_probs_per_level is not None:
         all_targets = torch.cat([target_probs.to(dtype=all_outputs.dtype) for target_probs in target_probs_per_level], dim=1)
@@ -74,7 +74,7 @@ def _global_kl_loss(
             onehots.append(F.one_hot(hard_targets[:, level], num_classes=logits.size(-1)).float())
         all_targets = torch.cat(onehots, dim=1)
 
-    all_targets = all_targets / all_targets.sum(dim=1, keepdim=True).clamp_min(1e-8)
+    all_targets = F.normalize(all_targets, p=1, dim=1)
     return F.kl_div(all_outputs, all_targets, reduction="batchmean")
 
 
@@ -88,13 +88,17 @@ def compute_loss(
     logits_per_level = output["logits_per_level"]
     hard_targets = _hard_targets_from_input(targets)
     mixup_target_probs = _mixup_target_distributions(logits_per_level, targets, cfg)
+    label_smoothing = min(max(float(cfg.train.get("smoothing", 0.0)), 0.0), 1.0)
 
     if mixup_target_probs is not None:
         level_losses = [
             _soft_target_cross_entropy(logits, mixup_target_probs[level]) for level, logits in enumerate(logits_per_level)
         ]
     else:
-        level_losses = [F.cross_entropy(logits, hard_targets[:, level]) for level, logits in enumerate(logits_per_level)]
+        level_losses = [
+            F.cross_entropy(logits, hard_targets[:, level], label_smoothing=label_smoothing)
+            for level, logits in enumerate(logits_per_level)
+        ]
     ce_loss = torch.stack(level_losses).sum()
     total = ce_loss
 

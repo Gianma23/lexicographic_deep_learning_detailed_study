@@ -1,8 +1,19 @@
 ﻿model:
   name: hcast
   variant: cast_small
+  # Official H-CAST uses ImageNet-pretrained CAST for CUB finetuning.
+  finetune: https://huggingface.co/twke/CAST/blob/main/snapshots/deit/imagenet1k/cast_small/best_checkpoint.pth
   hidden_dim: 512
   dropout: 0.2
+  segments:
+    mode: seeds
+    num_superpixels: 196
+    num_levels: 1
+    prior: 2
+    histogram_bins: 5
+    double_step: false
+    num_iterations: 15
+    patch_size: 8
 
 dataset:
   name: cifar-100
