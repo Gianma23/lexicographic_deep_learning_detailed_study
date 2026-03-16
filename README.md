@@ -80,7 +80,6 @@ Each model forward returns:
 
 Implemented adapters:
 
-- `datasets/breeds.py`
 - `datasets/cifar100.py`
 - `datasets/cub.py`
 - `datasets/aircraft.py`
@@ -88,7 +87,6 @@ Implemented adapters:
 
 Supported dataset names:
 
-- `breeds`
 - `cifar100`, `cifar-100`
 - `cub`, `cub-200-2011`
 - `aircraft`, `fgvc-aircraft`

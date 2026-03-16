@@ -14,11 +14,11 @@
     patch_size: 8
 
 dataset:
-  name: breeds
-  root: ./data/imagenet
-  hierarchy_depth: 2
+  name: cub-200-2011
+  root: ./data/CUB_200_2011
+  hierarchy_depth: 3
   image_size: 224
-  levels: [coarse, species]
+  levels: [order, family, species]
   allow_synthetic_fallback: true
 
   # If set, this file is loaded from dataset.root
@@ -29,10 +29,6 @@ dataset:
     train: train.json
     val: val.json
     test: test.json
-
-  # H-CAST breeds defaults (used when annotations are missing)
-  breeds_sort: entity13
-  breeds_train_source: true
 
 dataloader:
   batch_size: 16

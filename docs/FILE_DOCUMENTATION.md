@@ -1,4 +1,4 @@
-﻿# File Documentation
+# File Documentation
 
 This document gives a high-level map of the repository by folder. For Python modules, each section describes files plus top-level functions/classes (including important class methods), without going into low-level implementation details.
 
@@ -85,13 +85,7 @@ Scope notes:
   - `_read_json_samples`: Reads optional JSON annotation format.
   - `_annotation_file_for_split`: Resolves split-specific annotation file path.
 
-### 5.3. `datasets/breeds.py`
-- Purpose: BREEDS adapter built on top of `BaseHierDataset`.
-- Class `BreedsDataset`:
-  - `load_samples`: Loads split annotations from supported BREEDS formats.
-  - `load_taxonomy`: Returns coarse-to-fine taxonomy for consistency checks/metrics.
-
-### 5.4. `datasets/cifar100.py`
+### 5.3. `datasets/cifar100.py`
 - Purpose: CIFAR-100 adapter with canonical coarse/fine hierarchy.
 - Class `CIFAR100Dataset`:
   - `__init__`: Extends base init with CIFAR-specific setup options.
@@ -101,7 +95,7 @@ Scope notes:
   - `_load_image`: Handles CIFAR image conversion to expected format.
   - `load_taxonomy`: Returns taxonomy object for coarse/fine structure.
 
-### 5.5. `datasets/cub.py`
+### 5.4. `datasets/cub.py`
 - Purpose: CUB-200 adapter supporting multiple on-disk formats.
 - Class `CUBDataset`:
   - `load_samples`: Main split loader with format auto-detection.
@@ -113,10 +107,10 @@ Scope notes:
   - `_read_int_int_map`: Utility parser for int-to-int metadata files.
   - `load_taxonomy`: Builds hierarchy using static CUB mapping table.
 
-### 5.6. `datasets/cub_tree.py`
+### 5.5. `datasets/cub_tree.py`
 - Purpose: Static species-to-family/order mapping table used by `CUBDataset`.
 
-### 5.7. `datasets/aircraft.py`
+### 5.6. `datasets/aircraft.py`
 - Purpose: FGVC-Aircraft adapter with official split support and fallbacks.
 - Class `AircraftDataset`:
   - `load_samples`: Loads split lists and constructs hierarchical targets.
@@ -125,10 +119,10 @@ Scope notes:
   - `_read_variant_file`: Parses official split text files.
   - `load_taxonomy`: Builds manufacturer/family/variant taxonomy.
 
-### 5.8. `datasets/aircraft_tree.py`
+### 5.7. `datasets/aircraft_tree.py`
 - Purpose: Static variant-to-family/manufacturer mapping table used by `AircraftDataset`.
 
-### 5.9. `datasets/inat.py`
+### 5.8. `datasets/inat.py`
 - Purpose: iNaturalist adapter supporting iNat18 and iNat21-mini style formats.
 - Class `INatDataset`:
   - `load_samples`: Main routing entry that selects supported annotation format.
@@ -336,5 +330,6 @@ Scope notes:
   - Per-run folders (for example `cifar100/`, `smoke_capsnet/`).
   - `latest.pt`: Most recent checkpoint snapshot.
   - `best.pt`: Best-scoring checkpoint according to configured selection metric.
+
 
 

@@ -7,14 +7,12 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from .aircraft import AircraftDataset
-from .breeds import BreedsDataset
 from .cifar100 import CIFAR100Dataset
 from .cub import CUBDataset
 from .inat import INatDataset
 
 
 _DATASET_REGISTRY = {
-    "breeds": BreedsDataset,
     "cub": CUBDataset,
     "aircraft": AircraftDataset,
     "inat": INatDataset,

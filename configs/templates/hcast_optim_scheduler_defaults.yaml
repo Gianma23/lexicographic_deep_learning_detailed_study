@@ -3,7 +3,7 @@
 #
 # Note:
 # - train.epochs is included because timm scheduler creation uses it.
-# - lr/warmup_lr can be overridden per dataset (e.g., Aircraft/BREEDS README uses 0.001/0.0001).
+# - lr/warmup_lr can be overridden per dataset (e.g., Aircraft README uses 0.001/0.0001).
 
 train:
   epochs: 300
