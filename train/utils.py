@@ -293,14 +293,20 @@ def resume_if_available(
 def metric_for_best(eval_metrics: Dict[str, float]) -> float:
     """Select the checkpoint ranking score from validation metrics.
 
-    Prefers the deepest available level accuracy; breaks ties with acc_path.
+    Prefers weighted hierarchy accuracy; breaks ties with FPA.
+    Falls back to deepest available level accuracy.
     """
+    if "weighted_ap" in eval_metrics or "weighted_acc" in eval_metrics:
+        primary = float(eval_metrics.get("weighted_ap", eval_metrics.get("weighted_acc", 0.0)))
+        tie = float(eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0)))
+        return float(primary + 1e-3 * tie)
+
     deepest = [k for k in eval_metrics if k.startswith("acc_level_")]
     if not deepest:
-        return eval_metrics.get("acc_path", 0.0)
+        return float(eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0)))
     deepest_idx = max(int(k.split("_")[-1]) for k in deepest)
     primary = eval_metrics.get(f"acc_level_{deepest_idx}", 0.0)
-    tie = eval_metrics.get("acc_path", 0.0)
+    tie = eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0))
     # Tiny path-accuracy term stabilizes ordering when primary scores are tied.
     return float(primary + 1e-3 * tie)
 
@@ -348,6 +354,59 @@ def save_train_level_losses_plot(
     ax.set_title(f"{str(model_name).upper()} Train Losses")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(plot_path, dpi=150)
+    plt.close(fig)
+    return str(plot_path)
+
+
+def save_val_level_accuracies_plot(
+    out_dir: str,
+    epoch_ids: List[int],
+    level_acc_history: Dict[int, List[float]],
+    level_names: Optional[List[str]] = None,
+    model_name: str = "Model",
+) -> Optional[str]:
+    """Save validation accuracy curves for each hierarchy level into output directory."""
+    if not epoch_ids or not level_acc_history:
+        return None
+
+    has_finite = False
+    for series in level_acc_history.values():
+        for value in series:
+            if np.isfinite(value):
+                has_finite = True
+                break
+        if has_finite:
+            break
+    if not has_finite:
+        return None
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return None
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    plot_path = Path(out_dir) / "val_accuracies_per_level.png"
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    levels = sorted(level_acc_history.keys())
+    names = level_names or []
+    for level in levels:
+        label_name = names[level] if level < len(names) else f"level_{level}"
+        percent_series = [100.0 * value if np.isfinite(value) else value for value in level_acc_history[level]]
+        ax.plot(epoch_ids, percent_series, label=f"val acc {label_name}", linewidth=1.6)
+
+    ax.set_title(f"{str(model_name).upper()} Validation Accuracies")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_ylim(0, 100)
     ax.grid(True, alpha=0.25)
     ax.legend()
     fig.tight_layout()

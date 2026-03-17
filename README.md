@@ -72,9 +72,16 @@ Each model forward returns:
 ### Metrics logged
 
 - `acc_level_0 ... acc_level_L-1`
-- `acc_path`
-- `inconsistency_rate` (when taxonomy exists)
-- `tice_like` (when taxonomy exists)
+- `weighted_ap` (wAP; class-count weighted Top-1 across levels, H-CAST style)
+- `fpa` (Full Path Accuracy)
+- `tice` (Tree-Induced Consistency Error, lower is better)
+
+Backward-compatible aliases remain available in logs/checkpoints:
+
+- `acc_path` -> `fpa`
+- `inconsistency_rate` -> `tice`
+- `tice_like` -> `1 - tice`
+- `weighted_acc` -> `weighted_ap`
 
 ## Dataset Adapters
 

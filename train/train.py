@@ -21,6 +21,7 @@ from .utils import (
     metric_for_best,
     resume_if_available,
     save_checkpoint,
+    save_val_level_accuracies_plot,
     save_train_level_losses_plot,
     seed_everything,
     step_scheduler,
@@ -100,6 +101,15 @@ def _parse_args():
     parser.add_argument("overrides", nargs="*", default=[])
     return parser.parse_args()
 
+
+def _print_loader_sizes(train_loader, val_loader, test_loader):
+    for split_name, loader in [("train", train_loader), ("val", val_loader), ("test", test_loader)]:
+        sample_count = len(getattr(loader, "dataset", None))
+        batch_count = len(loader)
+        samples_txt = str(sample_count) if sample_count is not None else "unknown"
+        batches_txt = str(batch_count) if batch_count is not None else "unknown"
+        print(f"[data] {split_name:<5} samples={samples_txt} batches={batches_txt}")
+
 # ======================================================================== #
 #                    M A I N   T R A I N I N G   L O O P                   #
 # ======================================================================== #
@@ -113,6 +123,8 @@ def main():
 
     train_loader, num_classes_per_level, taxonomy = build_dataloader(cfg, split="train")
     val_loader, _, _ = build_dataloader(cfg, split="val")
+    test_loader, _, _ = build_dataloader(cfg, split="test")
+    _print_loader_sizes(train_loader, val_loader, test_loader)
 
     model = build_model(cfg, num_classes_per_level, taxonomy)
     load_finetune_checkpoint(cfg, model)
@@ -131,8 +143,10 @@ def main():
     start_epoch, best_metric = resume_if_available(str(cfg.train.get("resume", "")), model, optimizer, scheduler, scaler)
 
     epochs = int(cfg.train.epochs)
+    level_names = [str(name) for name in cfg.dataset.get("levels", [])]
     epoch_ids = []
     level_loss_history = {}
+    level_val_acc_history = {}
     for epoch in range(start_epoch, epochs):
         train_metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, cfg, taxonomy)
         val_metrics = evaluate(model, val_loader, device, cfg, taxonomy)
@@ -151,6 +165,20 @@ def main():
                 level_loss_history[level_idx] = [float("nan")] * (len(epoch_ids) - 1)
         for level_idx, series in level_loss_history.items():
             series.append(observed_level_losses.get(level_idx, float("nan")))
+
+        # Collect per-level validation accuracies for plotting.
+        observed_level_accs = {}
+        for key, value in val_metrics.items():
+            if not key.startswith("acc_level_"):
+                continue
+            suffix = key[len("acc_level_") :]
+            if suffix.isdigit():
+                observed_level_accs[int(suffix)] = float(value)
+        for level_idx in observed_level_accs:
+            if level_idx not in level_val_acc_history:
+                level_val_acc_history[level_idx] = [float("nan")] * (len(epoch_ids) - 1)
+        for level_idx, series in level_val_acc_history.items():
+            series.append(observed_level_accs.get(level_idx, float("nan")))
 
         score = metric_for_best(val_metrics)
         if scheduler is not None:
@@ -182,25 +210,37 @@ def main():
             cfg_resolved,
         )
 
-        print(f"epoch={epoch:03d} train: {pretty_metrics(train_metrics)}")
-        print(f"epoch={epoch:03d} val:   {pretty_metrics(val_metrics)}")
+        epoch_tag = f"[epoch {epoch + 1:03d}/{epochs:03d}]"
+        print(f"{epoch_tag} train | {pretty_metrics(train_metrics, level_names=level_names)}")
+        print(f"{epoch_tag} val   | {pretty_metrics(val_metrics, level_names=level_names)}")
+        print("")
 
-    level_names = [str(name) for name in cfg.dataset.get("levels", [])]
-    plot_path = save_train_level_losses_plot(
+    loss_plot_path = save_train_level_losses_plot(
         out_dir=str(out_dir),
         epoch_ids=epoch_ids,
         level_loss_history=level_loss_history,
         level_names=level_names,
         model_name=str(cfg.model.name),
     )
-    if plot_path:
-        print(f"saved_train_loss_plot: {plot_path}")
+    if loss_plot_path:
+        print(f"saved_train_loss_plot: {loss_plot_path}")
     elif level_loss_history:
         print("saved_train_loss_plot: skipped (matplotlib not installed)")
 
-    test_loader, _, _ = build_dataloader(cfg, split="test")
+    val_plot_path = save_val_level_accuracies_plot(
+        out_dir=str(out_dir),
+        epoch_ids=epoch_ids,
+        level_acc_history=level_val_acc_history,
+        level_names=level_names,
+        model_name=str(cfg.model.name),
+    )
+    if val_plot_path:
+        print(f"saved_val_accuracy_plot: {val_plot_path}")
+    elif level_val_acc_history:
+        print("saved_val_accuracy_plot: skipped (matplotlib not installed)")
+
     test_metrics = evaluate(model, test_loader, device, cfg, taxonomy)
-    print(f"test: {pretty_metrics(test_metrics)}")
+    print(f"[test] {pretty_metrics(test_metrics, level_names=level_names)}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 ﻿model:
   name: hcast
   variant: cast_small
+  # Official H-CAST uses ImageNet-pretrained CAST for CUB finetuning.
+  finetune: https://huggingface.co/twke/CAST/blob/main/snapshots/deit/imagenet1k/cast_small/best_checkpoint.pth
   hidden_dim: 512
   dropout: 0.2
   segments:
@@ -15,7 +17,7 @@
 
 dataset:
   name: fgvc-aircraft
-  root: ./data/aircraft
+  root: ./data/fgvc-aircraft-2013b
   hierarchy_depth: 3
   image_size: 224
   levels: [manufacturer, family, variant]
@@ -30,17 +32,25 @@ dataset:
     test: test.json
 
 dataloader:
-  batch_size: 16
-  num_workers: 2
+  batch_size: 64
+  num_workers: 0
   pin_memory: true
+  windows_spawn_safe: true
 
 train:
-  epochs: 2
+  epochs: 100
   seed: 42
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/aircraft
+  output_dir: ./outputs/hcast_aircraft
+  # H-CAST-style MixUp/CutMix defaults.
+  mixup: 0.8
+  cutmix: 1.0
+  cutmix_minmax: null
+  mixup_prob: 1.0
+  mixup_switch_prob: 0.5
+  mixup_mode: batch
   smoothing: 0.1
 
 optim:
@@ -68,7 +78,7 @@ scheduler:
 
 loss:
   globalkl: true
-  gk_weight: 0.2
+  gk_weight: 0.5
 
 runtime:
   deterministic: true

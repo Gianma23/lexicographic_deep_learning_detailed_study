@@ -43,7 +43,7 @@ train:
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/cub200
+  output_dir: ./outputs/hcast_cub200
   # H-CAST-style MixUp/CutMix defaults.
   mixup: 0.8
   cutmix: 1.0
