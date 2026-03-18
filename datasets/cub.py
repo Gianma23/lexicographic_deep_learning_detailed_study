@@ -2,14 +2,19 @@
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from .base import BaseHierDataset, split_train_val_samples, taxonomy_from_parent_of
+from .base import BaseHierDataset, split_train_val_samples
 from .cub_tree import TREES
 
 
 class CUBDataset(BaseHierDataset):
     """CUB-200 adapter with H-CAST order/family/species hierarchy."""
 
+    def default_levels(self) -> List[str]:
+        """Default hierarchy names used when config does not provide levels."""
+        return ["order", "family", "species"]
+
     def load_samples(self) -> List[Dict[str, Any]]:
+        """Load split samples from JSON, split folders, or official CUB files."""
         ann_file = self._annotation_file_for_split()
         if ann_file is not None:
             return self._read_json_samples(ann_file)
@@ -24,6 +29,7 @@ class CUBDataset(BaseHierDataset):
         return split_train_val_samples(train_samples, split=self.split, cfg=self.cfg, stratify_level=-1)
 
     def _load_from_split_folders(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Read train/test samples from common folder-based split layouts."""
         candidates = [
             (self.root / "train", self.root / "test", "cub_folder"),
             (self.root / "images_split" / "train", self.root / "images_split" / "test", "cub_images_split"),
@@ -39,6 +45,7 @@ class CUBDataset(BaseHierDataset):
         return [], []
 
     def _read_folder_classes(self, root_dir: Path, source: str) -> List[Dict[str, Any]]:
+        """Parse class subfolders and map images to order/family/species labels."""
         class_dirs = sorted([p for p in root_dir.iterdir() if p.is_dir()])
         fallback_species = {p.name: i for i, p in enumerate(class_dirs)}
 
@@ -66,6 +73,7 @@ class CUBDataset(BaseHierDataset):
 
     @staticmethod
     def _species_from_class_name(class_name: str, fallback: int) -> int:
+        """Extract species ID from a class folder prefix, or use a fallback ID."""
         match = re.match(r"^(\d+)", class_name)
         if match:
             species = int(match.group(1)) - 1
@@ -74,6 +82,7 @@ class CUBDataset(BaseHierDataset):
         return fallback
 
     def _load_from_official_files(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Load CUB-200 from official metadata files and split flags."""
         roots = [self.root, self.root / "CUB_200_2011"]
         for base in roots:
             images_txt = base / "images.txt"
@@ -124,6 +133,7 @@ class CUBDataset(BaseHierDataset):
 
     @staticmethod
     def _read_int_str_map(path: Path) -> Dict[int, str]:
+        """Read two-column text files mapping integer keys to string values."""
         out: Dict[int, str] = {}
         with path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -138,6 +148,7 @@ class CUBDataset(BaseHierDataset):
 
     @staticmethod
     def _read_int_int_map(path: Path) -> Dict[int, int]:
+        """Read two-column text files mapping integer keys to integer values."""
         out: Dict[int, int] = {}
         with path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -149,15 +160,3 @@ class CUBDataset(BaseHierDataset):
                 except ValueError:
                     continue
         return out
-
-    def load_taxonomy(self):
-        tax = super().load_taxonomy()
-        if tax is not None:
-            return tax
-
-        parent_of = {
-            1: {int(s["labels"][1]): int(s["labels"][0]) for s in self.samples},
-            2: {int(s["labels"][2]): int(s["labels"][1]) for s in self.samples},
-        }
-        levels = list(self.cfg.dataset.get("levels", [])) or ["order", "family", "species"]
-        return taxonomy_from_parent_of(parent_of, levels)

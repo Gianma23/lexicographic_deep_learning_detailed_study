@@ -10,7 +10,6 @@ from .base import (
     resolve_split_seed,
     resolve_val_split_ratio,
     stratified_train_val_indices,
-    taxonomy_from_parent_of,
 )
 
 # Canonical CIFAR-100 fine->coarse mapping aligned with torchvision fine-label order.
@@ -37,12 +36,18 @@ _COARSE_TO_SUPER = [
 class CIFAR100Dataset(BaseHierDataset):
     """CIFAR-100 adapter with hierarchy super->coarse->fine."""
 
+    def default_levels(self) -> List[str]:
+        """Default hierarchy names used when config does not provide levels."""
+        return ["coarse1", "coarse2", "fine"]
+
     def __init__(self, cfg: Any, split: str, transform=None):
+        """Initialize CIFAR storage used for index-based image retrieval."""
         self._cifar_images = None
         self._cifar_targets: List[int] = []
         super().__init__(cfg=cfg, split=split, transform=transform)
 
     def _label_path(self, fine: int, coarse: int) -> List[int]:
+        """Build hierarchical labels for the configured depth (2 or 3 levels)."""
         if self.depth == 2:
             return [coarse, fine]
         if self.depth == 3:
@@ -53,20 +58,8 @@ class CIFAR100Dataset(BaseHierDataset):
             "Use 3 for super->coarse->fine."
         )
 
-    def _default_parent_of(self) -> Dict[int, Dict[int, int]]:
-        if self.depth == 2:
-            return {1: {fine: coarse for fine, coarse in enumerate(_FINE_TO_COARSE)}}
-        if self.depth == 3:
-            return {
-                1: {coarse: super_cls for coarse, super_cls in enumerate(_COARSE_TO_SUPER)},
-                2: {fine: coarse for fine, coarse in enumerate(_FINE_TO_COARSE)},
-            }
-        raise ValueError(
-            f"CIFAR-100 supports hierarchy_depth in {{2, 3}}, got {self.depth}. "
-            "Use 3 for super->coarse->fine."
-        )
-
     def load_samples(self) -> List[Dict[str, Any]]:
+        """Load split samples from torchvision CIFAR-100 with optional val split."""
         ann_file = self._annotation_file_for_split()
         if ann_file is not None:
             return self._read_json_samples(ann_file)
@@ -117,18 +110,10 @@ class CIFAR100Dataset(BaseHierDataset):
         return samples
 
     def _load_image(self, image_ref: Optional[Path]):
+        """Resolve int-backed CIFAR image references or defer to path-based loader."""
         if isinstance(image_ref, int):
             if self._cifar_images is None:
                 image_size = int(self.cfg.dataset.get("image_size", 32))
                 return Image.new("RGB", (image_size, image_size), color=(127, 127, 127))
             return Image.fromarray(self._cifar_images[image_ref]).convert("RGB")
         return super()._load_image(image_ref)
-
-    def load_taxonomy(self):
-        tax = super().load_taxonomy()
-        if tax is not None:
-            return tax
-
-        parent_of = self._default_parent_of()
-        levels = list(self.cfg.dataset.get("levels", [])) or ["coarse1", "coarse2", "fine"]
-        return taxonomy_from_parent_of(parent_of, levels)

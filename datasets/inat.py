@@ -3,13 +3,14 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import BaseHierDataset, infer_parent_of_from_samples, split_train_val_samples, taxonomy_from_parent_of
+from .base import BaseHierDataset, split_train_val_samples
 
 
 class INatDataset(BaseHierDataset):
     """iNaturalist adapter supporting iNat18 and iNat21-mini style metadata."""
 
     def load_samples(self) -> List[Dict[str, Any]]:
+        """Load samples from explicit annotations, iNat18 files, or iNat21 lists."""
         ann_file = self._annotation_file_for_split()
         if ann_file is not None:
             if ann_file.suffix.lower() == ".json":
@@ -23,6 +24,7 @@ class INatDataset(BaseHierDataset):
         return self._load_inat21_split()
 
     def _load_inat18_split(self) -> Optional[List[Dict[str, Any]]]:
+        """Load split samples from iNaturalist18 text files when present."""
         train_path = self._find_existing([self.root / "iNaturalist18_train.txt"])
         val_path = self._find_existing([self.root / "iNaturalist18_val.txt"])
         test_path = self._find_existing([self.root / "iNaturalist18_test.txt"])
@@ -52,6 +54,7 @@ class INatDataset(BaseHierDataset):
         return []
 
     def _load_inat21_split(self) -> List[Dict[str, Any]]:
+        """Load split samples from iNat21-mini style train/val/test lists."""
         train_path = self._find_inat21_split_file("train")
         val_path = self._find_inat21_split_file("val")
         test_path = self._find_inat21_split_file("test")
@@ -90,6 +93,7 @@ class INatDataset(BaseHierDataset):
         return []
 
     def _find_inat21_split_file(self, split_name: str) -> Optional[Path]:
+        """Resolve the first existing iNat21-style split file for ``split_name``."""
         names_by_split = {
             "train": [
                 "inat21_mini_train.txt",
@@ -126,12 +130,14 @@ class INatDataset(BaseHierDataset):
 
     @staticmethod
     def _find_existing(candidates: List[Path]) -> Optional[Path]:
+        """Return the first existing path from a list of candidates."""
         for path in candidates:
             if path.exists():
                 return path
         return None
 
     def _read_txt_annotations(self, txt_path: Path) -> List[Dict[str, Any]]:
+        """Parse txt rows formatted as ``image species family order``."""
         samples: List[Dict[str, Any]] = []
         with txt_path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -157,6 +163,7 @@ class INatDataset(BaseHierDataset):
         return samples
 
     def _resolve_image_path(self, rel_path: str, list_path: Path) -> Path:
+        """Resolve an image path relative to dataset root or annotation file path."""
         rel = Path(rel_path)
         if rel.is_absolute():
             return rel
@@ -171,6 +178,7 @@ class INatDataset(BaseHierDataset):
         return candidates[0]
 
     def _read_inat18(self, txt_path: Path) -> List[Dict[str, Any]]:
+        """Parse iNat18 txt annotations using ``inat18_tree.json`` hierarchy data."""
         tree_candidates = [
             self.root / "inat18_tree.json",
             self.root / "data" / "inat18_tree.json",
@@ -211,12 +219,3 @@ class INatDataset(BaseHierDataset):
                 )
 
         return samples
-
-    def load_taxonomy(self):
-        tax = super().load_taxonomy()
-        if tax is not None:
-            return tax
-
-        parent_of = infer_parent_of_from_samples(self.samples, self.depth)
-        levels = list(self.cfg.dataset.get("levels", [])) or None
-        return taxonomy_from_parent_of(parent_of, levels)

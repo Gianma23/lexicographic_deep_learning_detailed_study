@@ -1,15 +1,17 @@
-﻿# Hierarchical Image Classification (Unified H-CAST + HT-CapsNet)
+﻿# Hierarchical Image Classification (Unified H-CAST + HT-CapsNet + HRN)
 
-This repo unifies two hierarchical models behind one PyTorch training/eval pipeline:
+This repo unifies three hierarchical models behind one PyTorch training/eval pipeline:
 
 - H-CAST (upstream commit: `b1a222bb32da5caf48691b5987d56b7483801907`)
 - HT-CapsNet (upstream commit: `8a0ea23f3e6b68b75d8add07674b4b0288380417`)
+- HRN (upstream repo: `MonsterZhZh/HRN`)
 
 Single CLI entrypoint:
 
 ```bash
 python -m train.train --config configs/hcast.yaml
 python -m train.train --config configs/capsnet.yaml
+python -m train.train --config configs/hrn_cub200.yaml
 ```
 
 Dataset-ready configs:
@@ -19,6 +21,9 @@ python -m train.train --config configs/cifar100.yaml
 python -m train.train --config configs/cub200.yaml
 python -m train.train --config configs/aircraft.yaml
 python -m train.train --config configs/inat21mini.yaml
+python -m train.train --config configs/hrn_cifar100.yaml
+python -m train.train --config configs/hrn_cub200.yaml
+python -m train.train --config configs/hrn_aircraft.yaml
 ```
 ## Setup
 ```bash
@@ -41,6 +46,7 @@ Full file-by-file documentation is available at:
 | `hcast/cast_models/utils.py` | `models/hcast/internal/utils.py` |
 | `ht-capsnet/src/model_arch/HTRCapsNet.py` (routing logic) | `models/ht_capsnet/routing.py` + `models/ht_capsnet/model.py` (PyTorch translation) |
 | `ht-capsnet/src/models.py` (loss/config ideas) | `models/ht_capsnet/losses.py` + `models/ht_capsnet/factory.py` |
+| `HRN/CUB_Aircraft/RFM.py` + `HRN/CUB_Aircraft/tree_loss.py` | `models/hrn/model.py` + `models/hrn/losses.py` (clean PyTorch port) |
 
 ## Unified APIs
 
@@ -103,7 +109,6 @@ Priority order per dataset:
 
 1. Use `dataset.annotations.{train,val,test}` JSON/TXT if present.
 2. Use dataset-specific canonical formats.
-3. If enabled, use synthetic fallback (`dataset.allow_synthetic_fallback: true`) for smoke tests.
 
 ### Expected canonical formats
 
@@ -171,4 +176,6 @@ Expected minimal structure:
 
 - H-CAST path uses upstream internals directly under `models/hcast/internal/`.
 - HT-CapsNet upstream is TensorFlow; this repo provides a PyTorch translation of the taxonomy-guided routing path while preserving the unified interfaces and training flow.
+- HRN backend supports exactly 3 hierarchy levels and uses HRN-style residual branch heads with combinatorial tree loss plus fine-level CE.
 - If optional deps for full H-CAST stack are missing (e.g., `timm`), model code falls back to a lightweight path so the CLI remains runnable.
+

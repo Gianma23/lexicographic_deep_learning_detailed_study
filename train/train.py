@@ -110,6 +110,12 @@ def _print_loader_sizes(train_loader, val_loader, test_loader):
         batches_txt = str(batch_count) if batch_count is not None else "unknown"
         print(f"[data] {split_name:<5} samples={samples_txt} batches={batches_txt}")
 
+
+def _print_model_parameter_count(model):
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[model] parameters total={total_params:,} trainable={trainable_params:,}")
+
 # ======================================================================== #
 #                    M A I N   T R A I N I N G   L O O P                   #
 # ======================================================================== #
@@ -127,6 +133,7 @@ def main():
     _print_loader_sizes(train_loader, val_loader, test_loader)
 
     model = build_model(cfg, num_classes_per_level, taxonomy)
+    _print_model_parameter_count(model)
     load_finetune_checkpoint(cfg, model)
     model = model.to(device)
     optimizer = build_optimizer(cfg, model)
@@ -238,6 +245,25 @@ def main():
         print(f"saved_val_accuracy_plot: {val_plot_path}")
     elif level_val_acc_history:
         print("saved_val_accuracy_plot: skipped (matplotlib not installed)")
+
+    # Evaluate the best validation checkpoint on the test set.
+    if best_ckpt.exists():
+        checkpoint = torch.load(best_ckpt, map_location=device)
+
+        if "model" in checkpoint:
+            model.load_state_dict(checkpoint["model"])
+        elif "model_state" in checkpoint:
+            model.load_state_dict(checkpoint["model_state"])
+        elif "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            raise KeyError(
+                f"Could not find model weights inside checkpoint keys: {list(checkpoint.keys())}"
+            )
+
+        print(f"[test] loaded best checkpoint from: {best_ckpt}")
+    else:
+        print(f"[test] warning: best checkpoint not found at {best_ckpt}, using last model in memory")
 
     test_metrics = evaluate(model, test_loader, device, cfg, taxonomy)
     print(f"[test] {pretty_metrics(test_metrics, level_names=level_names)}")

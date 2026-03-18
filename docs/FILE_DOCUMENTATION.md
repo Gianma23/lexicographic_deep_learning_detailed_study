@@ -41,6 +41,15 @@ Scope notes:
 ### 2.6. `configs/inat21mini.yaml`
 - Purpose: Dataset-focused run preset for iNat21-mini hierarchy experiments.
 
+### 2.7. `configs/hrn_cub200.yaml`
+- Purpose: HRN preset for CUB-200 three-level hierarchy experiments.
+
+### 2.8. `configs/hrn_aircraft.yaml`
+- Purpose: HRN preset for FGVC-Aircraft three-level hierarchy experiments.
+
+### 2.9. `configs/hrn_cifar100.yaml`
+- Purpose: HRN preset for CIFAR-100 three-level hierarchy experiments.
+
 ## 3. Data Folder (`data/`)
 
 ### 3.1. `data/` (directory)
@@ -78,7 +87,6 @@ Scope notes:
   - `_remap_taxonomy_ids`: Keeps taxonomy consistent after label remapping.
   - `_remap_labels_to_contiguous`: Enforces contiguous ids per hierarchy level.
   - `_compute_num_classes_per_level`: Computes class count per level.
-  - `_build_synthetic_samples`: Generates synthetic fallback samples for smoke tests.
   - `__len__`: Returns dataset size.
   - `__getitem__`: Returns one transformed sample with multi-level labels and meta.
   - `_load_image`: Centralized image loading helper.
@@ -140,7 +148,7 @@ Scope notes:
 ### 6.1. `models/__init__.py`
 - Purpose: Unified model/loss dispatcher across model families.
 - Functions:
-  - `build_model`: Builds selected model backend (`hcast` or `ht_capsnet`).
+  - `build_model`: Builds selected model backend (`hcast`, `ht_capsnet`, or `hrn`).
   - `compute_loss`: Dispatches loss computation to the selected backend.
 
 ## 7. H-CAST Package (`models/hcast/`)
@@ -273,12 +281,40 @@ Scope notes:
   - `_level_weights`: Resolves level-wise loss weighting from config.
   - `compute_loss`: Combines per-level margin loss and hierarchy penalty terms.
 
-## 10. Training Package (`train/`)
+## 10. HRN Package (`models/hrn/`)
 
-### 10.1. `train/__init__.py`
+### 10.1. `models/hrn/__init__.py`
+- Purpose: Public exports for HRN model construction and loss API.
+
+### 10.2. `models/hrn/factory.py`
+- Purpose: HRN-specific model constructor and validation.
+- Functions:
+  - `build_model`: Builds `HRNModel` and enforces exactly 3 hierarchy levels.
+
+### 10.3. `models/hrn/model.py`
+- Purpose: PyTorch HRN implementation with residual hierarchical branch fusion.
+- Class `BasicConv`:
+  - `__init__`: Configures branch convolutional refinement block.
+  - `forward`: Applies conv/bn/relu operations.
+- Class `HRNModel`:
+  - `__init__`: Builds ResNet-50 trunk, branch projections, and per-level heads.
+  - `_branch_embedding`: Produces level-specific pooled embedding.
+  - `forward`: Applies residual feature transfer (`L1+=L0`, `L2+=L1`) and returns unified logits payload.
+
+### 10.4. `models/hrn/losses.py`
+- Purpose: HRN combinatorial taxonomy-aware loss and fine-level CE.
+- Functions:
+  - `_normalize_parent_of`: Normalizes taxonomy parent maps.
+  - `_build_state_space`: Builds combinatorial state-space from taxonomy.
+  - `_combinatorial_tree_loss`: Computes numerically stable tree marginal loss.
+  - `compute_loss`: Combines tree loss with fine-level CE and emits per-level metrics.
+
+## 11. Training Package (`train/`)
+
+### 11.1. `train/__init__.py`
 - Purpose: Public exports for epoch-level training/evaluation loops.
 
-### 10.2. `train/train.py`
+### 11.2. `train/train.py`
 - Purpose: Main CLI entrypoint and config orchestration.
 - Class `AttrDict`:
   - `__getattr__`: Attribute-style read access for config dictionaries.
@@ -291,19 +327,19 @@ Scope notes:
   - `_parse_args`: Defines/reads command-line arguments.
   - `main`: Full training workflow (load config, build components, run epochs, checkpoint, evaluate).
 
-### 10.3. `train/engine.py`
+### 11.3. `train/engine.py`
 - Purpose: Epoch-level optimization and evaluation loops.
 - Functions:
   - `train_one_epoch`: Executes one training epoch with optimizer/scaler integration.
   - `evaluate`: Runs model on validation/test loader and aggregates metrics.
 
-### 10.4. `train/eval.py`
+### 11.4. `train/eval.py`
 - Purpose: Batch-level evaluation metric assembly and report formatting.
 - Functions:
   - `evaluate_batch`: Computes metrics for one model output batch.
   - `pretty_metrics`: Formats metric dictionary for human-readable logging.
 
-### 10.5. `train/metrics.py`
+### 11.5. `train/metrics.py`
 - Purpose: Shared metric calculations for hierarchical classification.
 - Functions:
   - `per_level_top1`: Computes top-1 accuracy per hierarchy level.
@@ -312,7 +348,7 @@ Scope notes:
   - `tice_like_score`: Computes taxonomy-informed confidence/consistency score.
   - `merge_metric_batches`: Merges batch metric dictionaries into epoch summary.
 
-### 10.6. `train/utils.py`
+### 11.6. `train/utils.py`
 - Purpose: Reproducibility, optimization setup, and checkpoint lifecycle helpers.
 - Functions:
   - `seed_everything`: Sets global random seeds and deterministic runtime switches.
@@ -322,14 +358,18 @@ Scope notes:
   - `resume_if_available`: Restores training state from checkpoint when requested.
   - `metric_for_best`: Selects scalar metric used to track/save best checkpoint.
 
-## 11. Outputs Folder (`outputs/`)
+## 12. Outputs Folder (`outputs/`)
 
-### 11.1. `outputs/` (directory)
+### 12.1. `outputs/` (directory)
 - Purpose: Runtime artifacts from training runs.
 - Typical contents:
   - Per-run folders (for example `cifar100/`, `smoke_capsnet/`).
   - `latest.pt`: Most recent checkpoint snapshot.
   - `best.pt`: Best-scoring checkpoint according to configured selection metric.
+
+
+
+
 
 
 

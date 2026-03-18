@@ -24,7 +24,6 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
   allow_synthetic_fallback: true
-  taxonomy_file: null
   download: true
   val_split_ratio: 0.1
   split_seed: null
@@ -37,7 +36,6 @@ dataset:
 dataloader:
   batch_size: 256
   num_workers: 0
-  pin_memory: false
   windows_spawn_safe: true
 
 train:

@@ -1,0 +1,61 @@
+﻿model:
+  name: hrn
+  backbone: resnet50
+  pretrained: true
+  branch_hidden_dim: 1024
+  embedding_dim: 512
+  dropout: 0.0
+
+dataset:
+  name: fgvc-aircraft
+  root: ./data/fgvc-aircraft-2013b
+  hierarchy_depth: 3
+  image_size: 224
+  levels: [manufacturer, family, variant]
+  val_split_ratio: 0.1
+  split_seed: null
+
+  annotations:
+    train: train.json
+    val: val.json
+    test: test.json
+
+dataloader:
+  batch_size: 32
+  num_workers: 0
+  windows_spawn_safe: true
+
+train:
+  epochs: 100
+  seed: 42
+  device: cuda
+  amp: true
+  resume: ""
+  output_dir: ./outputs/hrn_aircraft
+  mixup: 0.8
+  cutmix: 1.0
+  cutmix_minmax: null
+  mixup_prob: 1.0
+  mixup_switch_prob: 0.5
+  mixup_mode: batch
+  smoothing: 0.1
+
+optim:
+  name: sgd
+  lr: 0.002
+  weight_decay: 0.0005
+  momentum: 0.9
+  use_timm: false
+
+scheduler:
+  name: cosine
+  use_timm: false
+
+loss:
+  tree_weight: 1.0
+  fine_ce_weight: 1.0
+  temperature: 1.0
+  eps: 1.0e-8
+
+runtime:
+  deterministic: true

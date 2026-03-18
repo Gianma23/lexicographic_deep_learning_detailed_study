@@ -22,7 +22,6 @@ dataset:
   image_size: 224
   levels: [manufacturer, family, variant]
   allow_synthetic_fallback: true
-  taxonomy_file: null
   val_split_ratio: 0.1
   split_seed: null
 
@@ -34,7 +33,6 @@ dataset:
 dataloader:
   batch_size: 64
   num_workers: 0
-  pin_memory: true
   windows_spawn_safe: true
 
 train:

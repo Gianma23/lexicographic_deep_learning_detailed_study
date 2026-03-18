@@ -1,8 +1,10 @@
 ﻿model:
   name: hcast
   variant: cast_small
-  hidden_dim: 512      # fallback-only when timm stack unavailable
-  dropout: 0.2         # fallback-only when timm stack unavailable
+  # Official H-CAST uses ImageNet-pretrained CAST for CUB finetuning.
+  finetune: https://huggingface.co/twke/CAST/blob/main/snapshots/deit/imagenet1k/cast_small/best_checkpoint.pth
+  hidden_dim: 512
+  dropout: 0.2
   segments:
     mode: seeds
     num_superpixels: 196
@@ -12,6 +14,12 @@
     double_step: false
     num_iterations: 15
     patch_size: 8
+  semantic_projection:
+    enabled: true
+    stages: [1, 2, 3]
+    floor: 0.15
+    eps: 1.0e-6
+    metric: dot
 
 dataset:
   name: cub-200-2011
@@ -19,27 +27,26 @@ dataset:
   hierarchy_depth: 3
   image_size: 224
   levels: [order, family, species]
-  allow_synthetic_fallback: true
+  val_split_ratio: 0.1
+  split_seed: null
 
-  # If set, this file is loaded from dataset.root
-  taxonomy_file: null
-
-  # Unified JSON annotations (optional)
   annotations:
     train: train.json
     val: val.json
     test: test.json
 
 dataloader:
-  batch_size: 16
-  num_workers: 2
-  pin_memory: true
+  batch_size: 64
+  num_workers: 0
+  windows_spawn_safe: true
 
 train:
-  epochs: 2
+  epochs: 100
   seed: 42
   device: cuda
   amp: true
+  resume: ""
+  output_dir: ./outputs/new_hcast_cub200
   # H-CAST-style MixUp/CutMix defaults.
   mixup: 0.8
   cutmix: 1.0
@@ -48,12 +55,10 @@ train:
   mixup_switch_prob: 0.5
   mixup_mode: batch
   smoothing: 0.1
-  resume: ""
-  output_dir: ./outputs/hcast
 
 optim:
   name: adamw
-  lr: 0.001
+  lr: 0.0005
   weight_decay: 0.05
   momentum: 0.9
   opt_eps: 1.0e-8
@@ -62,7 +67,7 @@ optim:
 
 scheduler:
   name: cosine
-  warmup_lr: 0.0001
+  warmup_lr: 0.000001
   min_lr: 0.00001
   decay_epochs: 30
   warmup_epochs: 5
@@ -76,7 +81,7 @@ scheduler:
 
 loss:
   globalkl: true
-  gk_weight: 0.2
+  gk_weight: 0.5
 
 runtime:
   deterministic: true

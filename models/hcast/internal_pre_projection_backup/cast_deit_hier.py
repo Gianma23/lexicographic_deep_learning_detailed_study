@@ -1,4 +1,4 @@
-"""Define CAST model for classification following DeiT convention.
+﻿"""Define CAST model for classification following DeiT convention.
 
 Modified from:
     https://github.com/facebookresearch/moco-v3/blob/main/vits.py
@@ -55,15 +55,6 @@ class CAST(VisionTransformer):
             kwargs["num_classes"] = int(nb_classes[0])
         # These entries do not exist in timm.VisionTransformer.
         num_clusters = kwargs.pop('num_clusters', [64, 32, 16, 8])
-        semantic_projection = kwargs.pop("semantic_projection", None) or {}
-        semantic_floor = float(semantic_projection.get("floor", 0.0))
-        self.semantic_projection_enabled = bool(semantic_projection.get("enabled", False))
-        self.semantic_projection_stages = self._parse_projection_stages(
-            semantic_projection.get("stages", [1, 2, 3])
-        )
-        self.semantic_projection_floor = min(1.0, max(0.0, semantic_floor))
-        self.semantic_projection_eps = float(semantic_projection.get("eps", 1e-6))
-        self.semantic_projection_metric = str(semantic_projection.get("metric", "dot")).strip().lower()
         kwargs['depth'] = sum(kwargs['depth'])
         super().__init__(**kwargs)
         if not hasattr(self, "pre_logits"):
@@ -129,44 +120,9 @@ class CAST(VisionTransformer):
         self.blocks4, self.pool4 = blocks[3], pools[3]
         # --------------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_projection_stages(stages):
-        if isinstance(stages, str):
-            values = [v.strip() for v in stages.split(",") if v.strip()]
-            return {int(v) for v in values}
-        if isinstance(stages, (list, tuple, set)):
-            return {int(v) for v in stages}
-        return {1, 2, 3}
-
-    def _coarsest_head_module(self):
-        if getattr(self, "num_manufacturer", 0) > 0 and hasattr(self, "manufacturer_head"):
-            return self.manufacturer_head
-        return self.family_head
-
-    def _build_projection_ctx(self, cls_repr):
-        coarse_head = self._coarsest_head_module()
-        if coarse_head is None:
-            return None
-        if isinstance(coarse_head, nn.Identity):
-            return None
-
-        with torch.no_grad():
-            coarse_logits = coarse_head(cls_repr.detach())
-            if coarse_logits.ndim != 2:
-                return None
-            p_ref = torch.softmax(coarse_logits, dim=-1)
-
-        return {
-            "enabled": True,
-            "p_ref": p_ref,
-            "coarse_head": coarse_head,
-            "floor": self.semantic_projection_floor,
-            "eps": self.semantic_projection_eps,
-            "metric": self.semantic_projection_metric,
-        }
 
     def _block_operations(self, x, cls_token, x_pad_mask,
-                          nn_block, pool_block, norm_block, stage_idx):
+                          nn_block, pool_block, norm_block):
         """Wrapper to define operations per block.
         """
         # Forward nn block with cls_token and x
@@ -174,13 +130,9 @@ class CAST(VisionTransformer):
         cls_x = nn_block(cls_x).type_as(x)
         cls_token, x = cls_x[:, :1, :], cls_x[:, 1:, :]
 
-        projection_ctx = None
-        if self.semantic_projection_enabled and stage_idx in self.semantic_projection_stages:
-            projection_ctx = self._build_projection_ctx(cls_x[:, 0, :])
-
         # Perform pooling only on x
         cls_token, pool_logit, centroid, pool_pad_mask, pool_inds = (
-            pool_block(cls_token, x, x_pad_mask, projection_ctx=projection_ctx)
+            pool_block(cls_token, x, x_pad_mask)
         )
 
         # Generate output by cls_token
@@ -223,7 +175,7 @@ class CAST(VisionTransformer):
         (block1, cls_token1, pool_logit1, centroid1,
          pool_padding_mask1, pool_inds1, out1) = self._block_operations(
             x, cls_token, x_padding_mask,
-            self.blocks1, self.pool1, None, stage_idx=1)
+            self.blocks1, self.pool1, None)
 
         intermediates1 = {
             'logit1': pool_logit1, 'centroid1': centroid1, 'block1': block1,
@@ -236,7 +188,7 @@ class CAST(VisionTransformer):
         (block2, cls_token2, pool_logit2, centroid2,
          pool_padding_mask2, pool_inds2, out2) = self._block_operations(
             centroid1, cls_token1, pool_padding_mask1,
-            self.blocks2, self.pool2, None, stage_idx=2)
+            self.blocks2, self.pool2, None)
 
         intermediates2 = {
             'logit2': pool_logit2, 'centroid2': centroid2, 'block2': block2,
@@ -248,7 +200,7 @@ class CAST(VisionTransformer):
         (block3, cls_token3, pool_logit3, centroid3,
          pool_padding_mask3, pool_inds3, out3) = self._block_operations(
             centroid2, cls_token2, pool_padding_mask2,
-            self.blocks3, self.pool3, None, stage_idx=3)
+            self.blocks3, self.pool3, None)
 
         intermediates3 = {
             'logit3': pool_logit3, 'centroid3': centroid3, 'block3': block3,
@@ -260,7 +212,7 @@ class CAST(VisionTransformer):
         (block4, cls_token4, pool_logit4, centroid4,
          pool_padding_mask4, pool_inds4, out4) = self._block_operations(
             centroid3, cls_token3, pool_padding_mask3,
-            self.blocks4, self.pool4, self.norm, stage_idx=4)
+            self.blocks4, self.pool4, self.norm)
 
         out4 = self.pre_logits(out4)
 

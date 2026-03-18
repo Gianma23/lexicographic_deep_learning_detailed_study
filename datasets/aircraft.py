@@ -3,13 +3,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from .aircraft_tree import TREES
-from .base import BaseHierDataset, split_train_val_samples, taxonomy_from_parent_of
+from .base import BaseHierDataset, split_train_val_samples
 
 
 class AircraftDataset(BaseHierDataset):
     """FGVC-Aircraft adapter aligned with H-CAST hierarchy."""
 
+    def default_levels(self) -> List[str]:
+        """Default hierarchy names used when config does not provide levels."""
+        return ["manufacturer", "family", "variant"]
+
     def load_samples(self) -> List[Dict[str, Any]]:
+        """Load split samples from JSON or FGVC-Aircraft text annotations."""
         ann_file = self._annotation_file_for_split()
         if ann_file is not None:
             return self._read_json_samples(ann_file)
@@ -45,6 +50,7 @@ class AircraftDataset(BaseHierDataset):
         return []
 
     def _resolve_data_root(self) -> Path:
+        """Resolve the directory that contains images and split label files."""
         candidates = [
             self.root / "fgvc-aircraft-2013b" / "data",
             self.root / "data",
@@ -66,6 +72,7 @@ class AircraftDataset(BaseHierDataset):
         return candidates[0]
 
     def _build_variant_to_id(self, data_root: Path) -> Dict[str, int]:
+        """Build variant-name to index mapping from CSV, variants.txt, or splits."""
         air_csv_candidates = [
             self.root / "Air.csv",
             self.root / "data" / "Air.csv",
@@ -128,6 +135,7 @@ class AircraftDataset(BaseHierDataset):
         variant_to_id: Dict[str, int],
         source: str,
     ) -> List[Dict[str, Any]]:
+        """Parse FGVC variant label files and emit normalized sample dicts."""
         samples: List[Dict[str, Any]] = []
         with labels_path.open("r", encoding="utf-8") as f:
             for line in f:
@@ -161,15 +169,3 @@ class AircraftDataset(BaseHierDataset):
                 )
 
         return samples
-
-    def load_taxonomy(self):
-        tax = super().load_taxonomy()
-        if tax is not None:
-            return tax
-
-        parent_of = {
-            1: {int(s["labels"][1]): int(s["labels"][0]) for s in self.samples},
-            2: {int(s["labels"][2]): int(s["labels"][1]) for s in self.samples},
-        }
-        levels = list(self.cfg.dataset.get("levels", [])) or ["manufacturer", "family", "variant"]
-        return taxonomy_from_parent_of(parent_of, levels)

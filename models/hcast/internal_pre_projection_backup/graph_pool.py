@@ -1,4 +1,4 @@
-"""Define Graph Pooling."""
+﻿"""Define Graph Pooling."""
 import math
 from functools import partial
 
@@ -9,69 +9,6 @@ import torch.nn.functional as F
 from timm.layers import DropPath
 
 from .utils import segment_mean_nd
-
-
-def semantic_projection(
-    assignments_vis: torch.Tensor,
-    p_ref: torch.Tensor,
-    p_centroids: torch.Tensor,
-    floor: float = 0.0,
-    eps: float = 1e-6,
-    metric: str = "dot",
-) -> torch.Tensor:
-    """Apply post-hoc semantic projection to visual assignments.
-
-    Args:
-      assignments_vis: Tensor of shape [B, S, C].
-      p_ref: Detached coarse reference probs of shape [B, K].
-      p_centroids: Detached centroid coarse probs of shape [B, C, K].
-      floor: Minimum semantic weight in [0, 1].
-      eps: Numerical epsilon for renormalization.
-      metric: Compatibility metric ("dot" or "top1").
-
-    Returns:
-      Projected assignments with same shape/dtype/device as assignments_vis.
-    """
-    if assignments_vis.ndim != 3:
-        raise ValueError("assignments_vis must have shape [B, S, C].")
-    if p_ref.ndim != 2:
-        raise ValueError("p_ref must have shape [B, K].")
-    if p_centroids.ndim != 3:
-        raise ValueError("p_centroids must have shape [B, C, K].")
-
-    floor = min(1.0, max(0.0, float(floor)))
-    eps = float(eps)
-    metric = str(metric).strip().lower()
-
-    work_dtype = torch.float32 if assignments_vis.dtype in (torch.float16, torch.bfloat16) else assignments_vis.dtype
-    a_vis = assignments_vis.to(dtype=work_dtype)
-    p_ref_detached = p_ref.detach().to(dtype=work_dtype)
-    p_centroids_detached = p_centroids.detach().to(dtype=work_dtype)
-
-    if metric == "dot":
-        compat = torch.einsum("bk,bck->bc", p_ref_detached, p_centroids_detached)
-    elif metric == "top1":
-        top1 = torch.argmax(p_ref_detached, dim=-1, keepdim=True)
-        top1 = top1.unsqueeze(1).expand(-1, p_centroids_detached.shape[1], -1)
-        compat = torch.gather(p_centroids_detached, dim=2, index=top1).squeeze(-1)
-    else:
-        raise ValueError(f"Unsupported semantic projection metric: {metric}")
-
-    compat = compat.clamp_(0.0, 1.0)
-    floor_t = torch.full_like(compat, fill_value=floor)
-    weights = floor_t + (1.0 - floor_t) * compat
-    weights = weights.clamp_(min=floor, max=1.0)
-
-    a_tmp = a_vis * weights.unsqueeze(1)
-    denom = a_tmp.sum(dim=-1, keepdim=True)
-    a_proj = a_tmp / denom.clamp_min(eps)
-
-    # If a row collapses numerically, keep the original visual assignment.
-    collapsed = denom <= eps
-    if collapsed.any():
-        a_proj = torch.where(collapsed.expand_as(a_proj), a_vis, a_proj)
-
-    return a_proj.to(dtype=assignments_vis.dtype)
 
 
 class Attention(nn.Module):
@@ -239,7 +176,7 @@ class GraphPooling(nn.Module):
 
         return sampled_inds
 
-    def forward(self, cls_token, src, mask, projection_ctx=None):
+    def forward(self, cls_token, src, mask):
         """Feedforward for clustering with Transformer.
 
         Args:
@@ -289,37 +226,15 @@ class GraphPooling(nn.Module):
             'bij,bjk->bik', normed_node_features, normed_centroid_features.transpose(1, 2))
         logits = logits * 5
         assignments = torch.softmax(logits, dim=-1)
-        pooled_assignments = assignments
-
-        if projection_ctx is not None and bool(projection_ctx.get("enabled", False)):
-            p_ref = projection_ctx.get("p_ref", None)
-            coarse_head = projection_ctx.get("coarse_head", None)
-            if p_ref is not None and coarse_head is not None:
-                with torch.no_grad():
-                    centroid_coarse_logits = coarse_head(centroid_features.detach())
-                    if centroid_coarse_logits.ndim == 3:
-                        p_centroids = torch.softmax(centroid_coarse_logits, dim=-1)
-                    else:
-                        p_centroids = None
-                if p_centroids is not None and p_centroids.shape[0] == p_ref.shape[0]:
-                    if p_centroids.shape[1] == assignments.shape[-1] and p_centroids.shape[-1] == p_ref.shape[-1]:
-                        pooled_assignments = semantic_projection(
-                            assignments_vis=assignments,
-                            p_ref=p_ref,
-                            p_centroids=p_centroids,
-                            floor=float(projection_ctx.get("floor", 0.0)),
-                            eps=float(projection_ctx.get("eps", 1e-6)),
-                            metric=str(projection_ctx.get("metric", "dot")),
-                        )
 
         # Average pooling within clusters.
         fc1_cls_token_src = self.fc1(torch.cat([cls_token, src], dim=1))
         fc1_cls_token, fc1_src = fc1_cls_token_src[:, :1], fc1_cls_token_src[:, 1:]
 
         # batch matrix multiplication
-        normalizer = torch.einsum('bij,bjk->bik', pooled_assignments.transpose(1, 2),
+        normalizer = torch.einsum('bij,bjk->bik', assignments.transpose(1, 2),
                                   torch.ones((bs, sl, 1), dtype=src.dtype, device=src.device))
-        centroids = torch.einsum('bij,bjk->bik', pooled_assignments.transpose(1, 2), fc1_src)
+        centroids = torch.einsum('bij,bjk->bik', assignments.transpose(1, 2), fc1_src)
         centroids /= normalizer
 
         fc2_cls_token_centroids = self.fc2(torch.cat([fc1_cls_token, centroids], dim=1))

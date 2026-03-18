@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 
 
 def infer_parent_of_from_samples(samples: List[Dict[str, Any]], depth: int) -> Optional[Dict[int, Dict[int, int]]]:
+    """Infer child-to-parent mappings for each hierarchy level transition."""
     parent_of: Dict[int, Dict[int, int]] = {}
     for level in range(1, depth):
         mapping: Dict[int, int] = {}
@@ -19,6 +20,7 @@ def infer_parent_of_from_samples(samples: List[Dict[str, Any]], depth: int) -> O
             labels = s["labels"]
             p = int(labels[level - 1])
             c = int(labels[level])
+            # inconsistent labels
             if c in mapping and mapping[c] != p:
                 return None
             mapping[c] = p
@@ -27,6 +29,7 @@ def infer_parent_of_from_samples(samples: List[Dict[str, Any]], depth: int) -> O
 
 
 def taxonomy_from_parent_of(parent_of: Optional[Dict[int, Dict[int, int]]], levels: Optional[List[str]] = None):
+    """Convert level mappings into the normalized taxonomy dictionary format."""
     if not parent_of:
         return None
     return {
@@ -36,6 +39,7 @@ def taxonomy_from_parent_of(parent_of: Optional[Dict[int, Dict[int, int]]], leve
 
 
 def resolve_split_seed(cfg: Any) -> int:
+    """Resolve the seed used for deterministic train/validation splitting."""
     split_seed = cfg.dataset.get("split_seed", None)
     if split_seed is not None:
         return int(split_seed)
@@ -50,6 +54,7 @@ def resolve_split_seed(cfg: Any) -> int:
 
 
 def resolve_val_split_ratio(cfg: Any) -> float:
+    """Read and clamp the validation split ratio to ``[0.0, 0.99]``."""
     raw = cfg.dataset.get("val_split_ratio", 0.1)
     try:
         value = float(raw)
@@ -59,6 +64,7 @@ def resolve_val_split_ratio(cfg: Any) -> float:
 
 
 def stratified_train_val_indices(stratify_labels: List[int], val_ratio: float, seed: int) -> Tuple[List[int], List[int]]:
+    """Build deterministic stratified train/validation indices from labels."""
     if not stratify_labels:
         return [], []
     if val_ratio <= 0.0:
@@ -102,6 +108,7 @@ def split_train_val_samples(
     cfg: Any,
     stratify_level: int = -1,
 ) -> List[Dict[str, Any]]:
+    """Return split-specific samples using a stratified train/val partition."""
     if split not in {"train", "val"}:
         return samples
     if not samples:
@@ -131,22 +138,17 @@ def split_train_val_samples(
 
 
 class BaseHierDataset(Dataset, ABC):
+    """Abstract base dataset for hierarchical image classification tasks."""
+
     def __init__(self, cfg: Any, split: str, transform=None):
+        """Load samples, remap labels, and prepare taxonomy metadata."""
         self.cfg = cfg
         self.split = split
         self.transform = transform
         self.root = Path(str(cfg.dataset.root))
         self.depth = int(cfg.dataset.get("hierarchy_depth", 3))
-        self.allow_synthetic = bool(cfg.dataset.get("allow_synthetic_fallback", True))
 
         self.samples = self.load_samples()
-        if not self.samples and self.allow_synthetic:
-            warnings.warn(
-                f"No samples found for split={split} in dataset={cfg.dataset.name}. Using synthetic fallback.",
-                RuntimeWarning,
-            )
-            self.samples = self._build_synthetic_samples()
-
         if not self.samples:
             raise RuntimeError(f"No samples found for split={split} in dataset={cfg.dataset.name}")
 
@@ -159,32 +161,38 @@ class BaseHierDataset(Dataset, ABC):
 
     @abstractmethod
     def load_samples(self) -> List[Dict[str, Any]]:
+        """Load raw samples for the active split.
+
+        Expected sample keys are ``image`` and ``labels`` (and optional ``meta``).
+        """
         raise NotImplementedError
 
     def load_taxonomy(self) -> Optional[Dict[str, Any]]:
-        tax_file = self.cfg.dataset.get("taxonomy_file")
-        if not tax_file:
-            return None
+        """Return ``None`` so taxonomy is always inferred from sample labels."""
+        return None
 
-        tax_path = self.root / str(tax_file)
-        if not tax_path.exists():
-            warnings.warn(f"Taxonomy file not found: {tax_path}. Falling back to inference.", RuntimeWarning)
-            return None
+    def default_levels(self) -> Optional[List[str]]:
+        """Return default hierarchy level names when config does not provide them."""
+        return None
 
-        with tax_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data
+    def _taxonomy_levels(self) -> Optional[List[str]]:
+        configured = list(self.cfg.dataset.get("levels", []))
+        if configured:
+            return configured
+        return self.default_levels()
 
     def _infer_taxonomy(self) -> Optional[Dict[str, Any]]:
+        """Infer taxonomy from loaded sample labels when no file is available."""
         parent_of = infer_parent_of_from_samples(self.samples, self.depth)
         if parent_of is None:
             warnings.warn("Could not infer a consistent taxonomy from labels. Taxonomy metrics will be skipped.", RuntimeWarning)
             return None
 
-        levels = list(self.cfg.dataset.get("levels", [])) or None
+        levels = self._taxonomy_levels()
         return taxonomy_from_parent_of(parent_of, levels)
 
     def _remap_taxonomy_ids(self, taxonomy: Dict[str, Any]) -> Dict[str, Any]:
+        """Remap taxonomy IDs to contiguous IDs used by this dataset instance."""
         if "parent_of" not in taxonomy:
             return taxonomy
 
@@ -209,6 +217,7 @@ class BaseHierDataset(Dataset, ABC):
 
     @staticmethod
     def _remap_labels_to_contiguous(samples: List[Dict[str, Any]], depth: int):
+        """Remap level labels to contiguous ranges and return remapping tables."""
         per_level_values = [sorted({int(s["labels"][l]) for s in samples}) for l in range(depth)]
         maps = [{old: idx for idx, old in enumerate(values)} for values in per_level_values]
 
@@ -221,32 +230,12 @@ class BaseHierDataset(Dataset, ABC):
 
     @staticmethod
     def _compute_num_classes_per_level(samples: List[Dict[str, Any]], depth: int) -> List[int]:
+        """Compute class counts per hierarchy level from remapped labels."""
         classes = [set() for _ in range(depth)]
         for s in samples:
             for level, value in enumerate(s["labels"]):
                 classes[level].add(int(value))
         return [max(values) + 1 if values else 1 for values in classes]
-
-    def _build_synthetic_samples(self, n: int = 256) -> List[Dict[str, Any]]:
-        class_counts = [4, 8, 16][: self.depth]
-        while len(class_counts) < self.depth:
-            class_counts.append(class_counts[-1] * 2)
-
-        g = torch.Generator().manual_seed(7)
-        samples: List[Dict[str, Any]] = []
-        for idx in range(n):
-            labels = []
-            for level, c in enumerate(class_counts):
-                if level == 0:
-                    label = int(torch.randint(0, c, (1,), generator=g).item())
-                else:
-                    prev = labels[level - 1]
-                    span = max(1, c // class_counts[level - 1])
-                    start = prev * span
-                    label = int(min(c - 1, start + int(torch.randint(0, span, (1,), generator=g).item())))
-                labels.append(label)
-            samples.append({"image": None, "labels": labels, "meta": {"synthetic_id": idx}})
-        return samples
 
     def __len__(self):
         return len(self.samples)
@@ -267,6 +256,7 @@ class BaseHierDataset(Dataset, ABC):
         return Image.open(image_path).convert("RGB")
 
     def _read_json_samples(self, ann_path: Path) -> List[Dict[str, Any]]:
+        """Parse JSON annotations into normalized sample dictionaries."""
         with ann_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -287,6 +277,7 @@ class BaseHierDataset(Dataset, ABC):
         return out
 
     def _annotation_file_for_split(self) -> Optional[Path]:
+        """Resolve the annotation file path configured for the current split."""
         ann_cfg = self.cfg.dataset.get("annotations", {})
         split_file = ann_cfg.get(self.split)
         if not split_file:

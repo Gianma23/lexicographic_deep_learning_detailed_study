@@ -20,7 +20,6 @@ dataset:
   image_size: 224
   levels: [order, family, species]
   allow_synthetic_fallback: true
-  taxonomy_file: null
   val_split_ratio: 0.1
   split_seed: null
 
@@ -32,7 +31,6 @@ dataset:
 dataloader:
   batch_size: 16
   num_workers: 2
-  pin_memory: true
 
 train:
   epochs: 2
