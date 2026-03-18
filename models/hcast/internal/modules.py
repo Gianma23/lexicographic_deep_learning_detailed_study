@@ -1,4 +1,4 @@
-"""Define shared modules"""
+﻿"""Define shared modules"""
 import torch
 import torch.nn as nn
 
@@ -14,7 +14,7 @@ class Pooling(nn.Module):
         super(Pooling, self).__init__()
         self.pool_block = pool_block
 
-    def forward(self, cls_token, x, padding_mask=None, projection_ctx=None):
+    def forward(self, cls_token, x, padding_mask=None):
         """Perform Pooling module.
         
         Args:
@@ -37,7 +37,7 @@ class Pooling(nn.Module):
                 `[batch_size, num_pooled_nodes]`
         """
         cls_token, centroid, pool_logit, sampled_x_inds = self.pool_block(
-            cls_token=cls_token, src=x, mask=padding_mask, projection_ctx=projection_ctx)
+            cls_token=cls_token, src=x, mask=padding_mask)
 
         pool_padding_mask = torch.zeros(
             (pool_logit.shape[0], pool_logit.shape[-1]),

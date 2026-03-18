@@ -30,10 +30,8 @@ Rivedere
 - [ ] RandomErase
 
 ### Riproducibilità e tuning
-- [ ] Salvare configs nell'output, così da sapere cosa ha generato quei risultati
-
-### Leggibilità
-- [ ] logger
+- [x] Salvare configs nell'output, così da sapere cosa ha generato quei risultati
+- [ ] Logger
 
 # H-CAST
 - [x] Check loss

@@ -8,21 +8,12 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
     dataset_mean = list(cfg.dataset.get("mean", [0.485, 0.456, 0.406]))
     dataset_std = list(cfg.dataset.get("std", [0.229, 0.224, 0.225]))
     segment_cfg = cfg.model.get("segments", {})
-    projection_cfg = cfg.model.get("semantic_projection", {})
-    stages_cfg = projection_cfg.get("stages", None)
     return HCASTModel(
         num_classes_per_level=num_classes_per_level,
         variant=str(cfg.model.get("variant", "cast_small")),
         model_kwargs={
             "img_size": int(cfg.dataset.get("image_size", 224)),
             "pretrained": bool(cfg.model.get("pretrained", False)),
-            "semantic_projection": {
-                "enabled": bool(projection_cfg.get("enabled", False)),
-                "stages": stages_cfg,
-                "floor": float(projection_cfg.get("floor", 0.0)),
-                "eps": float(projection_cfg.get("eps", 1e-6)),
-                "metric": str(projection_cfg.get("metric", "dot")),
-            },
         },
         segments_cfg={
             "mode": str(segment_cfg.get("mode", "grid")),
