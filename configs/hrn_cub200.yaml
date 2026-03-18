@@ -46,11 +46,9 @@ optim:
   lr: 0.002
   weight_decay: 0.0005
   momentum: 0.9
-  use_timm: false
 
 scheduler:
   name: cosine
-  use_timm: false
 
 loss:
   tree_weight: 1.0

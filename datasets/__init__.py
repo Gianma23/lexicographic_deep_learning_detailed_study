@@ -1,10 +1,16 @@
-﻿import os
+import os
 import warnings
 from typing import Any
 
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
+
+try:
+    from timm.data import create_transform as timm_create_transform
+except Exception:  # pragma: no cover
+    timm_create_transform = None
 
 from .aircraft import AircraftDataset
 from .cifar100 import CIFAR100Dataset
@@ -28,28 +34,111 @@ _DATASET_ALIASES = {
 }
 
 
+def _get_aug_value(dataset_cfg: Any, key: str, default: Any, aliases=None):
+    aliases = aliases or []
+    transforms_cfg = dataset_cfg.get("transforms", {}) or {}
+
+    if key in transforms_cfg:
+        return transforms_cfg.get(key)
+    for alias in aliases:
+        if alias in transforms_cfg:
+            return transforms_cfg.get(alias)
+
+    if key in dataset_cfg:
+        return dataset_cfg.get(key)
+    for alias in aliases:
+        if alias in dataset_cfg:
+            return dataset_cfg.get(alias)
+    return default
+
+
+def _interp_mode_from_name(name: str) -> InterpolationMode:
+    value = str(name).strip().lower()
+    if value == "nearest":
+        return InterpolationMode.NEAREST
+    if value == "bilinear":
+        return InterpolationMode.BILINEAR
+    if value == "bicubic":
+        return InterpolationMode.BICUBIC
+    return InterpolationMode.BICUBIC
+
+
 def build_transforms(cfg: Any, split: str):
     image_size = int(cfg.dataset.get("image_size", 224))
-    mean = cfg.dataset.get("mean", [0.485, 0.456, 0.406])
-    std = cfg.dataset.get("std", [0.229, 0.224, 0.225])
+    mean = list(cfg.dataset.get("mean", [0.485, 0.456, 0.406]))
+    std = list(cfg.dataset.get("std", [0.229, 0.224, 0.225]))
+
+    use_timm = bool(_get_aug_value(cfg.dataset, "use_timm", True, aliases=["timm"]))
+    color_jitter = float(_get_aug_value(cfg.dataset, "color_jitter", 0.3))
+    auto_augment = str(_get_aug_value(cfg.dataset, "aa", "rand-m9-mstd0.5-inc1", aliases=["auto_augment"]))
+    train_interpolation = str(
+        _get_aug_value(cfg.dataset, "train_interpolation", "bicubic", aliases=["interpolation"])
+    )
+    reprob = float(_get_aug_value(cfg.dataset, "reprob", 0.25, aliases=["re_prob"]))
+    remode = str(_get_aug_value(cfg.dataset, "remode", "pixel", aliases=["re_mode"]))
+    recount = int(_get_aug_value(cfg.dataset, "recount", 1, aliases=["re_count"]))
+    eval_crop_ratio = float(
+        _get_aug_value(cfg.dataset, "eval_crop_ratio", 0.875, aliases=["crop_pct", "val_crop_ratio"])
+    )
 
     if split == "train":
-        return transforms.Compose(
+        if use_timm:
+            if timm_create_transform is None:
+                raise ImportError(
+                    "dataset.transforms.use_timm=true requires timm.data.create_transform, but timm is unavailable."
+                )
+            transform = timm_create_transform(
+                input_size=image_size,
+                is_training=True,
+                color_jitter=color_jitter,
+                auto_augment=auto_augment,
+                interpolation=train_interpolation,
+                re_prob=reprob,
+                re_mode=remode,
+                re_count=recount,
+                mean=tuple(mean),
+                std=tuple(std),
+            )
+            if image_size <= 32 and hasattr(transform, "transforms") and transform.transforms:
+                # Match H-CAST small-image behavior used for CIFAR-style inputs.
+                transform.transforms[0] = transforms.RandomCrop(image_size, padding=4)
+            return transform
+
+        train_ops = []
+        if image_size <= 32:
+            train_ops.append(transforms.RandomCrop(image_size, padding=4))
+        else:
+            train_ops.append(
+                transforms.RandomResizedCrop(
+                    image_size,
+                    interpolation=_interp_mode_from_name(train_interpolation),
+                )
+            )
+        train_ops.extend(
             [
-                transforms.Resize((image_size, image_size)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=mean, std=std),
             ]
         )
+        return transforms.Compose(train_ops)
 
-    return transforms.Compose(
+    eval_ops = []
+    if image_size > 32:
+        resize_size = int(image_size / max(eval_crop_ratio, 1e-8))
+        eval_ops.extend(
+            [
+                transforms.Resize(resize_size, interpolation=InterpolationMode.BICUBIC),
+                transforms.CenterCrop(image_size),
+            ]
+        )
+    eval_ops.extend(
         [
-            transforms.Resize((image_size, image_size)),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ]
     )
+    return transforms.Compose(eval_ops)
 
 
 def _collate_fn(batch):

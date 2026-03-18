@@ -1,17 +1,21 @@
-﻿import argparse
+import argparse
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import torch
-import yaml
-
-try:
-    from omegaconf import OmegaConf  # type: ignore
-except ImportError:  # pragma: no cover
-    OmegaConf = None
 
 from datasets import build_dataloader
 from models import build_model
+from .artifacts import (
+    append_epoch_metrics,
+    as_float_dict,
+    initialize_epoch_rows,
+    save_train_level_losses_plot,
+    save_val_level_accuracies_plot,
+    save_yaml,
+    update_level_history,
+)
+from .config_loader import load_config
 from .engine import evaluate, train_one_epoch
 from .eval import pretty_metrics
 from .utils import (
@@ -21,78 +25,8 @@ from .utils import (
     metric_for_best,
     resume_if_available,
     save_checkpoint,
-    save_val_level_accuracies_plot,
-    save_train_level_losses_plot,
     seed_everything,
-    step_scheduler,
 )
-
-
-class AttrDict(dict):
-    # Lightweight dict wrapper to support attribute-style access (`cfg.train.seed`).
-    def __getattr__(self, item):
-        try:
-            return self[item]
-        except KeyError as exc:
-            raise AttributeError(item) from exc
-
-    def __setattr__(self, key, value):
-        self[key] = value
-
-
-def _to_attr(value: Any):
-    if isinstance(value, dict):
-        return AttrDict({k: _to_attr(v) for k, v in value.items()})
-    if isinstance(value, list):
-        return [_to_attr(v) for v in value]
-    return value
-
-
-def _coerce_scalar(raw: str):
-    low = raw.lower()
-    if low == "true":
-        return True
-    if low == "false":
-        return False
-    if low in {"null", "none"}:
-        return None
-    try:
-        if "." in raw:
-            return float(raw)
-        return int(raw)
-    except ValueError:
-        return raw
-
-
-def _apply_dotlist(cfg: Dict[str, Any], dotlist):
-    # Apply CLI overrides like `train.lr=1e-3` into nested config dictionaries
-    for item in dotlist:
-        if "=" not in item:
-            continue
-        key, raw_val = item.split("=", 1)
-        value = _coerce_scalar(raw_val)
-        parts = key.split(".")
-        cur = cfg
-        for p in parts[:-1]:
-            if p not in cur or not isinstance(cur[p], dict):
-                cur[p] = {}
-            cur = cur[p]
-        cur[parts[-1]] = value
-    return cfg
-
-
-def _load_config(path: str, overrides):
-    # Prefer OmegaConf when available; otherwise use a minimal YAML + dotlist fallback
-    if OmegaConf is not None:
-        cfg = OmegaConf.load(path)
-        if overrides:
-            cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(overrides))
-        return cfg, OmegaConf.to_container(cfg, resolve=True)
-
-    with open(path, "r", encoding="utf-8") as f:
-        cfg_dict = yaml.safe_load(f)
-    cfg_dict = _apply_dotlist(cfg_dict, overrides)
-    return _to_attr(cfg_dict), cfg_dict
 
 
 def _parse_args():
@@ -116,12 +50,13 @@ def _print_model_parameter_count(model):
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"[model] parameters total={total_params:,} trainable={trainable_params:,}")
 
+
 # ======================================================================== #
 #                    M A I N   T R A I N I N G   L O O P                   #
 # ======================================================================== #
 def main():
     args = _parse_args()
-    cfg, cfg_resolved = _load_config(args.config, args.overrides)
+    cfg, cfg_resolved = load_config(args.config, args.overrides)
 
     seed_everything(int(cfg.train.seed), bool(cfg.runtime.get("deterministic", True)))
 
@@ -146,8 +81,20 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     latest_ckpt = out_dir / "latest.pt"
     best_ckpt = out_dir / "best.pt"
+    resolved_cfg_path = out_dir / "config_resolved.yaml"
+    epoch_metrics_jsonl_path = out_dir / "epoch_metrics.jsonl"
+    epoch_metrics_csv_path = out_dir / "epoch_metrics.csv"
+    test_metrics_path = out_dir / "test_metrics.yaml"
+
+    save_yaml(resolved_cfg_path, cfg_resolved)
+    print(f"[artifact] saved resolved config: {resolved_cfg_path}")
 
     start_epoch, best_metric = resume_if_available(str(cfg.train.get("resume", "")), model, optimizer, scheduler, scaler)
+    epoch_rows: List[Dict[str, Any]] = initialize_epoch_rows(
+        start_epoch=start_epoch,
+        jsonl_path=epoch_metrics_jsonl_path,
+        csv_path=epoch_metrics_csv_path,
+    )
 
     epochs = int(cfg.train.epochs)
     level_names = [str(name) for name in cfg.dataset.get("levels", [])]
@@ -160,36 +107,24 @@ def main():
 
         # Collect per-level training losses for plotting.
         epoch_ids.append(epoch + 1)
-        observed_level_losses = {}
-        for key, value in train_metrics.items():
-            if not key.startswith("loss_level_"):
-                continue
-            suffix = key[len("loss_level_") :]
-            if suffix.isdigit():
-                observed_level_losses[int(suffix)] = float(value)
-        for level_idx in observed_level_losses:
-            if level_idx not in level_loss_history:
-                level_loss_history[level_idx] = [float("nan")] * (len(epoch_ids) - 1)
-        for level_idx, series in level_loss_history.items():
-            series.append(observed_level_losses.get(level_idx, float("nan")))
+        update_level_history(
+            history=level_loss_history,
+            epoch_ids=epoch_ids,
+            metrics=train_metrics,
+            metric_prefix="loss_level_",
+        )
 
         # Collect per-level validation accuracies for plotting.
-        observed_level_accs = {}
-        for key, value in val_metrics.items():
-            if not key.startswith("acc_level_"):
-                continue
-            suffix = key[len("acc_level_") :]
-            if suffix.isdigit():
-                observed_level_accs[int(suffix)] = float(value)
-        for level_idx in observed_level_accs:
-            if level_idx not in level_val_acc_history:
-                level_val_acc_history[level_idx] = [float("nan")] * (len(epoch_ids) - 1)
-        for level_idx, series in level_val_acc_history.items():
-            series.append(observed_level_accs.get(level_idx, float("nan")))
+        update_level_history(
+            history=level_val_acc_history,
+            epoch_ids=epoch_ids,
+            metrics=val_metrics,
+            metric_prefix="acc_level_",
+        )
 
         score = metric_for_best(val_metrics)
         if scheduler is not None:
-            step_scheduler(scheduler, epoch=epoch, metric=score)
+            scheduler.step(epoch + 1, score)
 
         if score > best_metric:
             best_metric = score
@@ -215,6 +150,17 @@ def main():
             epoch,
             best_metric,
             cfg_resolved,
+        )
+
+        append_epoch_metrics(
+            rows=epoch_rows,
+            jsonl_path=epoch_metrics_jsonl_path,
+            csv_path=epoch_metrics_csv_path,
+            epoch=epoch + 1,
+            lr=float(optimizer.param_groups[0]["lr"]) if optimizer.param_groups else float("nan"),
+            best_metric=best_metric,
+            train_metrics=train_metrics,
+            val_metrics=val_metrics,
         )
 
         epoch_tag = f"[epoch {epoch + 1:03d}/{epochs:03d}]"
@@ -247,27 +193,20 @@ def main():
         print("saved_val_accuracy_plot: skipped (matplotlib not installed)")
 
     # Evaluate the best validation checkpoint on the test set.
-    if best_ckpt.exists():
-        checkpoint = torch.load(best_ckpt, map_location=device)
-
-        if "model" in checkpoint:
-            model.load_state_dict(checkpoint["model"])
-        elif "model_state" in checkpoint:
-            model.load_state_dict(checkpoint["model_state"])
-        elif "model_state_dict" in checkpoint:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            raise KeyError(
-                f"Could not find model weights inside checkpoint keys: {list(checkpoint.keys())}"
-            )
-
-        print(f"[test] loaded best checkpoint from: {best_ckpt}")
-    else:
-        print(f"[test] warning: best checkpoint not found at {best_ckpt}, using last model in memory")
-
+    checkpoint = torch.load(best_ckpt, map_location=device)
+    model.load_state_dict(checkpoint["model_state"])
+    print(f"[test] loaded best checkpoint from: {best_ckpt}")
     test_metrics = evaluate(model, test_loader, device, cfg, taxonomy)
     print(f"[test] {pretty_metrics(test_metrics, level_names=level_names)}")
+    test_payload = {
+        "best_checkpoint": str(best_ckpt),
+        "best_metric": float(best_metric),
+        "test_metrics": as_float_dict(test_metrics),
+    }
+    save_yaml(test_metrics_path, test_payload)
+    print(f"[artifact] saved test metrics: {test_metrics_path}")
 
 
 if __name__ == "__main__":
     main()
+

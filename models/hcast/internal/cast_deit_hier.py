@@ -56,11 +56,9 @@ class CAST(VisionTransformer):
         # These entries do not exist in timm.VisionTransformer.
         num_clusters = kwargs.pop('num_clusters', [64, 32, 16, 8])
         semantic_projection = kwargs.pop("semantic_projection", None) or {}
+        semantic_stages = semantic_projection.get("stages", None)
         semantic_floor = float(semantic_projection.get("floor", 0.0))
         self.semantic_projection_enabled = bool(semantic_projection.get("enabled", False))
-        self.semantic_projection_stages = self._parse_projection_stages(
-            semantic_projection.get("stages", [1, 2, 3])
-        )
         self.semantic_projection_floor = min(1.0, max(0.0, semantic_floor))
         self.semantic_projection_eps = float(semantic_projection.get("eps", 1e-6))
         self.semantic_projection_metric = str(semantic_projection.get("metric", "dot")).strip().lower()
@@ -95,6 +93,7 @@ class CAST(VisionTransformer):
             self.manufacturer_head.apply(self._init_weights)
         
         self.family_head.apply(self._init_weights)
+        self.semantic_projection_stages = self._parse_projection_stages(semantic_stages)
 
         cumsum_depth = [0]
         for d in depths:
@@ -129,29 +128,40 @@ class CAST(VisionTransformer):
         self.blocks4, self.pool4 = blocks[3], pools[3]
         # --------------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_projection_stages(stages):
+    def _default_projection_stages(self):
+        if getattr(self, "num_manufacturer", 0) > 0:
+            return {2, 3}
+        return {3}
+
+    def _parse_projection_stages(self, stages):
+        if stages is None:
+            return self._default_projection_stages()
         if isinstance(stages, str):
             values = [v.strip() for v in stages.split(",") if v.strip()]
             return {int(v) for v in values}
         if isinstance(stages, (list, tuple, set)):
             return {int(v) for v in stages}
-        return {1, 2, 3}
+        return self._default_projection_stages()
 
-    def _coarsest_head_module(self):
-        if getattr(self, "num_manufacturer", 0) > 0 and hasattr(self, "manufacturer_head"):
+    def _projection_head_for_stage(self, stage_idx):
+        has_family = hasattr(self, "family_head") and not isinstance(self.family_head, nn.Identity)
+        has_manufacturer = hasattr(self, "manufacturer_head") and not isinstance(self.manufacturer_head, nn.Identity)
+
+        if has_manufacturer and int(stage_idx) >= 3:
             return self.manufacturer_head
-        return self.family_head
+        if has_family:
+            return self.family_head
+        if has_manufacturer:
+            return self.manufacturer_head
+        return None
 
-    def _build_projection_ctx(self, cls_repr):
-        coarse_head = self._coarsest_head_module()
-        if coarse_head is None:
-            return None
-        if isinstance(coarse_head, nn.Identity):
+    def _build_projection_ctx(self, cls_repr, stage_idx):
+        projection_head = self._projection_head_for_stage(stage_idx=stage_idx)
+        if projection_head is None:
             return None
 
         with torch.no_grad():
-            coarse_logits = coarse_head(cls_repr.detach())
+            coarse_logits = projection_head(cls_repr.detach())
             if coarse_logits.ndim != 2:
                 return None
             p_ref = torch.softmax(coarse_logits, dim=-1)
@@ -159,7 +169,7 @@ class CAST(VisionTransformer):
         return {
             "enabled": True,
             "p_ref": p_ref,
-            "coarse_head": coarse_head,
+            "projection_head": projection_head,
             "floor": self.semantic_projection_floor,
             "eps": self.semantic_projection_eps,
             "metric": self.semantic_projection_metric,
@@ -176,7 +186,7 @@ class CAST(VisionTransformer):
 
         projection_ctx = None
         if self.semantic_projection_enabled and stage_idx in self.semantic_projection_stages:
-            projection_ctx = self._build_projection_ctx(cls_x[:, 0, :])
+            projection_ctx = self._build_projection_ctx(cls_x[:, 0, :], stage_idx=stage_idx)
 
         # Perform pooling only on x
         cls_token, pool_logit, centroid, pool_pad_mask, pool_inds = (

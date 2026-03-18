@@ -2,13 +2,14 @@
 
 ### Datasets
 Rivedere il codice di:
-- [ ] build_dataloader
+- [x] build_dataloader
 - [ ] CIFAR  
 - [ ] CUB-200-2011
 - [ ] Aircraft  
 - [ ] iNat
 Da implementare:
-- [ ] create_transform di timm usata da H-CAST
+- [x] create_transform di timm usata da H-CAST
+- [ ] Rivedere trasformazioni e data augmentation 
 
 ### Train
 Rivedere
@@ -16,11 +17,17 @@ Rivedere
     - [x] check funzionalità
     - [ ] funzionamento barra caricamento
 - [ ] eval
-- [ ] metrics (ci sarebbe anche da decidere le metriche)
+- [x] metrics (ci sarebbe anche da decidere le metriche)
 - [x] train
 - [x] utils
-- [ ] serve calcolare le metriche nel train set?
-- [ ] Definire insiemi di optimizer, scheduler, preprocessing e data augmentation che si utilizzano
+- [x] serve calcolare le metriche nel train set? no ma aiuta a vedere l'overfitting
+- [x] build_optimizer senza timm
+- [x] build_scheduler con timm
+
+### Preprocessing e trasformazioni
+- [ ] Rivedere caricamento pretrained model
+- [ ] ModelEma
+- [ ] RandomErase
 
 ### Riproducibilità e tuning
 - [ ] Salvare configs nell'output, così da sapere cosa ha generato quei risultati
@@ -29,10 +36,10 @@ Rivedere
 - [ ] logger
 
 # H-CAST
-- [ ] Check loss
-    - [ ] gk_loss negativa a volte?
+- [x] Check loss
+    - [x] gk_loss negativa a volte? risolto
 - [ ] Ricontrollare iperparametri
-- [ ] aggiungere SEEDS hyperpixels
+- [x] aggiungere SEEDS hyperpixels
 
 # HT-CapsNet
 - [ ] Sostituire backbone generico con EfficientNetB7

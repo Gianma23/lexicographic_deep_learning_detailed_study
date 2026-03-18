@@ -66,7 +66,11 @@ Scope notes:
 ### 5.1. `datasets/__init__.py`
 - Purpose: Dataset registry and dataloader assembly entrypoint.
 - Functions:
-  - `build_transforms`: Creates split-aware image transforms from config.
+  - `build_transforms`: Creates split-aware image transforms from config (timm-based train pipeline + H-CAST-style eval path).
+    - Reads optional `dataset.transforms` knobs:
+      - `use_timm`, `color_jitter`, `aa`, `train_interpolation`, `reprob`, `remode`, `recount`, `eval_crop_ratio`.
+    - Keeps normalization config-driven via `dataset.mean/std`.
+    - Applies CIFAR-style small-image rule (`image_size <= 32`) by using train `RandomCrop(..., padding=4)` and eval without resize/crop.
   - `_collate_fn`: Batch collation helper for `(image, labels, meta)` samples.
   - `build_dataloader`: Instantiates the selected dataset and returns loader plus hierarchy metadata.
 
@@ -162,14 +166,11 @@ Scope notes:
   - `build_model`: Builds `HCASTModel` using model config and hierarchy metadata.
 
 ### 7.3. `models/hcast/model.py`
-- Purpose: Runtime wrapper for full H-CAST and lightweight fallback path.
-- Class `HCASTLite`:
-  - `__init__`: Creates a simple fallback backbone + per-level heads.
-  - `forward`: Produces `logits_per_level` in unified output format.
+- Purpose: Runtime wrapper for timm-backed H-CAST and unified output formatting.
 - Class `HCASTModel`:
-  - `__init__`: Builds upstream CAST variant when dependencies are available.
+  - `__init__`: Builds upstream CAST variant and validates required dependencies.
   - `_build_default_segments`: Generates default token segmentation metadata.
-  - `forward`: Runs selected architecture and normalizes outputs to unified schema.
+  - `forward`: Runs H-CAST and normalizes outputs to unified schema.
 
 ### 7.4. `models/hcast/losses.py`
 - Purpose: Composite loss for hierarchical H-CAST training.

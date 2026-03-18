@@ -19,33 +19,6 @@ except Exception:  # pragma: no cover
     timm_create_model = None
 
 
-class HCASTLite(nn.Module):
-    """Fallback model when the full timm-backed H-CAST stack is unavailable."""
-
-    def __init__(self, num_classes_per_level: List[int], hidden_dim: int = 512, dropout: float = 0.2):
-        super().__init__()
-        from torchvision.models import resnet18
-
-        self.num_classes_per_level = num_classes_per_level
-        backbone = resnet18(weights=None)
-        self.feature_extractor = nn.Sequential(*list(backbone.children())[:-1])
-        feat_dim = backbone.fc.in_features
-        self.proj = nn.Sequential(
-            nn.Linear(feat_dim, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-        )
-        self.heads = nn.ModuleList([nn.Linear(hidden_dim, c) for c in num_classes_per_level])
-
-    def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Dict[str, Any]:
-        _ = targets
-        feat = self.feature_extractor(x).flatten(1)
-        z = self.proj(feat)
-        logits_per_level = [head(z) for head in self.heads]
-        probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
-        return {"logits_per_level": logits_per_level, "probs_per_level": probs_per_level, "features": z}
-
-
 class HCASTModel(nn.Module):
     """Adapter that builds H-CAST via timm and normalizes output format."""
 
@@ -53,7 +26,6 @@ class HCASTModel(nn.Module):
         self,
         num_classes_per_level: List[int],
         variant: str = "cast_small",
-        fallback_cfg: Optional[Dict[str, Any]] = None,
         model_kwargs: Optional[Dict[str, Any]] = None,
         segments_cfg: Optional[Dict[str, Any]] = None,
     ):
@@ -64,11 +36,8 @@ class HCASTModel(nn.Module):
         if self.depth < 2:
             raise ValueError("H-CAST requires at least 2 hierarchy levels.")
 
-        fallback_cfg = fallback_cfg or {}
         model_kwargs = model_kwargs or {}
         segments_cfg = segments_cfg or {}
-
-        self._use_fallback = timm_create_model is None
         self.segment_mode = str(segments_cfg.get("mode", "grid")).strip().lower()
         self.segment_patch_size = int(segments_cfg.get("patch_size", 8))
         self.segment_mean = list(segments_cfg.get("mean", [0.485, 0.456, 0.406]))
@@ -81,35 +50,19 @@ class HCASTModel(nn.Module):
         self.seeds_num_iterations = int(segments_cfg.get("num_iterations", 15))
         self._seeds_warned = False
 
-        if self._use_fallback:
-            self.fallback = HCASTLite(
-                num_classes_per_level=self.num_classes_per_level,
-                hidden_dim=int(fallback_cfg.get("hidden_dim", 512)),
-                dropout=float(fallback_cfg.get("dropout", 0.2)),
-            )
-            self.model = None
-            return
+        if timm_create_model is None:
+            raise ImportError("HCASTModel requires timm to be installed, but timm.create_model is unavailable.")
 
         # Upstream H-CAST expects classes from fine->coarse order.
         self.nb_classes_upstream = list(reversed(self.num_classes_per_level))
-        try:
-            timm_kwargs = dict(model_kwargs)
-            pretrained = bool(timm_kwargs.pop("pretrained", False))
-            self.model = timm_create_model(
-                variant,
-                pretrained=pretrained,
-                nb_classes=self.nb_classes_upstream,
-                **timm_kwargs,
-            )
-            self.fallback = None
-        except Exception:
-            self._use_fallback = True
-            self.model = None
-            self.fallback = HCASTLite(
-                num_classes_per_level=self.num_classes_per_level,
-                hidden_dim=int(fallback_cfg.get("hidden_dim", 512)),
-                dropout=float(fallback_cfg.get("dropout", 0.2)),
-            )
+        timm_kwargs = dict(model_kwargs)
+        pretrained = bool(timm_kwargs.pop("pretrained", False))
+        self.model = timm_create_model(
+            variant,
+            pretrained=pretrained,
+            nb_classes=self.nb_classes_upstream,
+            **timm_kwargs,
+        )
 
     @staticmethod
     def _build_grid_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
@@ -159,8 +112,7 @@ class HCASTModel(nn.Module):
         targets: Optional[torch.Tensor] = None,
         segments: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
-        if self._use_fallback:
-            return self.fallback(x, targets=targets)
+        _ = targets
 
         if segments is None:
             segments = self._build_default_segments(x)

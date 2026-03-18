@@ -105,6 +105,28 @@ Supported dataset names:
 - `aircraft`, `fgvc-aircraft`
 - `inat`, `inat21-mini`, `inat21_mini`
 
+### Transform knobs (`dataset.transforms`)
+
+`build_transforms` now follows an H-CAST/timm-style pipeline by default.  
+You can tune it per config under `dataset.transforms`:
+
+```yaml
+dataset:
+  transforms:
+    use_timm: true
+    color_jitter: 0.3
+    aa: rand-m9-mstd0.5-inc1
+    train_interpolation: bicubic
+    reprob: 0.25
+    remode: pixel
+    recount: 1
+    eval_crop_ratio: 0.875
+```
+
+Notes:
+- Normalization still uses `dataset.mean` / `dataset.std`.
+- For `image_size <= 32`, train uses `RandomCrop(..., padding=4)` and eval skips resize/center-crop.
+
 Priority order per dataset:
 
 1. Use `dataset.annotations.{train,val,test}` JSON/TXT if present.

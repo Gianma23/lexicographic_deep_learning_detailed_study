@@ -9,6 +9,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
     dataset_std = list(cfg.dataset.get("std", [0.229, 0.224, 0.225]))
     segment_cfg = cfg.model.get("segments", {})
     projection_cfg = cfg.model.get("semantic_projection", {})
+    stages_cfg = projection_cfg.get("stages", None)
     return HCASTModel(
         num_classes_per_level=num_classes_per_level,
         variant=str(cfg.model.get("variant", "cast_small")),
@@ -17,7 +18,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
             "pretrained": bool(cfg.model.get("pretrained", False)),
             "semantic_projection": {
                 "enabled": bool(projection_cfg.get("enabled", False)),
-                "stages": list(projection_cfg.get("stages", [1, 2, 3])),
+                "stages": stages_cfg,
                 "floor": float(projection_cfg.get("floor", 0.0)),
                 "eps": float(projection_cfg.get("eps", 1e-6)),
                 "metric": str(projection_cfg.get("metric", "dot")),
@@ -34,9 +35,5 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
             "num_iterations": int(segment_cfg.get("num_iterations", 15)),
             "mean": list(segment_cfg.get("mean", dataset_mean)),
             "std": list(segment_cfg.get("std", dataset_std)),
-        },
-        fallback_cfg={
-            "hidden_dim": int(cfg.model.get("hidden_dim", 512)),
-            "dropout": float(cfg.model.get("dropout", 0.2)),
         },
     )
