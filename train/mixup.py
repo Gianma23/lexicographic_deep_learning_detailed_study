@@ -281,7 +281,7 @@ def build_mixup_fn(cfg: Any, num_classes_per_level: Optional[List[int]] = None) 
     if not mixup_active:
         return None
     if not num_classes_per_level:
-        raise ValueError("H-CAST mixup requires `num_classes_per_level`.")
+        raise ValueError("Mixup/CutMix requires `num_classes_per_level`.")
     return Mixup(
         mixup_alpha=mixup_alpha(cfg),
         cutmix_alpha=cutmix_alpha(cfg),

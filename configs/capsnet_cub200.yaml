@@ -47,6 +47,7 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/capsnet_cub200
+  mixup_enabled: false
   # H-CAST-style MixUp/CutMix defaults.
   mixup: 0.8
   cutmix: 1.0
@@ -83,4 +84,3 @@ loss:
 
 runtime:
   deterministic: true
-

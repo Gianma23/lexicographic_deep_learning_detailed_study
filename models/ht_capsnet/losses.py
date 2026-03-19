@@ -1,13 +1,55 @@
-﻿from typing import Any, Dict, List, Optional, Tuple
+﻿from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 
 
+CapsTargets = Union[torch.Tensor, Dict[str, Any]]
+
+
+def _target_probs_from_input(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if target.ndim == 1:
+        return torch.zeros_like(logits).scatter_(1, target.unsqueeze(1), 1.0)
+    if target.ndim == 2 and int(target.size(1)) == int(logits.size(1)):
+        probs = target.to(device=logits.device, dtype=logits.dtype)
+        return probs / probs.sum(dim=1, keepdim=True).clamp_min(1e-12)
+    raise ValueError(
+        f"Invalid target shape for margin loss: expected [B] or [B, {logits.size(1)}], got {tuple(target.shape)}."
+    )
+
+
 def _margin_loss(logits: torch.Tensor, target: torch.Tensor, m_pos: float, m_neg: float, down_weight: float) -> torch.Tensor:
-    one_hot = torch.zeros_like(logits).scatter_(1, target.unsqueeze(1), 1.0)
-    pos = one_hot * torch.relu(m_pos - logits).pow(2)
-    neg = (1.0 - one_hot) * torch.relu(logits - m_neg).pow(2)
+    target_probs = _target_probs_from_input(logits, target)
+    pos = target_probs * torch.relu(m_pos - logits).pow(2)
+    neg = (1.0 - target_probs) * torch.relu(logits - m_neg).pow(2)
     return (pos + down_weight * neg).sum(dim=1).mean()
+
+
+def _hard_targets_from_input(targets: CapsTargets) -> torch.Tensor:
+    if isinstance(targets, torch.Tensor):
+        return targets
+    labels_a = targets.get("labels_a")
+    if not isinstance(labels_a, torch.Tensor):
+        raise TypeError("Expected hard targets tensor or mixup target dict with `labels_a` tensor.")
+    return labels_a
+
+
+def _mixup_target_distributions(logits_per_level: List[torch.Tensor], targets: CapsTargets) -> Optional[List[torch.Tensor]]:
+    if not isinstance(targets, dict):
+        return None
+    soft_targets = targets.get("soft_targets_per_level")
+    if not isinstance(soft_targets, (list, tuple)) or len(soft_targets) != len(logits_per_level):
+        return None
+
+    out: List[torch.Tensor] = []
+    for level, logits in enumerate(logits_per_level):
+        target_level = soft_targets[level]
+        if not isinstance(target_level, torch.Tensor):
+            return None
+        if target_level.ndim != 2 or int(target_level.size(1)) != int(logits.size(-1)):
+            return None
+        probs = target_level.to(device=logits.device, dtype=logits.dtype)
+        out.append(probs / probs.sum(dim=1, keepdim=True).clamp_min(1e-12))
+    return out
 
 
 def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
@@ -58,11 +100,13 @@ def _level_weights(num_levels: int, cfg: Any) -> List[float]:
 
 def compute_loss(
     output: Dict[str, Any],
-    targets: torch.Tensor,
+    targets: CapsTargets,
     cfg: Any,
     taxonomy: Optional[Dict[str, Any]] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     logits_per_level = output["logits_per_level"]
+    mixup_target_probs = _mixup_target_distributions(logits_per_level, targets)
+    hard_targets = _hard_targets_from_input(targets) if mixup_target_probs is None else None
 
     m_pos = float(cfg.loss.get("margin_m_pos", 0.9))
     m_neg = float(cfg.loss.get("margin_m_neg", 0.1))
@@ -73,7 +117,8 @@ def compute_loss(
     level_losses = []
     weighted_level_losses = []
     for level, logits in enumerate(logits_per_level):
-        level_loss = _margin_loss(logits, targets[:, level], m_pos, m_neg, down_w)
+        level_target = mixup_target_probs[level] if mixup_target_probs is not None else hard_targets[:, level]
+        level_loss = _margin_loss(logits, level_target, m_pos, m_neg, down_w)
         level_losses.append(level_loss)
         weighted_level_losses.append(weights[level] * level_loss)
 

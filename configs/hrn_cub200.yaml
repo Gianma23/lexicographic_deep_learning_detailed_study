@@ -32,6 +32,7 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/hrn_cub200
+  mixup_enabled: false
   # Keep unified augmentation defaults to match the existing pipeline behavior.
   mixup: 0.8
   cutmix: 1.0

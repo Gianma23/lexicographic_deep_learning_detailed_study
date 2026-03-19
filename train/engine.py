@@ -28,8 +28,7 @@ def train_one_epoch(
     batch_metrics = []
     running_loss_total = 0.0
     running_loss_count = 0
-    model_name = str(cfg.model.name).lower()
-    mixup_fn = build_mixup_fn(cfg, num_classes_per_level=num_classes_per_level) if model_name == "hcast" else None
+    mixup_fn = build_mixup_fn(cfg, num_classes_per_level=num_classes_per_level)
 
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
     use_pbar = bool(cfg.train.get("progress_bar", True)) and tqdm is not None
@@ -47,10 +46,11 @@ def train_one_epoch(
             target_levels = [labels[:, level] for level in range(labels.size(1))]
             mixup_out = mixup_fn(images, target_levels)
             images = mixup_out[0]
-            targets_for_loss = {"soft_targets_per_level": list(mixup_out[1:])}
+            soft_targets_per_level = list(mixup_out[1:])
+            targets_for_loss = {"soft_targets_per_level": soft_targets_per_level}
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
-            output = model(images, targets=labels)
+            output = model(images)
             loss, loss_dict = compute_loss(cfg, output, targets_for_loss, taxonomy)
 
         if scaler is not None and use_amp:
@@ -103,7 +103,7 @@ def evaluate(
         labels = labels.to(device, non_blocking=True)
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
-            output = model(images, targets=labels)
+            output = model(images)
             _, loss_dict = compute_loss(cfg, output, labels, taxonomy)
 
         #loss_vals.append(loss_dict)

@@ -40,6 +40,7 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/hcast_aircraft
+  mixup_enabled: true
   # H-CAST-style MixUp/CutMix defaults.
   mixup: 0.8
   cutmix: 1.0

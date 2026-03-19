@@ -32,6 +32,7 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/hrn_aircraft
+  mixup_enabled: false
   mixup: 0.8
   cutmix: 1.0
   cutmix_minmax: null

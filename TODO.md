@@ -34,8 +34,9 @@ Rivedere
 - [ ] Logger
 
 # H-CAST
-- [x] Check loss
+- [ ] Check loss
     - [x] gk_loss negativa a volte? risolto
+    - [ ] refactor (è un macello)
 - [ ] Ricontrollare iperparametri
 - [x] aggiungere SEEDS hyperpixels
 

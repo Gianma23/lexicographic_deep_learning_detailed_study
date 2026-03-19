@@ -37,6 +37,7 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/inat21mini
+  mixup_enabled: false
   smoothing: 0.1
 
 optim:
