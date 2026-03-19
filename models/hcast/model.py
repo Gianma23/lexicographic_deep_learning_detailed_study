@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .hard_hierarchy import HierarchicalAffineProjector
 from .segments import build_seeds_segments, supports_seeds
 
 try:
@@ -28,6 +29,8 @@ class HCASTModel(nn.Module):
         variant: str = "cast_small",
         model_kwargs: Optional[Dict[str, Any]] = None,
         segments_cfg: Optional[Dict[str, Any]] = None,
+        taxonomy: Optional[Dict[str, Any]] = None,
+        design1_cfg: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
         self.num_classes_per_level = list(num_classes_per_level)
@@ -49,6 +52,24 @@ class HCASTModel(nn.Module):
         self.seeds_double_step = bool(segments_cfg.get("double_step", False))
         self.seeds_num_iterations = int(segments_cfg.get("num_iterations", 15))
         self._seeds_warned = False
+        self.design1_cfg = self._build_design1_cfg(design1_cfg)
+        self.design1_projector: Optional[HierarchicalAffineProjector] = None
+
+        if self.design1_cfg["enabled"]:
+            if self.depth != 3:
+                raise ValueError(
+                    "cfg.model.design1.enabled=true requires exactly 3 hierarchy levels "
+                    f"(coarse->middle->fine), got {self.depth}."
+                )
+            if taxonomy is None:
+                raise ValueError(
+                    "cfg.model.design1.enabled=true requires dataset taxonomy with parent-child mappings."
+                )
+            self.design1_projector = HierarchicalAffineProjector(
+                num_classes_per_level=self.num_classes_per_level,
+                taxonomy=taxonomy,
+                eps=float(self.design1_cfg["eps"]),
+            )
 
         if timm_create_model is None:
             raise ImportError("HCASTModel requires timm to be installed, but timm.create_model is unavailable.")
@@ -63,6 +84,34 @@ class HCASTModel(nn.Module):
             nb_classes=self.nb_classes_upstream,
             **timm_kwargs,
         )
+
+    @staticmethod
+    def _build_design1_cfg(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        cfg = cfg or {}
+        scope = str(cfg.get("scope", "train_eval")).strip().lower()
+        if scope not in {"train_eval", "train", "eval"}:
+            scope = "train_eval"
+        eps = float(cfg.get("eps", 1e-12))
+        if eps <= 0.0:
+            eps = 1e-12
+        return {
+            "enabled": bool(cfg.get("enabled", False)),
+            "scope": scope,
+            "use_projected_for_loss": bool(cfg.get("use_projected_for_loss", False)),
+            "eps": eps,
+        }
+
+    def _design1_active(self) -> bool:
+        if not self.design1_cfg["enabled"]:
+            return False
+        if self.design1_projector is None:
+            return False
+        scope = self.design1_cfg["scope"]
+        if scope == "train" and not self.training:
+            return False
+        if scope == "eval" and self.training:
+            return False
+        return True
 
     @staticmethod
     def _build_grid_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
@@ -112,21 +161,39 @@ class HCASTModel(nn.Module):
         targets: Optional[torch.Tensor] = None,
         segments: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
-        _ = targets
-
         if segments is None:
             segments = self._build_default_segments(x)
 
-        raw = self.model(x, segments)
+        upstream_targets = None
+        if isinstance(targets, torch.Tensor) and targets.ndim == 2 and targets.shape[1] >= self.depth:
+            # Unified order is coarse->fine while upstream CAST uses fine->coarse.
+            upstream_targets = torch.flip(targets[:, :self.depth], dims=[1]).contiguous()
+
+        raw = self.model(x, segments, targets=upstream_targets)
         if not isinstance(raw, (tuple, list)):
             raw = (raw,)
 
         # Upstream order is fine->coarse; unified API is coarse->fine.
         logits_per_level = list(reversed(list(raw)))
         probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
+        design1_active = self._design1_active()
+        projected_probs_per_level = None
+        design1_stats = None
+        if design1_active:
+            projector_output = self.design1_projector(probs_per_level)
+            projected_probs_per_level = projector_output["projected_probs_per_level"]
+            residual_before = projector_output["residual_before"]
+            residual_after = projector_output["residual_after"]
+            design1_stats = {
+                "residual_before_max": float(residual_before.abs().max().detach().item()),
+                "residual_after_max": float(residual_after.abs().max().detach().item()),
+            }
 
         return {
             "logits_per_level": logits_per_level,
             "probs_per_level": probs_per_level,
+            "projected_probs_per_level": projected_probs_per_level,
+            "design1_active": design1_active,
+            "design1_stats": design1_stats,
             "segments": segments,
         }

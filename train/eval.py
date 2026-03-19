@@ -7,6 +7,7 @@ from .metrics import full_path_accuracy, per_level_top1, tice_score, weighted_av
 
 def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Optional[Dict] = None) -> Dict[str, float]:
     logits_per_level = output["logits_per_level"]
+    projected_probs_per_level = output.get("projected_probs_per_level")
 
     metrics = per_level_top1(logits_per_level, targets)
     metrics["weighted_ap"] = weighted_average_precision(logits_per_level, targets)
@@ -23,6 +24,11 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
         metrics["tice"] = tice
         metrics["inconsistency_rate"] = tice  # backward-compatible alias
         metrics["tice_like"] = float(1.0 - tice)
+
+    if isinstance(projected_probs_per_level, list) and projected_probs_per_level:
+        tice_projected = tice_score(projected_probs_per_level, taxonomy)
+        if tice_projected is not None:
+            metrics["tice_projected"] = tice_projected
 
     return metrics
 
@@ -57,6 +63,8 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
         summary_parts.append(f"FPA={_format_ratio(metrics['fpa'])}")
     if "tice" in metrics:
         summary_parts.append(f"TICE={_format_ratio(metrics['tice'])}")
+    if "tice_projected" in metrics:
+        summary_parts.append(f"TICE_proj={_format_ratio(metrics['tice_projected'])}")
     if summary_parts:
         sections.append("Summary[" + ", ".join(summary_parts) + "]")
 
@@ -83,6 +91,7 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
             "weighted_ap",
             "fpa",
             "tice",
+            "tice_projected",
             "acc_path",
             "inconsistency_rate",
             "tice_like",

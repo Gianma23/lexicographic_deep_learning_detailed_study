@@ -12,7 +12,7 @@ model:
     double_step: false
     num_iterations: 15
     patch_size: 8
-
+    
 dataset:
   name: cifar-100
   root: ./data/cifar100

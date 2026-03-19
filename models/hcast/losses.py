@@ -22,6 +22,17 @@ def _soft_target_cross_entropy(logits: torch.Tensor, target_probs: torch.Tensor)
     return -(target_probs * log_probs).sum(dim=-1).mean()
 
 
+def _hard_nll_from_probs(probs: torch.Tensor, target: torch.Tensor, eps: float) -> torch.Tensor:
+    log_probs = torch.log(probs.clamp_min(float(eps)))
+    return F.nll_loss(log_probs, target)
+
+
+def _soft_target_nll_from_probs(probs: torch.Tensor, target_probs: torch.Tensor, eps: float) -> torch.Tensor:
+    log_probs = torch.log(probs.clamp_min(float(eps)))
+    target_probs = target_probs.to(dtype=log_probs.dtype)
+    return -(target_probs * log_probs).sum(dim=-1).mean()
+
+
 def _hard_targets_from_input(targets: HcastTargets) -> torch.Tensor:
     if isinstance(targets, torch.Tensor):
         return targets
@@ -86,24 +97,49 @@ def compute_loss(
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     _ = taxonomy
     logits_per_level = output["logits_per_level"]
+    projected_probs_per_level = output.get("projected_probs_per_level")
+    design1_active = bool(output.get("design1_active", False))
     hard_targets = _hard_targets_from_input(targets)
     mixup_target_probs = _mixup_target_distributions(logits_per_level, targets, cfg)
     label_smoothing = min(max(float(cfg.train.get("smoothing", 0.0)), 0.0), 1.0)
+    design1_cfg = cfg.model.get("design1", {})
+    design1_eps = float(design1_cfg.get("eps", 1e-12))
+    if design1_eps <= 0.0:
+        design1_eps = 1e-12
+    projected_available = isinstance(projected_probs_per_level, list) and (
+        len(projected_probs_per_level) == len(logits_per_level)
+    )
+    # Design1 training path: when projection is active and available, optimize on projected probabilities.
+    use_projected_for_loss = projected_available and design1_active
 
     if mixup_target_probs is not None:
-        level_losses = [
-            _soft_target_cross_entropy(logits, mixup_target_probs[level]) for level, logits in enumerate(logits_per_level)
-        ]
+        if use_projected_for_loss:
+            level_losses = [
+                _soft_target_nll_from_probs(projected_probs_per_level[level], mixup_target_probs[level], eps=design1_eps)
+                for level in range(len(projected_probs_per_level))
+            ]
+        else:
+            level_losses = [
+                _soft_target_cross_entropy(logits, mixup_target_probs[level])
+                for level, logits in enumerate(logits_per_level)
+            ]
     else:
-        level_losses = [
-            F.cross_entropy(logits, hard_targets[:, level], label_smoothing=label_smoothing)
-            for level, logits in enumerate(logits_per_level)
-        ]
+        if use_projected_for_loss:
+            level_losses = [
+                _hard_nll_from_probs(projected_probs_per_level[level], hard_targets[:, level], eps=design1_eps)
+                for level in range(len(projected_probs_per_level))
+            ]
+        else:
+            level_losses = [
+                F.cross_entropy(logits, hard_targets[:, level], label_smoothing=label_smoothing)
+                for level, logits in enumerate(logits_per_level)
+            ]
     ce_loss = torch.stack(level_losses).sum()
     total = ce_loss
 
     if bool(cfg.loss.get("globalkl", False)):
         gk_w = float(cfg.loss.get("gk_weight", 1.0))
+        # Keep global KL unchanged: it is always computed from raw logits.
         gk_loss = _global_kl_loss(
             logits_per_level,
             hard_targets=hard_targets,

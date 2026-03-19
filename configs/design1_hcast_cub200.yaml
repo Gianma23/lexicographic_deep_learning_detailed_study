@@ -12,16 +12,10 @@ model:
     double_step: false
     num_iterations: 15
     patch_size: 8
-  lexproj:
+  design1:
     enabled: true
     scope: train_eval
-    eta_lower: 2.5
-    eta_upper: 2.5
-    lower_iter_k: 3
-    coarse_tol: 2e-3
-    middle_tol: 2e-3
-    backtrack_factor: 0.5
-    backtrack_max_steps: 6
+    use_projected_for_loss: true
     eps: 1e-12
 
 dataset:
@@ -57,7 +51,7 @@ train:
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/new_hcast_cub200
+  output_dir: ./outputs/design1_hcast_cub200
   # H-CAST-style MixUp/CutMix defaults.
   mixup: 0.8
   cutmix: 1.0
@@ -86,7 +80,7 @@ scheduler:
   decay_rate: 0.1
 
 loss:
-  globalkl: true
+  globalkl: false
   gk_weight: 0.5
 
 runtime:
