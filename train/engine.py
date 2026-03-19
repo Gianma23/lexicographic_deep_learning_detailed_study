@@ -1,11 +1,11 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 
 from models import compute_loss
 from .eval import evaluate_batch
 from .metrics import merge_metric_batches
-from .mixup import apply_mixup, blend_metrics
+from .mixup import build_mixup_fn
 
 try:
     from tqdm.auto import tqdm
@@ -20,6 +20,7 @@ def train_one_epoch(
     scaler,
     device: torch.device,
     cfg: Any,
+    num_classes_per_level: Optional[List[int]] = None,
     taxonomy: Optional[Dict] = None,
 ) -> Dict[str, float]:
     model.train()
@@ -28,7 +29,7 @@ def train_one_epoch(
     running_loss_total = 0.0
     running_loss_count = 0
     model_name = str(cfg.model.name).lower()
-    mixup_label_smoothing = float(cfg.train.get("smoothing", 0.1))
+    mixup_fn = build_mixup_fn(cfg, num_classes_per_level=num_classes_per_level) if model_name == "hcast" else None
 
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
     use_pbar = bool(cfg.train.get("progress_bar", True)) and tqdm is not None
@@ -39,28 +40,18 @@ def train_one_epoch(
     for images, labels, _ in iterator:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        images_mixed, labels_a, labels_b, lam, mixup_applied = apply_mixup(images, labels, cfg)
-
         optimizer.zero_grad(set_to_none=True)
 
+        targets_for_loss = labels
+        if mixup_fn is not None:
+            target_levels = [labels[:, level] for level in range(labels.size(1))]
+            mixup_out = mixup_fn(images, target_levels)
+            images = mixup_out[0]
+            targets_for_loss = {"soft_targets_per_level": list(mixup_out[1:])}
+
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
-            output = model(images_mixed, targets=labels_a)
-            if mixup_applied:
-                if model_name == "hcast":
-                    mixup_targets = {
-                        "labels_a": labels_a,
-                        "labels_b": labels_b,
-                        "lam": float(lam),
-                        "label_smoothing": mixup_label_smoothing,
-                    }
-                    loss, loss_dict = compute_loss(cfg, output, mixup_targets, taxonomy)
-                else:
-                    loss_a, loss_dict_a = compute_loss(cfg, output, labels_a, taxonomy)
-                    loss_b, loss_dict_b = compute_loss(cfg, output, labels_b, taxonomy)
-                    loss = lam * loss_a + (1.0 - lam) * loss_b
-                    loss_dict = blend_metrics(loss_dict_a, loss_dict_b, lam=lam)
-            else:
-                loss, loss_dict = compute_loss(cfg, output, labels_a, taxonomy)
+            output = model(images, targets=labels)
+            loss, loss_dict = compute_loss(cfg, output, targets_for_loss, taxonomy)
 
         if scaler is not None and use_amp:
             scaler.scale(loss).backward()
@@ -70,15 +61,8 @@ def train_one_epoch(
             loss.backward()
             optimizer.step()
 
-        loss_dict["mixup_lam"] = float(lam)
-        loss_dict["mixup_applied"] = 1.0 if mixup_applied else 0.0
         loss_vals.append(loss_dict)
-        if mixup_applied:
-            metric_a = evaluate_batch(output, labels_a, taxonomy)
-            metric_b = evaluate_batch(output, labels_b, taxonomy)
-            batch_metric = blend_metrics(metric_a, metric_b, lam=lam)
-        else:
-            batch_metric = evaluate_batch(output, labels_a, taxonomy)
+        batch_metric = evaluate_batch(output, labels, taxonomy)
         batch_metrics.append(batch_metric)
 
         total_key = "loss_total" if "loss_total" in loss_dict else "total"

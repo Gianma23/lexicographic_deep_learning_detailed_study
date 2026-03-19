@@ -176,22 +176,27 @@ class GraphPooling(nn.Module):
 
         return sampled_inds
 
-    def compute_visual_logits(self, src, mask):
-        """Compute visual pooling logits and sampled centroid indices.
+    def forward(self, cls_token, src, mask):
+        """Feedforward for clustering with Transformer.
 
         Args:
+          cls_token: A `tensor` of shape `[batch_size, 1, channels]`
           src: A `tensor` of shape `[batch_size, source_sequence_length, channels]`
           mask: A bool `tensor` of shape `[batch_size, sequence_length]`, where
                 `True` indicates empty/padded elements.
 
         Returns:
+          cls_token: A `tensor` of shape `[batch_size, 1, channels]`
+          centroids: A `tensor` of shape `[batch_size, num_clusters, channels]`
           logits: A `tensor` of shape
             `[batch_size, source_sequence_length, num_clusters]`
-          sampled_inds: A `tensor` of shape `[batch_size, num_clusters]`
+          sampled_inds: A `tensor` of shape
+            `[batch_size, num_clusters]`
         """
         bs, sl, cs = src.shape
 
         # Sample query by Farthest Point Sampling.
+        # `centroids` is of shape `[batch_size, target_sequence_length, channels]`.
         filled_src, mean_src = self._fill_with_mean(src, mask)
         padded_src = torch.cat([mean_src, filled_src], dim=1)
 
@@ -220,19 +225,7 @@ class GraphPooling(nn.Module):
         logits = torch.einsum(
             'bij,bjk->bik', normed_node_features, normed_centroid_features.transpose(1, 2))
         logits = logits * 5
-
-        return logits, sampled_inds
-
-    @staticmethod
-    def assignments_from_logits(logits):
-        """Build row-stochastic assignments from logits."""
         assignments = torch.softmax(logits, dim=-1)
-        return assignments
-
-    def pool_from_assignments(self, cls_token, src, assignments, sampled_inds):
-        """Pool node features using externally provided assignments."""
-        bs, sl, cs = src.shape
-        unfold_sampled_inds = sampled_inds.unsqueeze(2).expand(-1, -1, cs)
 
         # Average pooling within clusters.
         fc1_cls_token_src = self.fc1(torch.cat([cls_token, src], dim=1))
@@ -248,34 +241,8 @@ class GraphPooling(nn.Module):
         centroids = fc2_cls_token_centroids[:, 1:, :] + torch.gather(src, 1, unfold_sampled_inds)
         cls_token = fc2_cls_token_centroids[:, :1, :] + cls_token
 
-        return cls_token, centroids
-
-    def forward(self, cls_token, src, mask):
-        """Feedforward for clustering with Transformer.
-
-        Args:
-          cls_token: A `tensor` of shape `[batch_size, 1, channels]`
-          src: A `tensor` of shape `[batch_size, source_sequence_length, channels]`
-          mask: A bool `tensor` of shape `[batch_size, sequence_length]`, where
-                `True` indicates empty/padded elements.
-
-        Returns:
-          cls_token: A `tensor` of shape `[batch_size, 1, channels]`
-          centroids: A `tensor` of shape `[batch_size, num_clusters, channels]`
-          logits: A `tensor` of shape
-            `[batch_size, source_sequence_length, num_clusters]`
-          sampled_inds: A `tensor` of shape
-            `[batch_size, num_clusters]`
-        """
-        logits, sampled_inds = self.compute_visual_logits(src=src, mask=mask)
-        assignments = self.assignments_from_logits(logits)
-        cls_token, centroids = self.pool_from_assignments(
-            cls_token=cls_token,
-            src=src,
-            assignments=assignments,
-            sampled_inds=sampled_inds,
-        )
-        return cls_token, centroids, logits, sampled_inds
+        return cls_token, centroids, logits, sampled_inds # centroids = Z, logits = 
+        # logits 대신 assignments out 해야하는거 아니야? 
 
 
 def valid_mean(x, mask):

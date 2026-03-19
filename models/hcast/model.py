@@ -169,7 +169,15 @@ class HCASTModel(nn.Module):
             # Unified order is coarse->fine while upstream CAST uses fine->coarse.
             upstream_targets = torch.flip(targets[:, :self.depth], dims=[1]).contiguous()
 
-        raw = self.model(x, segments, targets=upstream_targets)
+        if upstream_targets is None:
+            raw = self.model(x, segments)
+        else:
+            try:
+                raw = self.model(x, segments, targets=upstream_targets)
+            except TypeError as exc:
+                if "unexpected keyword argument 'targets'" not in str(exc):
+                    raise
+                raw = self.model(x, segments)
         if not isinstance(raw, (tuple, list)):
             raw = (raw,)
 

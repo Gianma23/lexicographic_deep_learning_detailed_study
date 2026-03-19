@@ -15,7 +15,7 @@ model:
     
 dataset:
   name: cifar-100
-  root: ./data/cifar100
+  root: /scratch/g.saggini1/datasets/cifar100
   hierarchy_depth: 3
   image_size: 32
   mean: [0.5071, 0.4867, 0.4408]

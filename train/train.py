@@ -102,7 +102,16 @@ def main():
     level_loss_history = {}
     level_val_acc_history = {}
     for epoch in range(start_epoch, epochs):
-        train_metrics = train_one_epoch(model, train_loader, optimizer, scaler, device, cfg, taxonomy)
+        train_metrics = train_one_epoch(
+            model,
+            train_loader,
+            optimizer,
+            scaler,
+            device,
+            cfg,
+            num_classes_per_level=num_classes_per_level,
+            taxonomy=taxonomy,
+        )
         val_metrics = evaluate(model, val_loader, device, cfg, taxonomy)
 
         # Collect per-level training losses for plotting.
@@ -209,4 +218,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
