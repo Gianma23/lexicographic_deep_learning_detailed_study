@@ -1,6 +1,6 @@
-﻿omegaconf>=2.3.0
+omegaconf>=2.3.0
 pillow>=10.0.0
-numpy>=1.26.0
+numpy>=1.26.0,<2
 PyYAML>=6.0.0
 timm>=0.9.0
 tqdm>=4.66.0

@@ -20,7 +20,7 @@ model:
 
 dataset:
   name: cub-200-2011
-  root: ./data/CUB_200_2011
+  root: /scratch/g.saggini1/datasets/CUB_200_2011
   hierarchy_depth: 3
   image_size: 224
   levels: [order, family, species]

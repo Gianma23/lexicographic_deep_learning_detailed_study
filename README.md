@@ -27,7 +27,7 @@ python -m train.train --config configs/hrn_aircraft.yaml
 ```
 ## Setup
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 ```
 ## File Reference
@@ -200,4 +200,3 @@ Expected minimal structure:
 - HT-CapsNet upstream is TensorFlow; this repo provides a PyTorch translation of the taxonomy-guided routing path while preserving the unified interfaces and training flow.
 - HRN backend supports exactly 3 hierarchy levels and uses HRN-style residual branch heads with combinatorial tree loss plus fine-level CE.
 - If optional deps for full H-CAST stack are missing (e.g., `timm`), model code falls back to a lightweight path so the CLI remains runnable.
-
