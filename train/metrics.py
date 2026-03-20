@@ -3,6 +3,67 @@
 import torch
 
 
+def _argmax_preds(logits_per_level: List[torch.Tensor]) -> List[torch.Tensor]:
+    return [logits.argmax(dim=-1) for logits in logits_per_level]
+
+
+def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
+    if not taxonomy or "parent_of" not in taxonomy:
+        return {}
+
+    parent_of = taxonomy["parent_of"]
+    if not isinstance(parent_of, dict):
+        return {}
+
+    out: Dict[int, Dict[int, int]] = {}
+    for level_key, mapping in parent_of.items():
+        if not isinstance(mapping, dict):
+            continue
+        level = int(level_key)
+        out[level] = {int(child): int(parent) for child, parent in mapping.items()}
+    return out
+
+
+def _hierarchical_argmax_preds(
+    logits_per_level: List[torch.Tensor],
+    taxonomy: Optional[Dict[str, Any]],
+) -> List[torch.Tensor]:
+    if not logits_per_level:
+        return []
+    parent_of = _normalize_parent_of(taxonomy)
+    if not parent_of:
+        return _argmax_preds(logits_per_level)
+
+    preds: List[torch.Tensor] = [logits_per_level[0].argmax(dim=-1)]
+    for level in range(1, len(logits_per_level)):
+        mapping = parent_of.get(level)
+        if not mapping:
+            return _argmax_preds(logits_per_level)
+
+        scores = logits_per_level[level]
+        parent_pred = preds[level - 1]
+        num_children = int(scores.size(-1))
+        num_parents = int(logits_per_level[level - 1].size(-1))
+
+        allowed = torch.zeros((num_parents, num_children), dtype=torch.bool, device=scores.device)
+        for child_id, parent_id in mapping.items():
+            if 0 <= child_id < num_children and 0 <= parent_id < num_parents:
+                allowed[parent_id, child_id] = True
+
+        allowed_batch = allowed[parent_pred]
+        masked_scores = scores.masked_fill(~allowed_batch, float("-inf"))
+        child_pred = masked_scores.argmax(dim=-1)
+
+        has_allowed = allowed_batch.any(dim=-1)
+        if not bool(has_allowed.all()):
+            fallback = scores.argmax(dim=-1)
+            child_pred = torch.where(has_allowed, child_pred, fallback)
+
+        preds.append(child_pred)
+
+    return preds
+
+
 def per_level_top1(logits_per_level: List[torch.Tensor], targets: torch.Tensor) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for level, logits in enumerate(logits_per_level):
@@ -36,30 +97,43 @@ def weighted_accuracy(logits_per_level: List[torch.Tensor], targets: torch.Tenso
     return weighted_average_precision(logits_per_level, targets)
 
 
-def full_path_accuracy(logits_per_level: List[torch.Tensor], targets: torch.Tensor) -> float:
-    preds = [logits.argmax(dim=-1) for logits in logits_per_level]
+def full_path_accuracy(
+    logits_per_level: List[torch.Tensor],
+    targets: torch.Tensor,
+    taxonomy: Optional[Dict[str, Any]] = None,
+    enforce_hierarchy: bool = False,
+) -> float:
+    if enforce_hierarchy:
+        preds = _hierarchical_argmax_preds(logits_per_level, taxonomy)
+    else:
+        preds = _argmax_preds(logits_per_level)
     pred_path = torch.stack(preds, dim=1)
     return float((pred_path == targets).all(dim=1).float().mean().item())
 
 
-def consistency_rate(logits_per_level: List[torch.Tensor], taxonomy: Optional[Dict[str, Any]]) -> Optional[float]:
+def consistency_rate(
+    logits_per_level: List[torch.Tensor],
+    taxonomy: Optional[Dict[str, Any]],
+    enforce_hierarchy: bool = False,
+) -> Optional[float]:
     if not taxonomy or "parent_of" not in taxonomy:
         return None
 
-    parent_of = taxonomy["parent_of"]
-    preds = [logits.argmax(dim=-1) for logits in logits_per_level]
+    parent_of = _normalize_parent_of(taxonomy)
+    preds = (
+        _hierarchical_argmax_preds(logits_per_level, taxonomy)
+        if enforce_hierarchy
+        else _argmax_preds(logits_per_level)
+    )
     if not preds:
         return None
 
     valid = torch.ones_like(preds[0], dtype=torch.bool)
     for level in range(1, len(preds)):
-        mapping = parent_of.get(str(level)) if isinstance(parent_of, dict) else None
-        if mapping is None and isinstance(parent_of, dict):
-            mapping = parent_of.get(level)
+        mapping = parent_of.get(level)
         if mapping is None:
             return None
 
-        mapping = {int(k): int(v) for k, v in mapping.items()}
         child = preds[level]
         parent = preds[level - 1]
 
@@ -77,22 +151,34 @@ def consistency_rate(logits_per_level: List[torch.Tensor], taxonomy: Optional[Di
     return float(valid.float().mean().item())
 
 
-def tice_score(logits_per_level: List[torch.Tensor], taxonomy: Optional[Dict[str, Any]]) -> Optional[float]:
+def tice_score(
+    logits_per_level: List[torch.Tensor],
+    taxonomy: Optional[Dict[str, Any]],
+    enforce_hierarchy: bool = False,
+) -> Optional[float]:
     """H-CAST convention: TICE is inconsistency rate (lower is better)."""
-    consistency = consistency_rate(logits_per_level, taxonomy)
+    consistency = consistency_rate(logits_per_level, taxonomy, enforce_hierarchy=enforce_hierarchy)
     if consistency is None:
         return None
     return float(1.0 - consistency)
 
 
-def inconsistency_rate(logits_per_level: List[torch.Tensor], taxonomy: Optional[Dict[str, Any]]) -> Optional[float]:
+def inconsistency_rate(
+    logits_per_level: List[torch.Tensor],
+    taxonomy: Optional[Dict[str, Any]],
+    enforce_hierarchy: bool = False,
+) -> Optional[float]:
     # Backward-compatible alias used by existing callers/docs.
-    return tice_score(logits_per_level, taxonomy)
+    return tice_score(logits_per_level, taxonomy, enforce_hierarchy=enforce_hierarchy)
 
 
-def tice_like_score(logits_per_level: List[torch.Tensor], taxonomy: Optional[Dict[str, Any]]) -> Optional[float]:
+def tice_like_score(
+    logits_per_level: List[torch.Tensor],
+    taxonomy: Optional[Dict[str, Any]],
+    enforce_hierarchy: bool = False,
+) -> Optional[float]:
     # Backward-compatible alias from previous implementation.
-    tice = tice_score(logits_per_level, taxonomy)
+    tice = tice_score(logits_per_level, taxonomy, enforce_hierarchy=enforce_hierarchy)
     if tice is None:
         return None
     return float(1.0 - tice)

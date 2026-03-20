@@ -26,8 +26,6 @@ def train_one_epoch(
     model.train()
     loss_vals = []
     batch_metrics = []
-    running_loss_total = 0.0
-    running_loss_count = 0
     mixup_fn = build_mixup_fn(cfg, num_classes_per_level=num_classes_per_level)
 
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
@@ -64,19 +62,6 @@ def train_one_epoch(
         loss_vals.append(loss_dict)
         batch_metric = evaluate_batch(output, labels, taxonomy)
         batch_metrics.append(batch_metric)
-
-        total_key = "loss_total" if "loss_total" in loss_dict else "total"
-        if total_key in loss_dict:
-            running_loss_total += float(loss_dict[total_key])
-            running_loss_count += 1
-
-        if use_pbar:
-            avg_total_loss = running_loss_total / max(1, running_loss_count)
-            postfix = {"loss": f"{avg_total_loss:.4f}"}
-            full_path = batch_metric.get("acc_path")
-            if full_path is not None:
-                postfix["acc_path"] = f"{full_path:.4f}"
-            iterator.set_postfix(postfix)
 
     losses = merge_metric_batches(loss_vals)
     metrics = merge_metric_batches(batch_metrics)

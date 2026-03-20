@@ -1,9 +1,9 @@
 """Utilility function for all.
-"""
-# This code is borrowed and re-implemented from:
-# https://github.com/jyhjinghwang/SegSort/blob/master/network/segsort/vis_utils.py
-# https://github.com/jyhjinghwang/SegSort/blob/master/network/segsort/common_utils.py
 
+This code is borrowed and re-implemented from:
+    https://github.com/jyhjinghwang/SegSort/blob/master/network/segsort/vis_utils.py
+    https://github.com/jyhjinghwang/SegSort/blob/master/network/segsort/common_utils.py
+"""
 import torch
 import torch.nn.functional as F
 

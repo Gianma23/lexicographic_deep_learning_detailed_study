@@ -68,7 +68,7 @@ Scope notes:
 - Functions:
   - `build_transforms`: Creates split-aware image transforms from config (timm-based train pipeline + H-CAST-style eval path).
     - Reads optional `dataset.transforms` knobs:
-      - `use_timm`, `color_jitter`, `aa`, `train_interpolation`, `reprob`, `remode`, `recount`, `eval_crop_ratio`.
+      - `use_timm`, `color_jitter`, `aa`, `train_interpolation`, `reprob`, `remode`, `recount`, `eval_crop_ratio`, `mixup`, `cutmix`, `cutmix_minmax`, `mixup_prob`, `mixup_switch_prob`, `mixup_mode`.
     - Keeps normalization config-driven via `dataset.mean/std`.
     - Applies CIFAR-style small-image rule (`image_size <= 32`) by using train `RandomCrop(..., padding=4)` and eval without resize/crop.
   - `_collate_fn`: Batch collation helper for `(image, labels, meta)` samples.
@@ -367,7 +367,6 @@ Scope notes:
   - Per-run folders (for example `cifar100/`, `smoke_capsnet/`).
   - `latest.pt`: Most recent checkpoint snapshot.
   - `best.pt`: Best-scoring checkpoint according to configured selection metric.
-
 
 
 

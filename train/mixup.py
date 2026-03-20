@@ -4,8 +4,14 @@ import numpy as np
 import torch
 
 
+def _transforms_cfg(cfg: Any) -> Any:
+    dataset_cfg = getattr(cfg, "dataset", {}) or {}
+    transforms_cfg = dataset_cfg.get("transforms", {}) if hasattr(dataset_cfg, "get") else {}
+    return transforms_cfg or {}
+
+
 def mixup_alpha(cfg: Any) -> float:
-    raw = cfg.train.get("mixup", 0.0)
+    raw = _transforms_cfg(cfg).get("mixup", 0.0)
     try:
         alpha = float(raw)
     except (TypeError, ValueError):
@@ -14,7 +20,7 @@ def mixup_alpha(cfg: Any) -> float:
 
 
 def cutmix_alpha(cfg: Any) -> float:
-    raw = cfg.train.get("cutmix", 0.0)
+    raw = _transforms_cfg(cfg).get("cutmix", 0.0)
     try:
         alpha = float(raw)
     except (TypeError, ValueError):
@@ -23,7 +29,7 @@ def cutmix_alpha(cfg: Any) -> float:
 
 
 def cutmix_minmax(cfg: Any) -> Optional[Tuple[float, float]]:
-    raw = cfg.train.get("cutmix_minmax", None)
+    raw = _transforms_cfg(cfg).get("cutmix_minmax", None)
     if raw is None or not isinstance(raw, (list, tuple)) or len(raw) != 2:
         return None
     try:
@@ -39,7 +45,7 @@ def cutmix_minmax(cfg: Any) -> Optional[Tuple[float, float]]:
 
 
 def mixup_prob(cfg: Any) -> float:
-    raw = cfg.train.get("mixup_prob", 1.0)
+    raw = _transforms_cfg(cfg).get("mixup_prob", 1.0)
     try:
         prob = float(raw)
     except (TypeError, ValueError):
@@ -48,7 +54,7 @@ def mixup_prob(cfg: Any) -> float:
 
 
 def mixup_switch_prob(cfg: Any) -> float:
-    raw = cfg.train.get("mixup_switch_prob", 0.5)
+    raw = _transforms_cfg(cfg).get("mixup_switch_prob", 0.5)
     try:
         prob = float(raw)
     except (TypeError, ValueError):
@@ -57,7 +63,7 @@ def mixup_switch_prob(cfg: Any) -> float:
 
 
 def mixup_mode(cfg: Any) -> str:
-    mode = str(cfg.train.get("mixup_mode", "batch")).strip().lower()
+    mode = str(_transforms_cfg(cfg).get("mixup_mode", "batch")).strip().lower()
     return mode or "batch"
 
 

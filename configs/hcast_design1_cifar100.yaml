@@ -12,43 +12,41 @@ model:
     double_step: false
     num_iterations: 15
     patch_size: 8
-  lexproj:
+  design1:
     enabled: true
     scope: train_eval
-    eta_lower: 2.5
-    eta_upper: 2.5
-    lower_iter_k: 3
-    coarse_tol: 2e-3
-    middle_tol: 2e-3
-    backtrack_factor: 0.5
-    backtrack_max_steps: 6
     eps: 1e-12
+    stabilize_simplex: true
 
 dataset:
-  name: cub-200-2011
-  root: ./data/CUB_200_2011
+  name: cifar-100
+  root: /scratch/g.saggini1/datasets/cifar100
   hierarchy_depth: 3
-  image_size: 224
-  levels: [order, family, species]
+  image_size: 32
+  mean: [0.5071, 0.4867, 0.4408]
+  std: [0.2675, 0.2565, 0.2761]
+  levels: [coarse1, coarse2, fine]
+  allow_synthetic_fallback: true
+  download: true
   val_split_ratio: 0.1
   split_seed: null
   transforms:
-    use_timm: true
-    color_jitter: 0.3
-    aa: rand-m9-mstd0.5-inc1
-    train_interpolation: bicubic
-    reprob: 0.25
-    remode: pixel
-    recount: 1
-    eval_crop_ratio: 0.875
+    # H-CAST-style MixUp/CutMix defaults.
+    mixup: 0.8
+    cutmix: 1.0
+    cutmix_minmax: null
+    mixup_prob: 1.0
+    mixup_switch_prob: 0.5
+    mixup_mode: batch
+
   annotations:
     train: train.json
     val: val.json
     test: test.json
 
 dataloader:
-  batch_size: 64
-  num_workers: 0
+  batch_size: 256
+  num_workers: 16
   windows_spawn_safe: true
 
 train:
@@ -57,15 +55,7 @@ train:
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/new_hcast_cub200
-  mixup_enabled: true
-  # H-CAST-style MixUp/CutMix defaults.
-  mixup: 0.8
-  cutmix: 1.0
-  cutmix_minmax: null
-  mixup_prob: 1.0
-  mixup_switch_prob: 0.5
-  mixup_mode: batch
+  output_dir: ./outputs/hcast_design1_cifar100_withoutgk
   smoothing: 0.1
 
 optim:
@@ -87,7 +77,7 @@ scheduler:
   decay_rate: 0.1
 
 loss:
-  globalkl: true
+  globalkl: false
   gk_weight: 0.5
 
 runtime:

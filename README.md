@@ -121,6 +121,12 @@ dataset:
     remode: pixel
     recount: 1
     eval_crop_ratio: 0.875
+    mixup: 0.8
+    cutmix: 1.0
+    cutmix_minmax: null
+    mixup_prob: 1.0
+    mixup_switch_prob: 0.5
+    mixup_mode: batch
 ```
 
 Notes:

@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def _as_int_list(name: str, values: Any, expected_len: int, max_parent: int) -> List[int]:
@@ -97,19 +98,6 @@ def _build_mapping_matrix(num_parents: int, parent_of_child: List[int]) -> torch
     return mat
 
 
-def _build_affine_constraint_matrix(m12: torch.Tensor, m23: torch.Tensor) -> torch.Tensor:
-    c1, c2 = m12.shape
-    c2_b, c3 = m23.shape
-    if c2_b != c2:
-        raise ValueError(f"Incompatible mapping shapes: M12 is [{c1}, {c2}] while M23 is [{c2_b}, {c3}].")
-
-    zeros_1_3 = torch.zeros((c1, c3), dtype=torch.float32)
-    zeros_2_1 = torch.zeros((c2, c1), dtype=torch.float32)
-    top = torch.cat([torch.eye(c1, dtype=torch.float32), -m12, zeros_1_3], dim=1)
-    bottom = torch.cat([zeros_2_1, torch.eye(c2, dtype=torch.float32), -m23], dim=1)
-    return torch.cat([top, bottom], dim=0)
-
-
 class HierarchicalAffineProjector(nn.Module):
     """Affine-output projector enforcing p1=M12@p2 and p2=M23@p3 for 3-level hierarchies."""
 
@@ -118,6 +106,7 @@ class HierarchicalAffineProjector(nn.Module):
         num_classes_per_level: List[int],
         taxonomy: Dict[str, Any],
         eps: float = 1e-12,
+        stabilize_simplex: bool = True,
     ):
         super().__init__()
         classes = [int(x) for x in num_classes_per_level]
@@ -132,13 +121,46 @@ class HierarchicalAffineProjector(nn.Module):
         parent_of_middle, parent_of_fine = _extract_parent_arrays(taxonomy, c1=c1, c2=c2, c3=c3)
         m12 = _build_mapping_matrix(c1, parent_of_middle)
         m23 = _build_mapping_matrix(c2, parent_of_fine)
-        a = _build_affine_constraint_matrix(m12, m23)
 
         self.num_classes_per_level = classes
         self.eps = float(eps)
+        self.stabilize_simplex = bool(stabilize_simplex)
         self.register_buffer("m12", m12, persistent=False)
         self.register_buffer("m23", m23, persistent=False)
-        self.register_buffer("a", a, persistent=False)
+        self.register_buffer(
+            "parent_of_middle",
+            torch.tensor(parent_of_middle, dtype=torch.long),
+            persistent=False,
+        )
+        self.register_buffer(
+            "parent_of_fine",
+            torch.tensor(parent_of_fine, dtype=torch.long),
+            persistent=False,
+        )
+
+    def _mass_renormalize(
+        self,
+        child_scores: torch.Tensor,
+        parent_mass: torch.Tensor,
+        parent_of_child: torch.Tensor,
+    ) -> torch.Tensor:
+        """Map unconstrained child scores to positive probabilities that sum to parent mass."""
+        bsz, num_children = child_scores.shape
+        num_parents = int(parent_mass.size(-1))
+        idx = parent_of_child.to(device=child_scores.device)
+        idx_batch = idx.unsqueeze(0).expand(bsz, -1)
+
+        # Softplus keeps gradients alive even when affine projection makes values negative.
+        child_pos = F.softplus(child_scores).clamp_min(self.eps)
+
+        child_parent_mass = parent_mass[:, idx]
+        mass_per_parent = torch.zeros(
+            (bsz, num_parents),
+            dtype=child_scores.dtype,
+            device=child_scores.device,
+        ).scatter_add_(1, idx_batch, child_pos)
+        child_parent_denom = mass_per_parent[:, idx].clamp_min(self.eps)
+        return child_pos * (child_parent_mass / child_parent_denom)
 
     def forward(
         self,
@@ -158,27 +180,59 @@ class HierarchicalAffineProjector(nn.Module):
         if current != expected:
             raise ValueError(f"Probability shapes {current} do not match expected hierarchy classes {expected}.")
 
-        p = torch.cat([p1, p2, p3], dim=1)
-        compute_dtype = torch.float32 if p.dtype in {torch.float16, torch.bfloat16} else p.dtype
+        compute_dtype = torch.float32 if p2.dtype in {torch.float16, torch.bfloat16} else p2.dtype
         autocast_off = nullcontext()
-        if p.device.type in {"cpu", "cuda", "xpu", "mps"}:
-            autocast_off = torch.autocast(device_type=p.device.type, enabled=False)
+        if p2.device.type in {"cpu", "cuda", "xpu", "mps"}:
+            autocast_off = torch.autocast(device_type=p2.device.type, enabled=False)
 
         with autocast_off:
-            p_work = p.to(dtype=compute_dtype)
-            a = self.a.to(device=p.device, dtype=compute_dtype)
-            a_t = a.transpose(0, 1).contiguous()
-            aat = a @ a_t
-            reg_eye = torch.eye(aat.shape[0], dtype=compute_dtype, device=p.device)
-            aat_reg = aat + self.eps * reg_eye
+            p1_work = p1.to(dtype=compute_dtype)
+            p2_work = p2.to(dtype=compute_dtype)
+            p3_work = p3.to(dtype=compute_dtype)
+            m12 = self.m12.to(device=p2.device, dtype=compute_dtype)
+            m23 = self.m23.to(device=p2.device, dtype=compute_dtype)
 
-            residual_before = p_work @ a_t
-            solve_rhs = residual_before.transpose(0, 1).contiguous().to(dtype=aat_reg.dtype)
-            correction_coeff = torch.linalg.solve(aat_reg, solve_rhs).transpose(0, 1).contiguous()
-            p_hat = p_work - (correction_coeff @ a)
-            residual_after = p_hat @ a_t
+            # residual before projection for [M12 p2 - p1, M23 p3 - p2]
+            residual_12_before = p2_work @ m12.transpose(0, 1).contiguous() - p1_work
+            residual_23_before = p3_work @ m23.transpose(0, 1).contiguous() - p2_work
+            residual_before = torch.cat([residual_12_before, residual_23_before], dim=1)
 
-        p1_hat, p2_hat, p3_hat = torch.split(p_hat, expected, dim=1)
+            gram_12 = m12 @ m12.transpose(0, 1).contiguous()
+            eye_12 = torch.eye(gram_12.shape[0], dtype=compute_dtype, device=p2.device)
+            coeff_12 = torch.linalg.solve(
+                gram_12 + self.eps * eye_12,
+                residual_12_before.transpose(0, 1).contiguous(),
+            ).transpose(0, 1).contiguous()
+            p2_hat = p2_work - coeff_12 @ m12
+
+            residual_23_stage = p3_work @ m23.transpose(0, 1).contiguous() - p2_hat
+            gram_23 = m23 @ m23.transpose(0, 1).contiguous()
+            eye_23 = torch.eye(gram_23.shape[0], dtype=compute_dtype, device=p2.device)
+            coeff_23 = torch.linalg.solve(
+                gram_23 + self.eps * eye_23,
+                residual_23_stage.transpose(0, 1).contiguous(),
+            ).transpose(0, 1).contiguous()
+            p3_hat = p3_work - coeff_23 @ m23
+
+            p1_hat = p1_work
+            if self.stabilize_simplex:
+                p1_mass = p1_hat.clamp_min(self.eps)
+                p1_mass = p1_mass / p1_mass.sum(dim=-1, keepdim=True).clamp_min(self.eps)
+                p2_hat = self._mass_renormalize(
+                    child_scores=p2_hat,
+                    parent_mass=p1_mass,
+                    parent_of_child=self.parent_of_middle,
+                )
+                p3_hat = self._mass_renormalize(
+                    child_scores=p3_hat,
+                    parent_mass=p2_hat,
+                    parent_of_child=self.parent_of_fine,
+                )
+
+            residual_12_after = p2_hat @ m12.transpose(0, 1).contiguous() - p1_hat
+            residual_23_after = p3_hat @ m23.transpose(0, 1).contiguous() - p2_hat
+            residual_after = torch.cat([residual_12_after, residual_23_after], dim=1)
+
         return {
             "projected_probs_per_level": [
                 p1_hat.to(dtype=p1.dtype),

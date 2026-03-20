@@ -39,6 +39,7 @@ Rivedere
     - [ ] refactor (è un macello)
 - [ ] Ricontrollare iperparametri
 - [x] aggiungere SEEDS hyperpixels
+- [ ] Check FPS implementation (che combaci con dgl.geometry)
 
 # HT-CapsNet
 - [ ] Sostituire backbone generico con EfficientNetB7

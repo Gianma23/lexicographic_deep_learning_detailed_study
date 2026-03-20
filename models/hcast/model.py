@@ -69,6 +69,7 @@ class HCASTModel(nn.Module):
                 num_classes_per_level=self.num_classes_per_level,
                 taxonomy=taxonomy,
                 eps=float(self.design1_cfg["eps"]),
+                stabilize_simplex=bool(self.design1_cfg["stabilize_simplex"]),
             )
 
         if timm_create_model is None:
@@ -97,8 +98,8 @@ class HCASTModel(nn.Module):
         return {
             "enabled": bool(cfg.get("enabled", False)),
             "scope": scope,
-            "use_projected_for_loss": bool(cfg.get("use_projected_for_loss", False)),
             "eps": eps,
+            "stabilize_simplex": bool(cfg.get("stabilize_simplex", True)),
         }
 
     def _design1_active(self) -> bool:
@@ -123,7 +124,7 @@ class HCASTModel(nn.Module):
         segments = F.interpolate(grid, size=(h, w), mode="nearest").squeeze(1).long()
         return segments.expand(bsz, -1, -1).contiguous()
 
-    def _build_default_segments(self, images: torch.Tensor) -> torch.Tensor:
+    def _build_segments(self, images: torch.Tensor) -> torch.Tensor:
         if self.segment_mode == "seeds":
             segments = build_seeds_segments(
                 images=images,
@@ -158,50 +159,24 @@ class HCASTModel(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        targets: Optional[torch.Tensor] = None,
         segments: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         if segments is None:
-            segments = self._build_default_segments(x)
+            segments = self._build_segments(x)
 
-        upstream_targets = None
-        if isinstance(targets, torch.Tensor) and targets.ndim == 2 and targets.shape[1] >= self.depth:
-            # Unified order is coarse->fine while upstream CAST uses fine->coarse.
-            upstream_targets = torch.flip(targets[:, :self.depth], dims=[1]).contiguous()
-
-        if upstream_targets is None:
-            raw = self.model(x, segments)
-        else:
-            try:
-                raw = self.model(x, segments, targets=upstream_targets)
-            except TypeError as exc:
-                if "unexpected keyword argument 'targets'" not in str(exc):
-                    raise
-                raw = self.model(x, segments)
+        raw = self.model(x, segments)
         if not isinstance(raw, (tuple, list)):
             raw = (raw,)
 
         # Upstream order is fine->coarse; unified API is coarse->fine.
         logits_per_level = list(reversed(list(raw)))
-        probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
-        design1_active = self._design1_active()
-        projected_probs_per_level = None
-        design1_stats = None
-        if design1_active:
+        effective_probs_per_level = None
+        if self._design1_active():
+            probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
             projector_output = self.design1_projector(probs_per_level)
-            projected_probs_per_level = projector_output["projected_probs_per_level"]
-            residual_before = projector_output["residual_before"]
-            residual_after = projector_output["residual_after"]
-            design1_stats = {
-                "residual_before_max": float(residual_before.abs().max().detach().item()),
-                "residual_after_max": float(residual_after.abs().max().detach().item()),
-            }
+            effective_probs_per_level = projector_output["projected_probs_per_level"]
 
         return {
             "logits_per_level": logits_per_level,
-            "probs_per_level": probs_per_level,
-            "projected_probs_per_level": projected_probs_per_level,
-            "design1_active": design1_active,
-            "design1_stats": design1_stats,
-            "segments": segments,
+            "effective_probs_per_level": effective_probs_per_level,
         }

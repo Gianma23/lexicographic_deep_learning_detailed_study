@@ -4,9 +4,25 @@
 # Note:
 # - train.epochs is included because timm scheduler creation uses it.
 # - lr/warmup_lr can be overridden per dataset (e.g., Aircraft README uses 0.001/0.0001).
+model:
+  name: hcast
+  variant: cast_small
+  # Official H-CAST uses ImageNet-pretrained CAST for CUB finetuning.
+  finetune: https://huggingface.co/twke/CAST/blob/main/snapshots/deit/imagenet1k/cast_small/best_checkpoint.pth
+  segments:
+    mode: seeds
+    # for seeds mode
+    num_superpixels: 196
+    num_levels: 1
+    prior: 2
+    histogram_bins: 5
+    double_step: false
+    num_iterations: 15
+    # for grid mode
+    patch_size: 8
 
 train:
-  epochs: 300
+  epochs: 100
 
 optim:
   name: adamw

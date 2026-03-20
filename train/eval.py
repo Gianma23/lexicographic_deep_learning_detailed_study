@@ -7,26 +7,43 @@ from .metrics import full_path_accuracy, per_level_top1, tice_score, weighted_av
 
 def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Optional[Dict] = None) -> Dict[str, float]:
     logits_per_level = output["logits_per_level"]
-    projected_probs_per_level = output.get("projected_probs_per_level")
+    effective_probs_per_level = output.get("effective_probs_per_level")
+    has_effective_probs = (
+        isinstance(effective_probs_per_level, list)
+        and len(effective_probs_per_level) == len(logits_per_level)
+    )
+    if effective_probs_per_level is not None and not has_effective_probs:
+        raise ValueError("`effective_probs_per_level` must be None or a list aligned with logits levels.")
 
-    metrics = per_level_top1(logits_per_level, targets)
-    metrics["weighted_ap"] = weighted_average_precision(logits_per_level, targets)
-    metrics["weighted_acc"] = metrics["weighted_ap"]  # backward-compatible alias
+    score_source = effective_probs_per_level if has_effective_probs else logits_per_level
+    enforce_hierarchy_decode = bool(has_effective_probs and taxonomy is not None)
+
+    metrics = per_level_top1(score_source, targets)
+    metrics["weighted_ap"] = weighted_average_precision(score_source, targets)
 
     # H-CAST: FPA is full-path exact-match accuracy.
-    fpa = full_path_accuracy(logits_per_level, targets)
+    fpa = full_path_accuracy(
+        score_source,
+        targets,
+        taxonomy=taxonomy,
+        enforce_hierarchy=enforce_hierarchy_decode,
+    )
     metrics["fpa"] = fpa
-    metrics["acc_path"] = fpa  # backward-compatible alias
 
     # H-CAST: TICE is inconsistency rate (lower is better).
-    tice = tice_score(logits_per_level, taxonomy)
+    tice = tice_score(
+        score_source,
+        taxonomy,
+        enforce_hierarchy=enforce_hierarchy_decode,
+    )
     if tice is not None:
         metrics["tice"] = tice
-        metrics["inconsistency_rate"] = tice  # backward-compatible alias
-        metrics["tice_like"] = float(1.0 - tice)
 
-    if isinstance(projected_probs_per_level, list) and projected_probs_per_level:
-        tice_projected = tice_score(projected_probs_per_level, taxonomy)
+    if has_effective_probs:
+        # Keep independent-argmax projected path metrics for diagnostics.
+        fpa_projected = full_path_accuracy(effective_probs_per_level, targets, enforce_hierarchy=False)
+        metrics["fpa_projected"] = fpa_projected
+        tice_projected = tice_score(effective_probs_per_level, taxonomy, enforce_hierarchy=False)
         if tice_projected is not None:
             metrics["tice_projected"] = tice_projected
 
@@ -57,12 +74,12 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     summary_parts: List[str] = []
     if "weighted_ap" in metrics:
         summary_parts.append(f"wAP={_format_ratio(metrics['weighted_ap'])}")
-    elif "weighted_acc" in metrics:
-        summary_parts.append(f"weighted={_format_ratio(metrics['weighted_acc'])}")
     if "fpa" in metrics:
         summary_parts.append(f"FPA={_format_ratio(metrics['fpa'])}")
     if "tice" in metrics:
         summary_parts.append(f"TICE={_format_ratio(metrics['tice'])}")
+    if "fpa_projected" in metrics:
+        summary_parts.append(f"FPA_proj={_format_ratio(metrics['fpa_projected'])}")
     if "tice_projected" in metrics:
         summary_parts.append(f"TICE_proj={_format_ratio(metrics['tice_projected'])}")
     if summary_parts:
@@ -87,14 +104,11 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     known_keys = set(_level_acc_keys(metrics))
     known_keys.update(
         {
-            "weighted_acc",
             "weighted_ap",
             "fpa",
+            "fpa_projected",
             "tice",
             "tice_projected",
-            "acc_path",
-            "inconsistency_rate",
-            "tice_like",
             "total",
             "level_ce",
             "gk_loss",

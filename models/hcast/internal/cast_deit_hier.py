@@ -1,8 +1,7 @@
 ﻿"""Define CAST model for classification following DeiT convention.
 
 Modified from:
-    https://github.com/facebookresearch/moco-v3/blob/main/vits.py
-    https://github.com/facebookresearch/deit/blob/main/models.py
+    https://github.com/pseulki/HCAST/blob/main/cast_models/cast_deit_hier.py
 """
 
 import math
@@ -57,6 +56,7 @@ class CAST(VisionTransformer):
         num_clusters = kwargs.pop('num_clusters', [64, 32, 16, 8])
         kwargs['depth'] = sum(kwargs['depth'])
         super().__init__(**kwargs)
+        # If the original ViT has a pre-logits layer, we will use it to generate features for the family and manufacturer heads.
         if not hasattr(self, "pre_logits"):
             self.pre_logits = nn.Identity()
 
@@ -69,7 +69,6 @@ class CAST(VisionTransformer):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, self.embed_dim))
         trunc_normal_(self.pos_embed, std=.02)
 
-        #print('nb_classes', nb_classes)
         if len(nb_classes) == 3:
             self.num_classes = nb_classes[0]
             self.num_family = nb_classes[1]
@@ -79,14 +78,14 @@ class CAST(VisionTransformer):
             self.num_family = nb_classes[1]
             self.num_manufacturer = 0
 
-
+        # Classification heads
         self.family_head = nn.Linear(self.embed_dim, self.num_family) if self.num_family > 0 else nn.Identity()
         if len(nb_classes) == 3:
             self.manufacturer_head = nn.Linear(self.embed_dim, self.num_manufacturer) if self.num_manufacturer > 0 else nn.Identity()
             self.manufacturer_head.apply(self._init_weights)
-        
         self.family_head.apply(self._init_weights)
 
+        # Encoder specifics
         cumsum_depth = [0]
         for d in depths:
             cumsum_depth.append(d + cumsum_depth[-1])
@@ -118,7 +117,6 @@ class CAST(VisionTransformer):
         self.blocks2, self.pool2 = blocks[1], pools[1]
         self.blocks3, self.pool3 = blocks[2], pools[2]
         self.blocks4, self.pool4 = blocks[3], pools[3]
-        # --------------------------------------------------------------------------
 
 
     def _block_operations(self, x, cls_token, x_pad_mask,

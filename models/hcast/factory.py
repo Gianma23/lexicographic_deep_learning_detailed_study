@@ -4,10 +4,10 @@ from .model import HCASTModel
 
 
 def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[Dict] = None):
-    _ = taxonomy
     dataset_mean = list(cfg.dataset.get("mean", [0.485, 0.456, 0.406]))
     dataset_std = list(cfg.dataset.get("std", [0.229, 0.224, 0.225]))
     segment_cfg = cfg.model.get("segments", {})
+    design1_cfg = cfg.model.get("design1", {})
     return HCASTModel(
         num_classes_per_level=num_classes_per_level,
         variant=str(cfg.model.get("variant", "cast_small")),
@@ -27,4 +27,6 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
             "mean": list(segment_cfg.get("mean", dataset_mean)),
             "std": list(segment_cfg.get("std", dataset_std)),
         },
+        taxonomy=taxonomy,
+        design1_cfg=design1_cfg,
     )

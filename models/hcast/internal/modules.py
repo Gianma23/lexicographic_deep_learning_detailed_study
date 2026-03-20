@@ -2,10 +2,7 @@
 import torch
 import torch.nn as nn
 
-try:
-    from timm.models.layers.helpers import to_2tuple  # old timm
-except Exception:  # pragma: no cover
-    from timm.layers import to_2tuple
+from timm.layers import to_2tuple
 
 
 class Pooling(nn.Module):
