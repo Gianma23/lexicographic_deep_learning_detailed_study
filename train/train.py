@@ -94,10 +94,11 @@ def main():
             scaler,
             device,
             cfg,
+            epoch=epoch,
             num_classes_per_level=num_classes_per_level,
             taxonomy=taxonomy,
         )
-        val_metrics = evaluate(model, val_loader, device, cfg, taxonomy)
+        val_metrics = evaluate(model, val_loader, device, cfg, epoch=epoch, taxonomy=taxonomy)
 
         score = metric_for_best(val_metrics)
         if scheduler is not None:
@@ -145,8 +146,9 @@ def main():
     # Evaluate the best validation checkpoint on the test set.
     checkpoint = torch.load(best_ckpt, map_location=device)
     model.load_state_dict(checkpoint["model_state"])
+    checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))
     print(f"[test] loaded best checkpoint from: {best_ckpt}")
-    test_metrics = evaluate(model, test_loader, device, cfg, taxonomy)
+    test_metrics = evaluate(model, test_loader, device, cfg, epoch=checkpoint_epoch, taxonomy=taxonomy)
     print(f"[test] {pretty_metrics(test_metrics, level_names=level_names)}")
     logger.log_test(
         best_checkpoint=str(best_ckpt),

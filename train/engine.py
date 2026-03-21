@@ -13,6 +13,15 @@ except ImportError:  # pragma: no cover
     tqdm = None
 
 
+def _set_model_epoch(model: torch.nn.Module, epoch: int) -> None:
+    if hasattr(model, "set_epoch"):
+        model.set_epoch(epoch)
+        return
+    wrapped_model = getattr(model, "module", None)
+    if wrapped_model is not None and hasattr(wrapped_model, "set_epoch"):
+        wrapped_model.set_epoch(epoch)
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     loader,
@@ -20,10 +29,12 @@ def train_one_epoch(
     scaler,
     device: torch.device,
     cfg: Any,
+    epoch: int = 0,
     num_classes_per_level: Optional[List[int]] = None,
     taxonomy: Optional[Dict] = None,
 ) -> Dict[str, float]:
     model.train()
+    _set_model_epoch(model, epoch)
     loss_vals = []
     batch_metrics = []
     mixup_fn = build_mixup_fn(cfg, num_classes_per_level=num_classes_per_level)
@@ -78,9 +89,11 @@ def evaluate(
     loader,
     device: torch.device,
     cfg: Any,
+    epoch: int = 0,
     taxonomy: Optional[Dict] = None,
 ) -> Dict[str, float]:
     model.eval()
+    _set_model_epoch(model, epoch)
 
     batch_metrics = []
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"

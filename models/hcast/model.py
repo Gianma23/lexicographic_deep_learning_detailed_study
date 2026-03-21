@@ -52,6 +52,7 @@ class HCASTModel(nn.Module):
         self.seeds_double_step = bool(segments_cfg.get("double_step", False))
         self.seeds_num_iterations = int(segments_cfg.get("num_iterations", 15))
         self._seeds_warned = False
+        self._current_epoch = 0
         self.design1_cfg = self._build_design1_cfg(design1_cfg)
         self.design1_projector: Optional[HierarchicalAffineProjector] = None
 
@@ -89,28 +90,36 @@ class HCASTModel(nn.Module):
     @staticmethod
     def _build_design1_cfg(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         cfg = cfg or {}
-        scope = str(cfg.get("scope", "train_eval")).strip().lower()
-        if scope not in {"train_eval", "train", "eval"}:
-            scope = "train_eval"
+        raw_warmup = cfg.get("warmup", 0)
+        try:
+            warmup = int(raw_warmup)
+        except (TypeError, ValueError):
+            warmup = 0
+        if warmup < 0:
+            warmup = 0
         eps = float(cfg.get("eps", 1e-12))
         if eps <= 0.0:
             eps = 1e-12
         return {
             "enabled": bool(cfg.get("enabled", False)),
-            "scope": scope,
+            "warmup": warmup,
             "eps": eps,
             "stabilize_simplex": bool(cfg.get("stabilize_simplex", True)),
         }
+
+    def set_epoch(self, epoch: int) -> None:
+        try:
+            epoch_value = int(epoch)
+        except (TypeError, ValueError):
+            epoch_value = 0
+        self._current_epoch = max(epoch_value, 0)
 
     def _design1_active(self) -> bool:
         if not self.design1_cfg["enabled"]:
             return False
         if self.design1_projector is None:
             return False
-        scope = self.design1_cfg["scope"]
-        if scope == "train" and not self.training:
-            return False
-        if scope == "eval" and self.training:
+        if self._current_epoch < int(self.design1_cfg["warmup"]):
             return False
         return True
 
