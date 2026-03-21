@@ -216,11 +216,11 @@ class HierarchicalAffineProjector(nn.Module):
 
             p1_hat = p1_work
             if self.stabilize_simplex:
-                p1_mass = p1_hat.clamp_min(self.eps)
-                p1_mass = p1_mass / p1_mass.sum(dim=-1, keepdim=True).clamp_min(self.eps)
+                # p1 is not projected in design1; keep it unchanged and only
+                # re-normalize children to match parent masses.
                 p2_hat = self._mass_renormalize(
                     child_scores=p2_hat,
-                    parent_mass=p1_mass,
+                    parent_mass=p1_hat,
                     parent_of_child=self.parent_of_middle,
                 )
                 p3_hat = self._mass_renormalize(

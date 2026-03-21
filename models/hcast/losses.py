@@ -36,6 +36,28 @@ def _soft_targets_from_input(
     return out
 
 
+def _hard_targets_from_input(
+    targets: HcastTargets,
+    num_levels: int,
+) -> Optional[torch.Tensor]:
+    if isinstance(targets, torch.Tensor):
+        hard_targets = targets
+    elif isinstance(targets, dict):
+        hard_targets = targets.get("hard_targets")
+        if hard_targets is None:
+            return None
+    else:
+        return None
+
+    if not isinstance(hard_targets, torch.Tensor):
+        return None
+    if hard_targets.ndim != 2:
+        return None
+    if int(hard_targets.size(1)) != int(num_levels):
+        return None
+    return hard_targets.long()
+
+
 def _soft_cross_entropy_from_log_probs(log_probs: torch.Tensor, target_probs: torch.Tensor) -> torch.Tensor:
     probs = target_probs.to(device=log_probs.device, dtype=log_probs.dtype)
     probs = probs / probs.sum(dim=1, keepdim=True).clamp_min(1e-12)
@@ -57,6 +79,64 @@ def _label_smoothed_target_probs(
         device=target.device,
     )
     return out.scatter_(1, target.unsqueeze(1), on_value)
+
+
+def _static_level_weights(num_levels: int) -> List[float]:
+    """Hardcoded per-level CE weighting for H-CAST."""
+    hardcoded = [1, 1, 1]
+    if num_levels == len(hardcoded):
+        return hardcoded
+    if num_levels <= 0:
+        return []
+    return [1.0 / num_levels for _ in range(num_levels)]
+
+
+def _dynamic_initial_level_weights(num_classes_per_level: List[int], eps: float) -> List[float]:
+    if not num_classes_per_level:
+        return []
+
+    total_classes = float(sum(int(max(k, 0)) for k in num_classes_per_level))
+    if total_classes <= eps:
+        return [1.0 / len(num_classes_per_level) for _ in num_classes_per_level]
+
+    raw = [1.0 - (float(max(k, 0)) / total_classes) for k in num_classes_per_level]
+    raw_sum = float(sum(raw))
+    if raw_sum <= eps:
+        return [1.0 / len(num_classes_per_level) for _ in num_classes_per_level]
+    return [value / raw_sum for value in raw]
+
+
+def _batch_top1_accuracy_per_level(
+    scores_per_level: List[torch.Tensor],
+    hard_targets: torch.Tensor,
+) -> List[float]:
+    out: List[float] = []
+    for level, scores in enumerate(scores_per_level):
+        pred = scores.argmax(dim=-1)
+        acc = (pred == hard_targets[:, level]).float().mean().item()
+        out.append(float(acc))
+    return out
+
+
+def _dynamic_level_weights(
+    scores_per_level: List[torch.Tensor],
+    hard_targets: torch.Tensor,
+    gamma: float,
+    eps: float,
+) -> List[float]:
+    num_classes_per_level = [int(scores.size(-1)) for scores in scores_per_level]
+    omega_init = _dynamic_initial_level_weights(num_classes_per_level, eps=eps)
+    acc_per_level = _batch_top1_accuracy_per_level(scores_per_level, hard_targets)
+    rho = [(1.0 - acc_per_level[level]) * omega_init[level] for level in range(len(omega_init))]
+    rho_sum = float(sum(rho))
+
+    if rho_sum <= eps:
+        base_weights = omega_init
+    else:
+        base_weights = [value / rho_sum for value in rho]
+
+    scale = 1.0 - gamma
+    return [scale * value for value in base_weights]
 
 
 def _global_kl_loss(
@@ -105,13 +185,13 @@ def compute_loss(
     outputs_for_targets = effective_probs_per_level if has_effective_probs else logits_per_level
 
     target_probs_per_level = _soft_targets_from_input(outputs_for_targets, targets)
-    hard_targets: Optional[torch.Tensor] = None
+    hard_targets = _hard_targets_from_input(targets, num_levels=len(logits_per_level))
+    if hard_targets is not None:
+        hard_targets = hard_targets.to(device=outputs_for_targets[0].device, dtype=torch.long)
+
     if target_probs_per_level is None:
-        if not isinstance(targets, torch.Tensor):
+        if hard_targets is None:
             raise TypeError("Expected hard targets tensor of shape [B, L].")
-        if targets.ndim != 2:
-            raise ValueError(f"Expected hard targets with shape [B, L], got {tuple(targets.shape)}.")
-        hard_targets = targets.long()
 
     if has_effective_probs:
         raw_eps = cfg.model.get("design1", {}).get("eps", 1e-12)
@@ -158,7 +238,36 @@ def compute_loss(
                 for level, logits in enumerate(logits_per_level)
             ]
 
-    ce_loss = torch.stack(level_losses).sum()
+    level_weight_cfg = cfg.loss.get("level_weighting", {})
+    level_weight_mode = str(level_weight_cfg.get("mode", "static")).strip().lower()
+    if level_weight_mode not in {"static", "dynamic"}:
+        level_weight_mode = "static"
+    gamma = float(level_weight_cfg.get("gamma", 0.0))
+    gamma = min(max(gamma, 0.0), 1.0)
+    weight_eps = float(level_weight_cfg.get("eps", 1e-12))
+    if weight_eps <= 0.0:
+        weight_eps = 1e-12
+
+    if level_weight_mode == "dynamic":
+        if hard_targets is None:
+            raise ValueError(
+                "Dynamic level weighting requires hard targets. "
+                "Pass `hard_targets` in target dict when using soft targets."
+            )
+        level_weights = _dynamic_level_weights(
+            scores_per_level=outputs_for_targets,
+            hard_targets=hard_targets,
+            gamma=gamma,
+            eps=weight_eps,
+        )
+    else:
+        level_weights = _static_level_weights(len(level_losses))
+
+    weighted_level_losses = [
+        level_loss * float(level_weights[level])
+        for level, level_loss in enumerate(level_losses)
+    ]
+    ce_loss = torch.stack(weighted_level_losses).sum()
     total = ce_loss
 
     if bool(cfg.loss.get("globalkl", False)):
@@ -188,4 +297,5 @@ def compute_loss(
     }
     for level, level_loss in enumerate(level_losses):
         metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
+        metrics[f"loss_weight_level_{level}"] = float(level_weights[level])
     return total, metrics

@@ -252,13 +252,23 @@ def resume_if_available(
 def metric_for_best(eval_metrics: Dict[str, float]) -> float:
     """Select the checkpoint ranking score from validation metrics.
 
-    Prefers weighted hierarchy accuracy; breaks ties with FPA.
-    Falls back to deepest available level accuracy.
+    Lexicographic order:
+    1) FPA (higher is better)
+    2) TICE (lower is better)
+    3) wAP / weighted_acc (higher is better)
+    Falls back to deepest available level accuracy when H-CAST metrics are absent.
     """
-    if "weighted_ap" in eval_metrics or "weighted_acc" in eval_metrics:
-        primary = float(eval_metrics.get("weighted_ap", eval_metrics.get("weighted_acc", 0.0)))
-        tie = float(eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0)))
-        return float(primary + 1e-3 * tie)
+    has_fpa = "fpa" in eval_metrics or "acc_path" in eval_metrics
+    has_tice = "tice" in eval_metrics
+    has_wap = "weighted_ap" in eval_metrics or "weighted_acc" in eval_metrics
+
+    if has_fpa or has_tice or has_wap:
+        fpa = float(eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0)))
+        # TICE is inconsistency rate, so lower is better: encode as -TICE.
+        neg_tice = -float(eval_metrics.get("tice", 1.0))
+        wap = float(eval_metrics.get("weighted_ap", eval_metrics.get("weighted_acc", 0.0)))
+        # Base-10 lexicographic packing for bounded metrics in [0, 1].
+        return float(fpa + 1e-3 * neg_tice + 1e-6 * wap)
 
     deepest = [k for k in eval_metrics if k.startswith("acc_level_")]
     if not deepest:

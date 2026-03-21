@@ -47,6 +47,15 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
         if tice_projected is not None:
             metrics["tice_projected"] = tice_projected
 
+    design1_diagnostics = output.get("design1_diagnostics")
+    if isinstance(design1_diagnostics, dict):
+        for key, value in design1_diagnostics.items():
+            if isinstance(value, torch.Tensor):
+                if value.numel() == 1:
+                    metrics[key] = float(value.detach().item())
+            elif isinstance(value, (int, float)):
+                metrics[key] = float(value)
+
     return metrics
 
 
@@ -85,6 +94,39 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     if summary_parts:
         sections.append("Summary[" + ", ".join(summary_parts) + "]")
 
+    proj_diag_parts: List[str] = []
+    if "proj_has_negative" in metrics:
+        proj_diag_parts.append(f"AnyNegBatch={_format_ratio(metrics['proj_has_negative'])}")
+
+    neg_frac_keys = [
+        k
+        for k in metrics.keys()
+        if k.startswith("proj_neg_frac_level_") and k[len("proj_neg_frac_level_") :].isdigit()
+    ]
+    if neg_frac_keys:
+        neg_parts: List[str] = []
+        for key in sorted(neg_frac_keys, key=lambda k: int(k.split("_")[-1])):
+            idx = int(key.split("_")[-1])
+            name = level_names[idx] if idx < len(level_names) else f"L{idx}"
+            neg_parts.append(f"{name}={_format_ratio(metrics[key])}")
+        proj_diag_parts.append("NegFrac[" + ", ".join(neg_parts) + "]")
+
+    min_keys = [
+        k
+        for k in metrics.keys()
+        if k.startswith("proj_min_level_") and k[len("proj_min_level_") :].isdigit()
+    ]
+    if min_keys:
+        min_parts: List[str] = []
+        for key in sorted(min_keys, key=lambda k: int(k.split("_")[-1])):
+            idx = int(key.split("_")[-1])
+            name = level_names[idx] if idx < len(level_names) else f"L{idx}"
+            min_parts.append(f"{name}={metrics[key]:.3e}")
+        proj_diag_parts.append("Min[" + ", ".join(min_parts) + "]")
+
+    if proj_diag_parts:
+        sections.append("ProjDiag[" + ", ".join(proj_diag_parts) + "]")
+
     loss_parts: List[str] = []
     if "total" in metrics:
         loss_parts.append(f"total={metrics['total']:.4f}")
@@ -112,8 +154,11 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
             "total",
             "level_ce",
             "gk_loss",
+            "proj_has_negative",
         }
     )
+    known_keys.update(neg_frac_keys)
+    known_keys.update(min_keys)
     known_keys.update(loss_level_keys)
 
     """ other_keys = sorted([k for k in metrics.keys() if k not in known_keys])

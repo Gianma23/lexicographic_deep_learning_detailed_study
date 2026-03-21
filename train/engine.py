@@ -45,7 +45,10 @@ def train_one_epoch(
             mixup_out = mixup_fn(images, target_levels)
             images = mixup_out[0]
             soft_targets_per_level = list(mixup_out[1:])
-            targets_for_loss = {"soft_targets_per_level": soft_targets_per_level}
+            targets_for_loss = {
+                "soft_targets_per_level": soft_targets_per_level,
+                "hard_targets": labels,
+            }
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
             output = model(images)

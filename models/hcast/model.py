@@ -171,12 +171,27 @@ class HCASTModel(nn.Module):
         # Upstream order is fine->coarse; unified API is coarse->fine.
         logits_per_level = list(reversed(list(raw)))
         effective_probs_per_level = None
+        design1_diagnostics = None
         if self._design1_active():
             probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
             projector_output = self.design1_projector(probs_per_level)
             effective_probs_per_level = projector_output["projected_probs_per_level"]
+            with torch.no_grad():
+                diag: Dict[str, float] = {}
+                has_negative = 0.0
+                for level, probs in enumerate(effective_probs_per_level):
+                    neg_mask = probs < 0.0
+                    neg_count = int(neg_mask.sum().item())
+                    total_count = max(int(probs.numel()), 1)
+                    if neg_count > 0:
+                        has_negative = 1.0
+                    diag[f"proj_neg_frac_level_{level}"] = float(neg_count / total_count)
+                    diag[f"proj_min_level_{level}"] = float(probs.min().item())
+                diag["proj_has_negative"] = has_negative
+                design1_diagnostics = diag
 
         return {
             "logits_per_level": logits_per_level,
             "effective_probs_per_level": effective_probs_per_level,
+            "design1_diagnostics": design1_diagnostics,
         }

@@ -1,8 +1,4 @@
-﻿"""Define Graph Pooling.
-
-Modified from:
-    https://github.com/pseulki/HCAST/blob/main/cast_models/graph_pool.py
-"""
+﻿"""Define Graph Pooling."""
 import math
 from functools import partial
 
@@ -11,6 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from timm.layers import DropPath
+
+from .utils import segment_mean_nd
 
 
 class Attention(nn.Module):
@@ -142,29 +140,39 @@ class GraphPooling(nn.Module):
             raise ValueError(f"npoints must be > 0, got {npoints}")
         if num_points <= 0:
             raise ValueError("points must have at least one entry for FPS")
-        if npoints > num_points:
-            raise ValueError(
-                f"npoints must be <= num_points (DGL FPS contract), got {npoints} > {num_points}"
-            )
-        if start_idx >= num_points or start_idx < 0:
-            raise ValueError(
-                f"Invalid start_idx, expected 0 <= start_idx < {num_points}, got {start_idx}"
-            )
 
-        sampled_inds = torch.empty((bs, npoints), dtype=torch.long, device=points.device)
+        # We sample unique points first; if more are requested, we pad by repeating
+        # the last valid index to preserve the expected output shape.
+        eff_npoints = min(npoints, num_points)
+        sampled_inds = torch.empty((bs, eff_npoints), dtype=torch.long, device=points.device)
         batch_inds = torch.arange(bs, device=points.device)
+
         start = torch.full((bs,), int(start_idx), dtype=torch.long, device=points.device)
+        start = start.clamp_(min=0, max=num_points - 1)
         sampled_inds[:, 0] = start
 
-        min_dist = torch.empty((bs, num_points), dtype=points.dtype, device=points.device)
-        for i in range(npoints - 1):
-            selected = points[batch_inds, sampled_inds[:, i]]
+        min_dist = torch.full(
+            (bs, num_points),
+            float("inf"),
+            dtype=points.dtype,
+            device=points.device,
+        )
+        selected = points[batch_inds, start]  # [B, C]
+        dist = torch.sum((points - selected.unsqueeze(1)) ** 2, dim=-1)
+        min_dist = torch.minimum(min_dist, dist)
+        min_dist.scatter_(1, start.unsqueeze(1), -1.0)
+
+        for i in range(1, eff_npoints):
+            next_idx = torch.argmax(min_dist, dim=1)
+            sampled_inds[:, i] = next_idx
+            selected = points[batch_inds, next_idx]
             dist = torch.sum((points - selected.unsqueeze(1)) ** 2, dim=-1)
-            if i == 0:
-                min_dist = dist
-            else:
-                min_dist = torch.minimum(min_dist, dist)
-            sampled_inds[:, i + 1] = torch.argmax(min_dist, dim=1)
+            min_dist = torch.minimum(min_dist, dist)
+            min_dist.scatter_(1, next_idx.unsqueeze(1), -1.0)
+
+        if eff_npoints < npoints:
+            pad = sampled_inds[:, -1:].expand(-1, npoints - eff_npoints)
+            sampled_inds = torch.cat([sampled_inds, pad], dim=1)
 
         return sampled_inds
 
@@ -254,3 +262,4 @@ def valid_mean(x, mask):
      mean_x = torch.sum(masked_x, dim=1) / sum_mask
 
      return mean_x
+
