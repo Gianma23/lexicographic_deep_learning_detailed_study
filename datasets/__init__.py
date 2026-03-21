@@ -1,7 +1,9 @@
 import os
+import random
 import warnings
 from typing import Any
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -148,6 +150,19 @@ def _collate_fn(batch):
     return images, labels, metas
 
 
+def _loader_seed(cfg: Any, split: str) -> int:
+    base_seed = int(cfg.train.get("seed", 42))
+    split_offsets = {"train": 0, "val": 1, "test": 2}
+    return int(base_seed + split_offsets.get(split, 0))
+
+
+def _seed_worker(worker_id: int) -> None:
+    worker_seed = int(torch.initial_seed() % (2**32))
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+
+
 def build_dataloader(cfg: Any, split: str):
     dataset_name_raw = str(cfg.dataset.name).lower()
     dataset_name = _DATASET_ALIASES.get(dataset_name_raw, dataset_name_raw)
@@ -172,6 +187,11 @@ def build_dataloader(cfg: Any, split: str):
             RuntimeWarning,
         )
         workers = 0
+
+    loader_seed = _loader_seed(cfg, split)
+    generator = torch.Generator()
+    generator.manual_seed(loader_seed)
+
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -179,6 +199,8 @@ def build_dataloader(cfg: Any, split: str):
         num_workers=workers,
         collate_fn=_collate_fn,
         drop_last=split == "train",
+        generator=generator,
+        worker_init_fn=_seed_worker,
     )
 
     return loader, dataset.num_classes_per_level, dataset.taxonomy

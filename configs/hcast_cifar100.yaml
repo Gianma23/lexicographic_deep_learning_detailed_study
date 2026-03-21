@@ -51,7 +51,7 @@ train:
   seed: 42
   device: cuda
   amp: true
-  resume: "./outputs/hcast_cifar100/latest.pt"
+  resume: ""
   output_dir: ./outputs/hcast_cifar100
   smoothing: 0.1
 

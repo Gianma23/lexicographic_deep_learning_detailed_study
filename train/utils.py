@@ -15,15 +15,30 @@ except Exception:  # pragma: no cover
 
 
 def seed_everything(seed: int, deterministic: bool = True):
-    """Seed Python/NumPy/PyTorch RNGs and configure cuDNN determinism."""
+    """Seed Python/NumPy/PyTorch RNGs and configure deterministic behavior."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    # OpenCV RNG is used by H-CAST SEEDS segmentation when available.
+    try:
+        import cv2
+        cv2.setRNGSeed(int(seed))
+    except Exception:
+        pass
 
     # Deterministic mode improves reproducibility, benchmark improves speed.
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
+    if hasattr(torch.backends.cudnn, "allow_tf32"):
+        torch.backends.cudnn.allow_tf32 = not deterministic
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+        torch.backends.cuda.matmul.allow_tf32 = not deterministic
+
+    if deterministic:
+        # Needed by deterministic CUDA matmul kernels on many setups.
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.use_deterministic_algorithms(deterministic)
 
 
 def _section_to_dict(section: Any) -> Dict[str, Any]:
