@@ -1,20 +1,11 @@
 import argparse
 from pathlib import Path
-from typing import Any, Dict, List
 
 import torch
 
 from datasets import build_dataloader
 from models import build_model
-from .artifacts import (
-    append_epoch_metrics,
-    as_float_dict,
-    initialize_epoch_rows,
-    save_train_level_losses_plot,
-    save_val_level_accuracies_plot,
-    save_yaml,
-    update_level_history,
-)
+from .training_logger import TrainingLogger
 from .config_loader import load_config
 from .engine import evaluate, train_one_epoch
 from .eval import pretty_metrics
@@ -81,28 +72,22 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     latest_ckpt = out_dir / "latest.pt"
     best_ckpt = out_dir / "best.pt"
-    resolved_cfg_path = out_dir / "config_resolved.yaml"
-    epoch_metrics_jsonl_path = out_dir / "epoch_metrics.jsonl"
-    epoch_metrics_csv_path = out_dir / "epoch_metrics.csv"
-    test_metrics_path = out_dir / "test_metrics.yaml"
 
-    save_yaml(resolved_cfg_path, cfg_resolved)
-    print(f"[artifact] saved resolved config: {resolved_cfg_path}")
-
+    level_names = [str(name) for name in cfg.dataset.get("levels", [])]
     start_epoch, best_metric = resume_if_available(str(cfg.train.get("resume", "")), model, optimizer, scheduler, scaler)
-    epoch_rows: List[Dict[str, Any]] = initialize_epoch_rows(
+    logger = TrainingLogger(
+        output_dir=out_dir,
         start_epoch=start_epoch,
-        jsonl_path=epoch_metrics_jsonl_path,
-        csv_path=epoch_metrics_csv_path,
+        level_names=level_names,
+        model_name=str(cfg.model.name),
     )
+    resolved_cfg_path = logger.save_resolved_config(cfg_resolved)
+    print(f"[LOGGER] saved resolved config: {resolved_cfg_path}")
+    print(f"[LOGGER] logging run events to: {logger.run_log_path}")
 
     epochs = int(cfg.train.epochs)
-    level_names = [str(name) for name in cfg.dataset.get("levels", [])]
-    epoch_ids = []
-    level_loss_history = {}
-    level_val_acc_history = {}
     for epoch in range(start_epoch, epochs):
-        train_metrics = train_one_epoch(
+        train_outputs = train_one_epoch(
             model,
             train_loader,
             optimizer,
@@ -113,23 +98,6 @@ def main():
             taxonomy=taxonomy,
         )
         val_metrics = evaluate(model, val_loader, device, cfg, taxonomy)
-
-        # Collect per-level training losses for plotting.
-        epoch_ids.append(epoch + 1)
-        update_level_history(
-            history=level_loss_history,
-            epoch_ids=epoch_ids,
-            metrics=train_metrics,
-            metric_prefix="loss_level_",
-        )
-
-        # Collect per-level validation accuracies for plotting.
-        update_level_history(
-            history=level_val_acc_history,
-            epoch_ids=epoch_ids,
-            metrics=val_metrics,
-            metric_prefix="acc_level_",
-        )
 
         score = metric_for_best(val_metrics)
         if scheduler is not None:
@@ -161,45 +129,18 @@ def main():
             cfg_resolved,
         )
 
-        append_epoch_metrics(
-            rows=epoch_rows,
-            jsonl_path=epoch_metrics_jsonl_path,
-            csv_path=epoch_metrics_csv_path,
+        logger.log_epoch(
             epoch=epoch + 1,
             lr=float(optimizer.param_groups[0]["lr"]) if optimizer.param_groups else float("nan"),
             best_metric=best_metric,
-            train_metrics=train_metrics,
+            train_outputs=train_outputs,
             val_metrics=val_metrics,
         )
 
         epoch_tag = f"[epoch {epoch + 1:03d}/{epochs:03d}]"
-        print(f"{epoch_tag} train | {pretty_metrics(train_metrics, level_names=level_names)}")
+        print(f"{epoch_tag} train | {pretty_metrics(train_outputs, level_names=level_names)}")
         print(f"{epoch_tag} val   | {pretty_metrics(val_metrics, level_names=level_names)}")
         print("")
-
-    loss_plot_path = save_train_level_losses_plot(
-        out_dir=str(out_dir),
-        epoch_ids=epoch_ids,
-        level_loss_history=level_loss_history,
-        level_names=level_names,
-        model_name=str(cfg.model.name),
-    )
-    if loss_plot_path:
-        print(f"saved_train_loss_plot: {loss_plot_path}")
-    elif level_loss_history:
-        print("saved_train_loss_plot: skipped (matplotlib not installed)")
-
-    val_plot_path = save_val_level_accuracies_plot(
-        out_dir=str(out_dir),
-        epoch_ids=epoch_ids,
-        level_acc_history=level_val_acc_history,
-        level_names=level_names,
-        model_name=str(cfg.model.name),
-    )
-    if val_plot_path:
-        print(f"saved_val_accuracy_plot: {val_plot_path}")
-    elif level_val_acc_history:
-        print("saved_val_accuracy_plot: skipped (matplotlib not installed)")
 
     # Evaluate the best validation checkpoint on the test set.
     checkpoint = torch.load(best_ckpt, map_location=device)
@@ -207,13 +148,11 @@ def main():
     print(f"[test] loaded best checkpoint from: {best_ckpt}")
     test_metrics = evaluate(model, test_loader, device, cfg, taxonomy)
     print(f"[test] {pretty_metrics(test_metrics, level_names=level_names)}")
-    test_payload = {
-        "best_checkpoint": str(best_ckpt),
-        "best_metric": float(best_metric),
-        "test_metrics": as_float_dict(test_metrics),
-    }
-    save_yaml(test_metrics_path, test_payload)
-    print(f"[artifact] saved test metrics: {test_metrics_path}")
+    logger.log_test(
+        best_checkpoint=str(best_ckpt),
+        best_metric=best_metric,
+        test_metrics=test_metrics,
+    )
 
 
 if __name__ == "__main__":

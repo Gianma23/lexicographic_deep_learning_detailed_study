@@ -64,24 +64,46 @@ def _hierarchical_argmax_preds(
     return preds
 
 
-def per_level_top1(logits_per_level: List[torch.Tensor], targets: torch.Tensor) -> Dict[str, float]:
+def _decoded_preds(
+    logits_per_level: List[torch.Tensor],
+    taxonomy: Optional[Dict[str, Any]],
+    enforce_hierarchy: bool,
+) -> List[torch.Tensor]:
+    if enforce_hierarchy:
+        return _hierarchical_argmax_preds(logits_per_level, taxonomy)
+    return _argmax_preds(logits_per_level)
+
+
+def per_level_top1(
+    logits_per_level: List[torch.Tensor],
+    targets: torch.Tensor,
+    taxonomy: Optional[Dict[str, Any]] = None,
+    enforce_hierarchy: bool = False,
+    key_prefix: str = "acc_level_",
+) -> Dict[str, float]:
     out: Dict[str, float] = {}
-    for level, logits in enumerate(logits_per_level):
-        pred = logits.argmax(dim=-1)
+    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+    for level, pred in enumerate(preds):
         acc = (pred == targets[:, level]).float().mean().item()
-        out[f"acc_level_{level}"] = float(acc)
+        out[f"{key_prefix}{level}"] = float(acc)
     return out
 
 
-def weighted_average_precision(logits_per_level: List[torch.Tensor], targets: torch.Tensor) -> float:
+def weighted_average_precision(
+    logits_per_level: List[torch.Tensor],
+    targets: torch.Tensor,
+    taxonomy: Optional[Dict[str, Any]] = None,
+    enforce_hierarchy: bool = False,
+) -> float:
     """H-CAST wAP: class-count-weighted Top-1 accuracy across levels."""
     if not logits_per_level:
         return 0.0
 
+    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     weighted_sum = 0.0
     total_weight = 0.0
     for level, logits in enumerate(logits_per_level):
-        pred = logits.argmax(dim=-1)
+        pred = preds[level]
         acc = float((pred == targets[:, level]).float().mean().item())
         weight = float(logits.size(-1))
         weighted_sum += weight * acc
@@ -93,7 +115,7 @@ def weighted_average_precision(logits_per_level: List[torch.Tensor], targets: to
 
 
 def weighted_accuracy(logits_per_level: List[torch.Tensor], targets: torch.Tensor) -> float:
-    # Backward-compatible alias.
+    # Alias.
     return weighted_average_precision(logits_per_level, targets)
 
 
@@ -103,10 +125,7 @@ def full_path_accuracy(
     taxonomy: Optional[Dict[str, Any]] = None,
     enforce_hierarchy: bool = False,
 ) -> float:
-    if enforce_hierarchy:
-        preds = _hierarchical_argmax_preds(logits_per_level, taxonomy)
-    else:
-        preds = _argmax_preds(logits_per_level)
+    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     pred_path = torch.stack(preds, dim=1)
     return float((pred_path == targets).all(dim=1).float().mean().item())
 
@@ -120,11 +139,7 @@ def consistency_rate(
         return None
 
     parent_of = _normalize_parent_of(taxonomy)
-    preds = (
-        _hierarchical_argmax_preds(logits_per_level, taxonomy)
-        if enforce_hierarchy
-        else _argmax_preds(logits_per_level)
-    )
+    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     if not preds:
         return None
 

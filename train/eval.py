@@ -15,37 +15,73 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
     if effective_probs_per_level is not None and not has_effective_probs:
         raise ValueError("`effective_probs_per_level` must be None or a list aligned with logits levels.")
 
+    # Metrics are computed from final model scores:
+    # projected probabilities when available, otherwise raw logits.
     score_source = effective_probs_per_level if has_effective_probs else logits_per_level
-    enforce_hierarchy_decode = bool(has_effective_probs and taxonomy is not None)
 
-    metrics = per_level_top1(score_source, targets)
-    metrics["weighted_ap"] = weighted_average_precision(score_source, targets)
-
-    # H-CAST: FPA is full-path exact-match accuracy.
-    fpa = full_path_accuracy(
+    metrics: Dict[str, float] = {}
+    metrics.update(
+        per_level_top1(
+            score_source,
+            targets,
+            taxonomy=taxonomy,
+            enforce_hierarchy=False,
+            key_prefix="acc_level_independent_",
+        )
+    )
+    metrics.update(
+        per_level_top1(
+            score_source,
+            targets,
+            taxonomy=taxonomy,
+            enforce_hierarchy=True,
+            key_prefix="acc_level_topdown_",
+        )
+    )
+    metrics["weighted_ap_independent"] = weighted_average_precision(
         score_source,
         targets,
         taxonomy=taxonomy,
-        enforce_hierarchy=enforce_hierarchy_decode,
+        enforce_hierarchy=False,
     )
-    metrics["fpa"] = fpa
+    metrics["weighted_ap_topdown"] = weighted_average_precision(
+        score_source,
+        targets,
+        taxonomy=taxonomy,
+        enforce_hierarchy=True,
+    )
+
+    # H-CAST: FPA is full-path exact-match accuracy.
+    # Save both decoding variants on final scores:
+    # 1) independent argmax per level, 2) top-down hierarchical argmax.
+    metrics["fpa_independent"] = full_path_accuracy(
+        score_source,
+        targets,
+        taxonomy=taxonomy,
+        enforce_hierarchy=False,
+    )
+    metrics["fpa_topdown"] = full_path_accuracy(
+        score_source,
+        targets,
+        taxonomy=taxonomy,
+        enforce_hierarchy=True,
+    )
 
     # H-CAST: TICE is inconsistency rate (lower is better).
-    tice = tice_score(
+    tice_independent = tice_score(
         score_source,
         taxonomy,
-        enforce_hierarchy=enforce_hierarchy_decode,
+        enforce_hierarchy=False,
     )
-    if tice is not None:
-        metrics["tice"] = tice
-
-    if has_effective_probs:
-        # Keep independent-argmax projected path metrics for diagnostics.
-        fpa_projected = full_path_accuracy(effective_probs_per_level, targets, enforce_hierarchy=False)
-        metrics["fpa_projected"] = fpa_projected
-        tice_projected = tice_score(effective_probs_per_level, taxonomy, enforce_hierarchy=False)
-        if tice_projected is not None:
-            metrics["tice_projected"] = tice_projected
+    tice_topdown = tice_score(
+        score_source,
+        taxonomy,
+        enforce_hierarchy=True,
+    )
+    if tice_independent is not None:
+        metrics["tice_independent"] = tice_independent
+    if tice_topdown is not None:
+        metrics["tice_topdown"] = tice_topdown
 
     design1_diagnostics = output.get("design1_diagnostics")
     if isinstance(design1_diagnostics, dict):
@@ -59,9 +95,9 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
     return metrics
 
 
-def _level_acc_keys(metrics: Dict[str, float]) -> List[str]:
-    keys = [k for k in metrics.keys() if k.startswith("acc_level_") and k[len("acc_level_") :].isdigit()]
-    return sorted(keys, key=lambda k: int(k.split("_")[-1]))
+def _level_acc_keys(metrics: Dict[str, float], prefix: str) -> List[str]:
+    keys = [k for k in metrics.keys() if k.startswith(prefix) and k[len(prefix) :].isdigit()]
+    return sorted(keys, key=lambda k: int(k[len(prefix) :]))
 
 
 def _format_ratio(value: float) -> str:
@@ -72,25 +108,35 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     level_names = level_names or []
     sections: List[str] = []
 
-    level_parts: List[str] = []
-    for key in _level_acc_keys(metrics):
-        idx = int(key.split("_")[-1])
+    acc_ind_parts: List[str] = []
+    for key in _level_acc_keys(metrics, "acc_level_independent_"):
+        idx = int(key[len("acc_level_independent_") :])
         name = level_names[idx] if idx < len(level_names) else f"L{idx}"
-        level_parts.append(f"{name}={_format_ratio(metrics[key])}")
-    if level_parts:
-        sections.append("\n\t\tAccuracies[" + ", ".join(level_parts) + "]")
+        acc_ind_parts.append(f"{name}={_format_ratio(metrics[key])}")
+    if acc_ind_parts:
+        sections.append("\n\t\tAcc_ind[" + ", ".join(acc_ind_parts) + "]")
+
+    acc_td_parts: List[str] = []
+    for key in _level_acc_keys(metrics, "acc_level_topdown_"):
+        idx = int(key[len("acc_level_topdown_") :])
+        name = level_names[idx] if idx < len(level_names) else f"L{idx}"
+        acc_td_parts.append(f"{name}={_format_ratio(metrics[key])}")
+    if acc_td_parts:
+        sections.append("Acc_td[" + ", ".join(acc_td_parts) + "]")
 
     summary_parts: List[str] = []
-    if "weighted_ap" in metrics:
-        summary_parts.append(f"wAP={_format_ratio(metrics['weighted_ap'])}")
-    if "fpa" in metrics:
-        summary_parts.append(f"FPA={_format_ratio(metrics['fpa'])}")
-    if "tice" in metrics:
-        summary_parts.append(f"TICE={_format_ratio(metrics['tice'])}")
-    if "fpa_projected" in metrics:
-        summary_parts.append(f"FPA_proj={_format_ratio(metrics['fpa_projected'])}")
-    if "tice_projected" in metrics:
-        summary_parts.append(f"TICE_proj={_format_ratio(metrics['tice_projected'])}")
+    if "weighted_ap_independent" in metrics:
+        summary_parts.append(f"wAP_ind={_format_ratio(metrics['weighted_ap_independent'])}")
+    if "weighted_ap_topdown" in metrics:
+        summary_parts.append(f"wAP_td={_format_ratio(metrics['weighted_ap_topdown'])}")
+    if "fpa_independent" in metrics:
+        summary_parts.append(f"FPA_ind={_format_ratio(metrics['fpa_independent'])}")
+    if "fpa_topdown" in metrics:
+        summary_parts.append(f"FPA_td={_format_ratio(metrics['fpa_topdown'])}")
+    if "tice_independent" in metrics:
+        summary_parts.append(f"TICE_ind={_format_ratio(metrics['tice_independent'])}")
+    if "tice_topdown" in metrics:
+        summary_parts.append(f"TICE_td={_format_ratio(metrics['tice_topdown'])}")
     if summary_parts:
         sections.append("Summary[" + ", ".join(summary_parts) + "]")
 
@@ -143,14 +189,16 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     if loss_parts:
         sections.append("\n\t\tLoss[" + ", ".join(loss_parts) + "]")
 
-    known_keys = set(_level_acc_keys(metrics))
+    known_keys = set(_level_acc_keys(metrics, "acc_level_independent_"))
+    known_keys.update(_level_acc_keys(metrics, "acc_level_topdown_"))
     known_keys.update(
         {
-            "weighted_ap",
-            "fpa",
-            "fpa_projected",
-            "tice",
-            "tice_projected",
+            "weighted_ap_independent",
+            "weighted_ap_topdown",
+            "fpa_independent",
+            "fpa_topdown",
+            "tice_independent",
+            "tice_topdown",
             "total",
             "level_ce",
             "gk_loss",

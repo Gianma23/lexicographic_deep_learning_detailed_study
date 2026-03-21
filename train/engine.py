@@ -82,7 +82,6 @@ def evaluate(
 ) -> Dict[str, float]:
     model.eval()
 
-    loss_vals = []
     batch_metrics = []
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
 
@@ -92,12 +91,8 @@ def evaluate(
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
             output = model(images)
-            _, loss_dict = compute_loss(cfg, output, labels, taxonomy)
 
-        #loss_vals.append(loss_dict)
         batch_metrics.append(evaluate_batch(output, labels, taxonomy))
 
-    #losses = merge_metric_batches(loss_vals)
     metrics = merge_metric_batches(batch_metrics)
-    #losses.update(metrics)
     return metrics

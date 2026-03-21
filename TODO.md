@@ -13,9 +13,9 @@ Da implementare:
 
 ### Train
 Rivedere
-- [ ] engine
+- [x] engine
     - [x] check funzionalità
-    - [ ] funzionamento barra caricamento
+    - [x] funzionamento barra caricamento
 - [ ] eval
 - [x] metrics (ci sarebbe anche da decidere le metriche)
 - [x] train
@@ -31,7 +31,7 @@ Rivedere
 
 ### Riproducibilità e tuning
 - [x] Salvare configs nell'output, così da sapere cosa ha generato quei risultati
-- [ ] Logger
+- [x] Logger
 
 # H-CAST
 - [ ] Check loss

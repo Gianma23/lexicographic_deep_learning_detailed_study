@@ -253,28 +253,36 @@ def metric_for_best(eval_metrics: Dict[str, float]) -> float:
     """Select the checkpoint ranking score from validation metrics.
 
     Lexicographic order:
-    1) FPA (higher is better)
-    2) TICE (lower is better)
-    3) wAP / weighted_acc (higher is better)
+    1) FPA top-down (higher is better)
+    2) TICE top-down (lower is better)
+    3) wAP top-down (higher is better)
     Falls back to deepest available level accuracy when H-CAST metrics are absent.
     """
-    has_fpa = "fpa" in eval_metrics or "acc_path" in eval_metrics
-    has_tice = "tice" in eval_metrics
-    has_wap = "weighted_ap" in eval_metrics or "weighted_acc" in eval_metrics
+    has_fpa = "fpa_topdown" in eval_metrics
+    has_tice = "tice_topdown" in eval_metrics
+    has_wap = "weighted_ap_topdown" in eval_metrics
 
     if has_fpa or has_tice or has_wap:
-        fpa = float(eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0)))
+        fpa = float(eval_metrics.get("fpa_topdown", 0.0))
         # TICE is inconsistency rate, so lower is better: encode as -TICE.
-        neg_tice = -float(eval_metrics.get("tice", 1.0))
-        wap = float(eval_metrics.get("weighted_ap", eval_metrics.get("weighted_acc", 0.0)))
+        neg_tice = -float(eval_metrics.get("tice_topdown", 1.0))
+        wap = float(eval_metrics.get("weighted_ap_topdown", 0.0))
         # Base-10 lexicographic packing for bounded metrics in [0, 1].
         return float(fpa + 1e-3 * neg_tice + 1e-6 * wap)
 
-    deepest = [k for k in eval_metrics if k.startswith("acc_level_")]
+    deepest_topdown = [
+        k for k in eval_metrics if k.startswith("acc_level_topdown_") and k[len("acc_level_topdown_") :].isdigit()
+    ]
+    deepest_independent = [
+        k
+        for k in eval_metrics
+        if k.startswith("acc_level_independent_") and k[len("acc_level_independent_") :].isdigit()
+    ]
+    deepest = deepest_topdown or deepest_independent
     if not deepest:
-        return float(eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0)))
-    deepest_idx = max(int(k.split("_")[-1]) for k in deepest)
-    primary = eval_metrics.get(f"acc_level_{deepest_idx}", 0.0)
-    tie = eval_metrics.get("fpa", eval_metrics.get("acc_path", 0.0))
+        return float(eval_metrics.get("fpa_topdown", 0.0))
+    deepest_key = max(deepest, key=lambda key: int(key.rsplit("_", 1)[-1]))
+    primary = float(eval_metrics.get(deepest_key, 0.0))
+    tie = float(eval_metrics.get("fpa_topdown", 0.0))
     # Tiny path-accuracy term stabilizes ordering when primary scores are tied.
     return float(primary + 1e-3 * tie)

@@ -12,16 +12,9 @@ from functools import partial, reduce
 from operator import mul
 
 from timm.models.vision_transformer import VisionTransformer, _cfg
-try:
-    from timm.models.registry import register_model  # old timm
-except Exception:  # pragma: no cover
-    from timm.models import register_model
-try:
-    from timm.models.layers import PatchEmbed
-    from timm.models.layers import trunc_normal_
-except Exception:  # pragma: no cover
-    from timm.layers import PatchEmbed
-    from timm.layers import trunc_normal_
+from timm.models import register_model
+from timm.layers import PatchEmbed
+from timm.layers import trunc_normal_
 
 from .utils import segment_mean_nd
 from .graph_pool import GraphPooling
