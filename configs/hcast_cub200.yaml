@@ -25,13 +25,19 @@ dataset:
   split_seed: null
   transforms:
     use_timm: true
-    color_jitter: 0.3
-    aa: rand-m9-mstd0.5-inc1
-    train_interpolation: bicubic
-    reprob: 0.25
-    remode: pixel
-    recount: 1
-    eval_crop_ratio: 0.875
+    normalization: torchvision
+    timm:
+      color_jitter: 0.3
+      auto_augment: rand-m9-mstd0.5-inc1
+      train_interpolation: bicubic
+      random_erase:
+        prob: 0.25
+        mode: pixel
+        count: 1
+    eval:
+      resize_mode: auto
+      crop_ratio: 0.875
+      interpolation: bicubic
     # H-CAST-style MixUp/CutMix defaults.
     mixup: 0.8
     cutmix: 1.0

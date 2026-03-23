@@ -20,6 +20,27 @@ dataset:
   allow_synthetic_fallback: true
   val_split_ratio: 0.1
   split_seed: null
+  transforms:
+    use_timm: true
+    normalization: torchvision
+    timm:
+      color_jitter: 0.3
+      auto_augment: rand-m9-mstd0.5-inc1
+      train_interpolation: bicubic
+      random_erase:
+        prob: 0.25
+        mode: pixel
+        count: 1
+    eval:
+      resize_mode: auto
+      crop_ratio: 0.875
+      interpolation: bicubic
+    mixup: 0.0
+    cutmix: 0.0
+    cutmix_minmax: null
+    mixup_prob: 1.0
+    mixup_switch_prob: 0.5
+    mixup_mode: batch
 
   annotations:
     train: train.json

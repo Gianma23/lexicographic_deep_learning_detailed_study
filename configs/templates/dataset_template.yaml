@@ -1,0 +1,53 @@
+# Template for the `dataset:` section in experiment configs.
+dataset:
+  name: cifar-100                    # Dataset id/alias (e.g. cifar-100, cub-200-2011, fgvc-aircraft, inat21-mini)
+  root: ./data/cifar100              # Root folder where images/annotations are stored
+  hierarchy_depth: 3                 # Number of hierarchy levels expected in labels
+  image_size: 32                     # Target input size (single int; square image)
+  mean: [0.5071, 0.4867, 0.4408]     # Channel mean (used when normalization=torchvision)
+  std: [0.2675, 0.2565, 0.2761]      # Channel std (used when normalization=torchvision)
+  levels: [coarse1, coarse2, fine]   # Human-readable hierarchy level names
+  allow_synthetic_fallback: true     # Adapter-specific fallback for missing data (if supported)
+  download: true                     # Adapter-specific auto-download toggle (if supported)
+  val_split_ratio: 0.1               # Train->val split ratio when no explicit val split is provided
+  split_seed: null                   # Split seed; null means fallback to train.seed
+
+  annotations:
+    train: train.json                # Optional explicit train annotation file (relative to root)
+    val: val.json                    # Optional explicit val annotation file (relative to root)
+    test: test.json                  # Optional explicit test annotation file (relative to root)
+
+  transforms:
+    use_timm: true                   # true: timm train pipeline, false: manual train pipeline
+    normalization: torchvision       # torchvision | standardscaler | minmax | none
+    normalization_eps: 1.0e-6        # Epsilon for standardscaler/minmax numerical stability
+
+    timm:                            # Active only when use_timm=true (train split)
+      color_jitter: 0.3              # timm color jitter strength
+      auto_augment: rand-m9-mstd0.5-inc1 # timm auto-augment policy string
+      train_interpolation: bicubic   # timm train interpolation
+      random_erase:                  # timm random erasing settings
+        prob: 0.25                   # Random erase probability
+        mode: pixel                  # Random erase mode
+        count: 1                     # Number of erase regions
+      small_image_random_crop_padding: 4  # For image_size<=32: replaces first timm crop with RandomCrop(padding)
+
+    manual:                          # Active only when use_timm=false (train split)
+      crop_mode: auto                # auto | random_crop | random_resized_crop | none
+      random_crop_padding: 4         # Padding used by random_crop
+      random_resized_crop_scale: [0.08, 1.0] # Scale range for random_resized_crop
+      random_resized_crop_ratio: [0.75, 1.3333333333] # Aspect ratio range for random_resized_crop
+      interpolation: bicubic         # Interpolation for random_resized_crop
+      random_horizontal_flip_prob: 0.5 # Horizontal flip probability
+
+    eval:                            # Active for val/test regardless of use_timm
+      resize_mode: auto              # auto | resize_center_crop | none
+      crop_ratio: 0.875              # Resize-to-crop ratio used when resize_center_crop is active
+      interpolation: bicubic         # Interpolation used by eval resize
+
+    mixup: 0.8                       # Mixup alpha (0 disables Mixup)
+    cutmix: 1.0                      # CutMix alpha (0 disables CutMix)
+    cutmix_minmax: null              # Optional CutMix min/max box ratio override
+    mixup_prob: 1.0                  # Probability of applying mix operation
+    mixup_switch_prob: 0.5           # When both enabled: probability to choose CutMix over Mixup
+    mixup_mode: batch                # mixup mode: batch | pair | elem

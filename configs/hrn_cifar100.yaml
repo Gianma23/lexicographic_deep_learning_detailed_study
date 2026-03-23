@@ -18,6 +18,16 @@ dataset:
   val_split_ratio: 0.1
   split_seed: null
   transforms:
+    use_timm: false
+    normalization: torchvision
+    manual:
+      crop_mode: random_crop
+      random_crop_padding: 4
+      random_horizontal_flip_prob: 0.5
+    eval:
+      resize_mode: auto
+      crop_ratio: 0.875
+      interpolation: bicubic
     mixup: 0.8
     cutmix: 1.0
     cutmix_minmax: null
