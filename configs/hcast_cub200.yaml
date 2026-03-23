@@ -14,6 +14,9 @@ model:
     num_iterations: 15
     # for grid mode
     patch_size: 8
+  loss:
+    globalkl: true
+    gk_weight: 0.5
 
 dataset:
   name: cub-200-2011
@@ -81,10 +84,6 @@ scheduler:
   cooldown_epochs: 10
   patience_epochs: 10
   decay_rate: 0.1
-
-loss:
-  globalkl: true
-  gk_weight: 0.5
 
 runtime:
   deterministic: true

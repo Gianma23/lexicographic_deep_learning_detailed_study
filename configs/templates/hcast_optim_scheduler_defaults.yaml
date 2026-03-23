@@ -20,6 +20,9 @@ model:
     num_iterations: 15
     # for grid mode
     patch_size: 8
+  loss:
+    globalkl: true
+    gk_weight: 0.5
 
 train:
   epochs: 100

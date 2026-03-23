@@ -1,6 +1,6 @@
 model:
   name: ht_capsnet
-  caps_dim: 16
+  caps_dim: 8
   secondary_dims: [16, 16, 16]
   routing_iters: 3
 
@@ -10,15 +10,21 @@ model:
   filter_increment: 2
 
   # Taxonomy-guided routing controls
-  taxonomy_temperature: 5.0
+  taxonomy_temperature: 0.5
   mask_threshold_high: 0.9
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
 
   # Cross-capsule attention
-  attn_heads: 4
+  attn_heads: 16
   attn_dropout: 0.0
+  loss:
+    margin_m_pos: 0.9
+    margin_m_neg: 0.1
+    lambda_downweight: 0.5
+    weight_mode: dynamic
+    dynamic_weight: 0.0
 
 dataset:
   name: cifar-100
@@ -33,22 +39,14 @@ dataset:
   val_split_ratio: 0.1
   split_seed: null
   transforms:
-    use_timm: false
+    fixed_resize_only: true
+    fixed_resize_interpolation: bilinear
     normalization: standardscaler
-    manual:
-      crop_mode: random_crop
-      random_crop_padding: 4
-      random_horizontal_flip_prob: 0.5
-    eval:
-      resize_mode: auto
-      crop_ratio: 0.875
-      interpolation: bicubic
-    # H-CAST-style MixUp/CutMix defaults.
-    mixup: 0.8
-    cutmix: 1.0
+    mixup: 0.2
+    cutmix: 0.0
     cutmix_minmax: null
     mixup_prob: 1.0
-    mixup_switch_prob: 0.5
+    mixup_switch_prob: 0.0
     mixup_mode: batch
 
   annotations:
@@ -68,7 +66,6 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/capsnet_cifar100
-  mixup_enabled: false
   smoothing: 0.1
 
 optim:
@@ -88,13 +85,6 @@ scheduler:
   cooldown_epochs: 10
   patience_epochs: 10
   decay_rate: 0.1
-
-loss:
-  margin_m_pos: 0.9
-  margin_m_neg: 0.1
-  lambda_downweight: 0.5
-  hier_weight: 0.2
-  level_weights: [0.2, 0.3, 0.5]
 
 runtime:
   deterministic: true

@@ -10,6 +10,8 @@ Rivedere il codice di:
 Da implementare:
 - [x] create_transform di timm usata da H-CAST
 - [ ] Rivedere trasformazioni e data augmentation 
+    - [x] hcast
+    - [ ] htcapsnet
 
 ### Train
 Rivedere
@@ -27,7 +29,7 @@ Rivedere
 ### Preprocessing e trasformazioni
 - [ ] Rivedere caricamento pretrained model
 - [ ] ModelEma
-- [ ] RandomErase
+- [x] RandomErase
 
 ### Riproducibilità e tuning
 - [x] Salvare configs nell'output, così da sapere cosa ha generato quei risultati

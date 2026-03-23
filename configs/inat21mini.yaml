@@ -10,6 +10,9 @@ model:
     double_step: false
     num_iterations: 15
     patch_size: 8
+  loss:
+    globalkl: true
+    gk_weight: 0.2
 
 dataset:
   name: inat21-mini
@@ -78,10 +81,6 @@ scheduler:
   cooldown_epochs: 10
   patience_epochs: 10
   decay_rate: 0.1
-
-loss:
-  globalkl: true
-  gk_weight: 0.2
 
 runtime:
   deterministic: true

@@ -5,6 +5,11 @@
   branch_hidden_dim: 1024
   embedding_dim: 512
   dropout: 0.0
+  loss:
+    tree_weight: 1.0
+    fine_ce_weight: 1.0
+    temperature: 1.0
+    eps: 1.0e-8
 
 dataset:
   name: cifar-100
@@ -62,12 +67,6 @@ optim:
 
 scheduler:
   name: cosine
-
-loss:
-  tree_weight: 1.0
-  fine_ce_weight: 1.0
-  temperature: 1.0
-  eps: 1.0e-8
 
 runtime:
   deterministic: true

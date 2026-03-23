@@ -185,6 +185,7 @@ def compute_loss(
     cfg: Any,
     taxonomy: Optional[Dict[str, Any]] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
+    loss_cfg = cfg.model.loss
     logits_per_level = output["logits_per_level"]
     if len(logits_per_level) != 3:
         raise ValueError(f"HRN expects 3 logits levels, got {len(logits_per_level)}.")
@@ -196,10 +197,10 @@ def compute_loss(
         tree_scores_per_level = [torch.sigmoid(logits) for logits in logits_per_level]
 
     num_classes_per_level = [int(logits.size(-1)) for logits in logits_per_level]
-    temperature = float(cfg.loss.get("temperature", 1.0))
-    eps = float(cfg.loss.get("eps", 1e-8))
-    tree_weight = float(cfg.loss.get("tree_weight", 1.0))
-    fine_ce_weight = float(cfg.loss.get("fine_ce_weight", 1.0))
+    temperature = float(loss_cfg.get("temperature", 1.0))
+    eps = float(loss_cfg.get("eps", 1e-8))
+    tree_weight = float(loss_cfg.get("tree_weight", 1.0))
+    fine_ce_weight = float(loss_cfg.get("fine_ce_weight", 1.0))
     label_smoothing = float(cfg.train.get("smoothing", 0.0))
 
     tree_loss, tree_loss_levels = _combinatorial_tree_loss(

@@ -123,6 +123,17 @@ def build_transforms(cfg: Any, split: str):
         raise ValueError("dataset.transforms.normalization_eps must be > 0.")
     normalization_ops = _normalization_ops(normalization_mode, mean=mean, std=std, eps=normalization_eps)
 
+    # Simple fixed-resize-only pipeline used for HT-CapsNet parity runs.
+    if bool(transforms_cfg.get("fixed_resize_only", False)):
+        resize_interp = _interp_mode_from_name(str(transforms_cfg.get("fixed_resize_interpolation", "bilinear")))
+        return transforms.Compose(
+            [
+                transforms.Resize((image_size, image_size), interpolation=resize_interp),
+                transforms.ToTensor(),
+                *normalization_ops,
+            ]
+        )
+
     # -------------------------------------------------------------------------
     # Config groups:
     # - transforms.use_timm controls whether timm's train pipeline is used.

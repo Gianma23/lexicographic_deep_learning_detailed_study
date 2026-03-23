@@ -17,6 +17,13 @@ model:
     warmup: 70
     eps: 1e-12
     stabilize_simplex: true
+  loss:
+    globalkl: true
+    gk_weight: 0.5
+    level_weighting:
+      mode: static
+      gamma: 0.0
+      eps: 1e-12
 
 dataset:
   name: cifar-100
@@ -91,14 +98,6 @@ scheduler:
   cooldown_epochs: 10
   patience_epochs: 10
   decay_rate: 0.1
-
-loss:
-  globalkl: true
-  gk_weight: 0.5
-  level_weighting:
-    mode: static
-    gamma: 0.0
-    eps: 1e-12
 
 runtime:
   deterministic: true

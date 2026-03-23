@@ -171,6 +171,7 @@ def compute_loss(
     cfg: Any,
     _taxonomy: Optional[Dict[str, Any]] = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
+    loss_cfg = cfg.model.loss
     logits_per_level = output["logits_per_level"]
     effective_probs_per_level = output.get("effective_probs_per_level")
     has_effective_probs = (
@@ -238,7 +239,7 @@ def compute_loss(
                 for level, logits in enumerate(logits_per_level)
             ]
 
-    level_weight_cfg = cfg.loss.get("level_weighting", {})
+    level_weight_cfg = loss_cfg.get("level_weighting", {})
     level_weight_mode = str(level_weight_cfg.get("mode", "static")).strip().lower()
     if level_weight_mode not in {"static", "dynamic"}:
         level_weight_mode = "static"
@@ -270,8 +271,8 @@ def compute_loss(
     ce_loss = torch.stack(weighted_level_losses).sum()
     total = ce_loss
 
-    if bool(cfg.loss.get("globalkl", False)):
-        gk_w = float(cfg.loss.get("gk_weight", 1.0))
+    if bool(loss_cfg.get("globalkl", False)):
+        gk_w = float(loss_cfg.get("gk_weight", 1.0))
         if has_effective_probs:
             gk_loss = _global_kl_loss(
                 log_probs_per_level,
