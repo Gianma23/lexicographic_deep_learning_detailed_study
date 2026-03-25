@@ -1,5 +1,4 @@
-﻿import warnings
-from pathlib import Path
+﻿from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PIL import Image
@@ -75,8 +74,10 @@ class CIFAR100Dataset(BaseHierDataset):
         try:
             dataset = CIFAR100(root=str(self.root), train=split_is_train_pool, download=download)
         except RuntimeError as exc:
-            warnings.warn(f"Could not load CIFAR-100 from root={self.root}: {exc}", RuntimeWarning)
-            return []
+            raise RuntimeError(
+                f"Could not load CIFAR-100 from root={self.root}. "
+                f"Set dataset.download=true or provide an existing dataset at this path. Original error: {exc}"
+            ) from exc
 
         self._cifar_images = dataset.data
         self._cifar_targets = [int(x) for x in dataset.targets]
@@ -113,7 +114,8 @@ class CIFAR100Dataset(BaseHierDataset):
         """Resolve int-backed CIFAR image references or defer to path-based loader."""
         if isinstance(image_ref, int):
             if self._cifar_images is None:
-                image_size = int(self.cfg.dataset.get("image_size", 32))
-                return Image.new("RGB", (image_size, image_size), color=(127, 127, 127))
+                raise RuntimeError(
+                    "CIFAR image storage is unavailable while trying to resolve an index-backed sample."
+                )
             return Image.fromarray(self._cifar_images[image_ref]).convert("RGB")
         return super()._load_image(image_ref)

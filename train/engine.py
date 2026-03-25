@@ -32,7 +32,7 @@ def train_one_epoch(
     epoch: int = 0,
     num_classes_per_level: Optional[List[int]] = None,
     taxonomy: Optional[Dict] = None,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     model.train()
     _set_model_epoch(model, epoch)
     loss_vals = []
@@ -77,10 +77,14 @@ def train_one_epoch(
         batch_metric = evaluate_batch(output, labels, taxonomy)
         batch_metrics.append(batch_metric)
 
-    losses = merge_metric_batches(loss_vals)
+    loss_metrics = merge_metric_batches(loss_vals)
     metrics = merge_metric_batches(batch_metrics)
-    losses.update(metrics)
-    return losses
+
+    train_outputs: Dict[str, Any] = dict(loss_metrics)
+    train_outputs.update(metrics)
+    # Expose exact loss keys so downstream loggers do not need name-based heuristics.
+    train_outputs["__loss_keys__"] = sorted(loss_metrics.keys())
+    return train_outputs
 
 
 @torch.no_grad()

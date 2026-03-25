@@ -42,12 +42,42 @@ def _print_model_parameter_count(model):
     print(f"[model] parameters total={total_params:,} trainable={trainable_params:,}")
 
 
+def _apply_lr_scaling_if_enabled(cfg, cfg_resolved):
+    if not bool(cfg.train.get("scale_lr", False)):
+        return
+
+    base_lr = float(cfg.optim.lr)
+    reference_batch = float(cfg.train.get("scale_lr_reference_batch_size", 512.0))
+    if reference_batch <= 0:
+        raise ValueError("train.scale_lr_reference_batch_size must be > 0.")
+
+    batch_size = float(cfg.dataloader.batch_size)
+    # Simplified to single-process scaling (world_size assumed 1).
+    scaled_lr = base_lr * batch_size / reference_batch
+
+    cfg.optim.lr = float(scaled_lr)
+    if isinstance(cfg_resolved, dict):
+        cfg_resolved.setdefault("optim", {})
+        cfg_resolved.setdefault("train", {})
+        cfg_resolved["optim"]["lr_base"] = float(base_lr)
+        cfg_resolved["optim"]["lr"] = float(scaled_lr)
+        cfg_resolved["train"]["scale_lr"] = True
+        cfg_resolved["train"]["scale_lr_reference_batch_size"] = float(reference_batch)
+
+    print(
+        "[optim] scale_lr enabled: "
+        f"base_lr={base_lr:.8g} batch_size={int(batch_size)} "
+        f"reference_batch={reference_batch:g} -> scaled_lr={scaled_lr:.8g}"
+    )
+
+
 # ======================================================================== #
 #                    M A I N   T R A I N I N G   L O O P                   #
 # ======================================================================== #
 def main():
     args = _parse_args()
     cfg, cfg_resolved = load_config(args.config, args.overrides)
+    _apply_lr_scaling_if_enabled(cfg, cfg_resolved)
 
     seed_everything(int(cfg.train.seed), bool(cfg.runtime.get("deterministic", True)))
 

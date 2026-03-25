@@ -150,35 +150,33 @@ class Mixup:
         self.num_classes = num_classes or []
         self.mode = mode
         self.correct_lam = correct_lam
-        self.mixup_enabled = True
 
     def _params_per_elem(self, batch_size: int):
         lam = np.ones(batch_size, dtype=np.float32)
         use_cutmix = np.zeros(batch_size, dtype=bool)
-        if self.mixup_enabled:
-            if self.mixup_alpha > 0.0 and self.cutmix_alpha > 0.0:
-                use_cutmix = np.random.rand(batch_size) < self.switch_prob
-                lam_mix = np.where(
-                    use_cutmix,
-                    np.random.beta(self.cutmix_alpha, self.cutmix_alpha, size=batch_size),
-                    np.random.beta(self.mixup_alpha, self.mixup_alpha, size=batch_size),
-                )
-            elif self.mixup_alpha > 0.0:
-                lam_mix = np.random.beta(self.mixup_alpha, self.mixup_alpha, size=batch_size)
-            elif self.cutmix_alpha > 0.0:
-                use_cutmix = np.ones(batch_size, dtype=bool)
-                lam_mix = np.random.beta(self.cutmix_alpha, self.cutmix_alpha, size=batch_size)
-            else:
-                raise AssertionError(
-                    "One of mixup_alpha > 0., cutmix_alpha > 0., cutmix_minmax not None should be true."
-                )
-            lam = np.where(np.random.rand(batch_size) < self.mix_prob, lam_mix.astype(np.float32), lam)
+        if self.mixup_alpha > 0.0 and self.cutmix_alpha > 0.0:
+            use_cutmix = np.random.rand(batch_size) < self.switch_prob
+            lam_mix = np.where(
+                use_cutmix,
+                np.random.beta(self.cutmix_alpha, self.cutmix_alpha, size=batch_size),
+                np.random.beta(self.mixup_alpha, self.mixup_alpha, size=batch_size),
+            )
+        elif self.mixup_alpha > 0.0:
+            lam_mix = np.random.beta(self.mixup_alpha, self.mixup_alpha, size=batch_size)
+        elif self.cutmix_alpha > 0.0:
+            use_cutmix = np.ones(batch_size, dtype=bool)
+            lam_mix = np.random.beta(self.cutmix_alpha, self.cutmix_alpha, size=batch_size)
+        else:
+            raise AssertionError(
+                "One of mixup_alpha > 0., cutmix_alpha > 0., cutmix_minmax not None should be true."
+            )
+        lam = np.where(np.random.rand(batch_size) < self.mix_prob, lam_mix.astype(np.float32), lam)
         return lam, use_cutmix
 
     def _params_per_batch(self):
         lam = 1.0
         use_cutmix = False
-        if self.mixup_enabled and np.random.rand() < self.mix_prob:
+        if np.random.rand() < self.mix_prob:
             if self.mixup_alpha > 0.0 and self.cutmix_alpha > 0.0:
                 use_cutmix = np.random.rand() < self.switch_prob
                 lam_mix = (
@@ -275,7 +273,6 @@ class Mixup:
                 mixup_target(level_target, int(self.num_classes[level]), lam, self.label_smoothing)
             )
         return (x, *mixed_targets)
-
 
 
 def build_mixup_fn(cfg: Any, num_classes_per_level: Optional[List[int]] = None) -> Optional[Mixup]:

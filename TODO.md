@@ -7,6 +7,7 @@ Rivedere il codice di:
 - [ ] CUB-200-2011
 - [ ] Aircraft  
 - [ ] iNat
+- [ ] Rimuovere synthetic fallback
 Da implementare:
 - [x] create_transform di timm usata da H-CAST
 - [ ] Rivedere trasformazioni e data augmentation 
@@ -34,6 +35,7 @@ Rivedere
 ### Riproducibilità e tuning
 - [x] Salvare configs nell'output, così da sapere cosa ha generato quei risultati
 - [x] Logger
+- [ ] Aggiungere ai log anche metriche tempo e TFLOPS
 
 # H-CAST
 - [ ] Check loss
@@ -44,5 +46,7 @@ Rivedere
 - [ ] Check FPS implementation (che combaci con dgl.geometry)
 
 # HT-CapsNet
-- [ ] Sostituire backbone generico con EfficientNetB7
-- [ ] Check di tutte le dimensioni
+- [x] Sostituire backbone generico con EfficientNetB7
+- [x] Check di tutte le dimensioni
+- [ ] rivedere configs
+    - [ ] check scheduler e optimizer

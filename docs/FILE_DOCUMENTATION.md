@@ -22,33 +22,42 @@ Scope notes:
 
 ## 2. Config Folder (`configs/`)
 
-### 2.1. `configs/hcast.yaml`
-- Purpose: Default configuration for H-CAST training/evaluation runs.
+### 2.1. `configs/hcast_cifar100.yaml`
+- Purpose: H-CAST preset for CIFAR-100 hierarchy experiments.
 
-### 2.2. `configs/capsnet.yaml`
-- Purpose: Default configuration for HT-CapsNet training/evaluation runs.
+### 2.2. `configs/hcast_cub200.yaml`
+- Purpose: H-CAST preset for CUB-200 hierarchy experiments.
 
 
-### 2.3. `configs/cifar100.yaml`
-- Purpose: Dataset-focused run preset for CIFAR-100 hierarchy experiments.
+### 2.3. `configs/hcast_aircraft.yaml`
+- Purpose: H-CAST preset for FGVC-Aircraft hierarchy experiments.
 
-### 2.4. `configs/cub200.yaml`
-- Purpose: Dataset-focused run preset for CUB-200 hierarchy experiments.
+### 2.4. `configs/hcast_inat21mini.yaml`
+- Purpose: H-CAST preset for iNat21-mini hierarchy experiments.
 
-### 2.5. `configs/aircraft.yaml`
-- Purpose: Dataset-focused run preset for FGVC-Aircraft hierarchy experiments.
+### 2.5. `configs/hcast_design1_cifar100.yaml`
+- Purpose: Alternate H-CAST CIFAR-100 preset using design-1 segmentation mode.
 
-### 2.6. `configs/inat21mini.yaml`
-- Purpose: Dataset-focused run preset for iNat21-mini hierarchy experiments.
+### 2.6. `configs/capsnet_cifar100.yaml`
+- Purpose: HT-CapsNet preset for CIFAR-100 hierarchy experiments.
 
-### 2.7. `configs/hrn_cub200.yaml`
-- Purpose: HRN preset for CUB-200 three-level hierarchy experiments.
+### 2.7. `configs/capsnet_cub200.yaml`
+- Purpose: HT-CapsNet preset for CUB-200 hierarchy experiments.
 
-### 2.8. `configs/hrn_aircraft.yaml`
-- Purpose: HRN preset for FGVC-Aircraft three-level hierarchy experiments.
+### 2.8. `configs/capsnet_aircraft.yaml`
+- Purpose: HT-CapsNet preset for FGVC-Aircraft hierarchy experiments.
 
 ### 2.9. `configs/hrn_cifar100.yaml`
 - Purpose: HRN preset for CIFAR-100 three-level hierarchy experiments.
+
+### 2.10. `configs/hrn_cub200.yaml`
+- Purpose: HRN preset for CUB-200 three-level hierarchy experiments.
+
+### 2.11. `configs/hrn_aircraft.yaml`
+- Purpose: HRN preset for FGVC-Aircraft three-level hierarchy experiments.
+
+### 2.12. `configs/templates/`
+- Purpose: Reusable commented YAML templates and shared defaults for new configs.
 
 ## 3. Data Folder (`data/`)
 
@@ -367,8 +376,6 @@ Scope notes:
   - Per-run folders (for example `cifar100/`, `smoke_capsnet/`).
   - `latest.pt`: Most recent checkpoint snapshot.
   - `best.pt`: Best-scoring checkpoint according to configured selection metric.
-
-
 
 
 

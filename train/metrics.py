@@ -130,6 +130,38 @@ def full_path_accuracy(
     return float((pred_path == targets).all(dim=1).float().mean().item())
 
 
+def average_hierarchical_distance(
+    logits_per_level: List[torch.Tensor],
+    targets: torch.Tensor,
+    taxonomy: Optional[Dict[str, Any]] = None,
+    enforce_hierarchy: bool = False,
+) -> float:
+    """Average edge distance between predicted and ground-truth root-to-leaf paths.
+
+    For each sample i with hierarchy depth L:
+    1) decode predicted full path,
+    2) compute longest shared prefix length s_i with target path,
+    3) distance d_H(i) = 2 * (L - s_i).
+    """
+    if not logits_per_level:
+        return 0.0
+
+    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+    if not preds:
+        return 0.0
+
+    pred_path = torch.stack(preds, dim=1)
+    if pred_path.numel() == 0:
+        return 0.0
+
+    depth = int(pred_path.size(1))
+    # Prefix match mask per sample/level, then count initial contiguous matches.
+    prefix_matches = pred_path.eq(targets).to(torch.int64).cumprod(dim=1)
+    shared_prefix_len = prefix_matches.sum(dim=1).to(dtype=torch.float32)
+    distances = 2.0 * (float(depth) - shared_prefix_len)
+    return float(distances.mean().item())
+
+
 def consistency_rate(
     logits_per_level: List[torch.Tensor],
     taxonomy: Optional[Dict[str, Any]],

@@ -7,9 +7,8 @@ dataset:
   mean: [0.5071, 0.4867, 0.4408]     # Channel mean (used when normalization=torchvision)
   std: [0.2675, 0.2565, 0.2761]      # Channel std (used when normalization=torchvision)
   levels: [coarse1, coarse2, fine]   # Human-readable hierarchy level names
-  allow_synthetic_fallback: true     # Adapter-specific fallback for missing data (if supported)
   download: true                     # Adapter-specific auto-download toggle (if supported)
-  val_split_ratio: 0.1               # Train->val split ratio when no explicit val split is provided
+  val_split_ratio: 0.2               # Train->val split ratio when no explicit val split is provided
   split_seed: null                   # Split seed; null means fallback to train.seed
 
   annotations:

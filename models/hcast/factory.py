@@ -8,12 +8,17 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
     dataset_std = list(cfg.dataset.get("std", [0.229, 0.224, 0.225]))
     segment_cfg = cfg.model.get("segments", {})
     design1_cfg = cfg.model.get("design1", {})
+    model_drop = float(cfg.model.get("drop", 0.0))
+    model_drop_path = float(cfg.model.get("drop_path", 0.1))
     return HCASTModel(
         num_classes_per_level=num_classes_per_level,
         variant=str(cfg.model.get("variant", "cast_small")),
         model_kwargs={
             "img_size": int(cfg.dataset.get("image_size", 224)),
             "pretrained": bool(cfg.model.get("pretrained", False)),
+            "drop_rate": model_drop,
+            "drop_path_rate": model_drop_path,
+            "drop_block_rate": None,
         },
         segments_cfg={
             "mode": str(segment_cfg.get("mode", "grid")),

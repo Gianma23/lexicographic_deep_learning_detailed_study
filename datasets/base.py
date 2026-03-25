@@ -151,6 +151,7 @@ class BaseHierDataset(Dataset, ABC):
         self.samples = self.load_samples()
         if not self.samples:
             raise RuntimeError(f"No samples found for split={split} in dataset={cfg.dataset.name}")
+        self._validate_image_references(self.samples)
 
         self.samples, self.level_id_maps = self._remap_labels_to_contiguous(self.samples, self.depth)
         self.num_classes_per_level = self._compute_num_classes_per_level(self.samples, self.depth)
@@ -237,6 +238,31 @@ class BaseHierDataset(Dataset, ABC):
                 classes[level].add(int(value))
         return [max(values) + 1 if values else 1 for values in classes]
 
+    def _validate_image_references(self, samples: List[Dict[str, Any]]) -> None:
+        """Fail fast when any path-based sample image is missing."""
+        missing: List[Tuple[int, str]] = []
+        for idx, sample in enumerate(samples):
+            image_ref = sample.get("image")
+            if isinstance(image_ref, int):
+                # Index-backed datasets (e.g., CIFAR) resolve images outside filesystem paths.
+                continue
+            if image_ref is None:
+                missing.append((idx, "<none>"))
+            else:
+                image_path = Path(image_ref)
+                if not image_path.exists():
+                    missing.append((idx, str(image_path)))
+            if len(missing) >= 8:
+                break
+
+        if missing:
+            details = "; ".join([f"idx={idx} image={path}" for idx, path in missing])
+            raise FileNotFoundError(
+                "Missing image files detected in dataset samples. "
+                "All image paths must exist. "
+                f"First missing entries: {details}"
+            )
+
     def __len__(self):
         return len(self.samples)
 
@@ -250,10 +276,12 @@ class BaseHierDataset(Dataset, ABC):
         return image, labels, sample.get("meta", {})
 
     def _load_image(self, image_path: Optional[Path]):
-        image_size = int(self.cfg.dataset.get("image_size", 224))
-        if image_path is None or not Path(image_path).exists():
-            return Image.new("RGB", (image_size, image_size), color=(127, 127, 127))
-        return Image.open(image_path).convert("RGB")
+        if image_path is None:
+            raise FileNotFoundError("Sample has no image path.")
+        path = Path(image_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Image path does not exist: {path}")
+        return Image.open(path).convert("RGB")
 
     def _read_json_samples(self, ann_path: Path) -> List[Dict[str, Any]]:
         """Parse JSON annotations into normalized sample dictionaries."""

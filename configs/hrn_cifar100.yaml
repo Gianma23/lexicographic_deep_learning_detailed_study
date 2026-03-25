@@ -20,7 +20,7 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
   download: true
-  val_split_ratio: 0.1
+  val_split_ratio: 0.2
   split_seed: null
   transforms:
     use_timm: false
@@ -52,7 +52,7 @@ dataloader:
 
 train:
   epochs: 100
-  seed: 42
+  seed: 0
   device: cuda
   amp: true
   resume: ""

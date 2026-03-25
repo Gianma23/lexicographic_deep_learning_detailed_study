@@ -163,11 +163,36 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
     lr = float(cfg.optim.lr)
     wd = float(cfg.optim.get("weight_decay", 0.0))
     momentum = float(cfg.optim.get("momentum", 0.0))
+    raw_opt_eps = cfg.optim.get("opt_eps", None)
+    opt_eps = None if raw_opt_eps is None else float(raw_opt_eps)
+
+    raw_opt_betas = cfg.optim.get("opt_betas", None)
+    opt_betas = None
+    if raw_opt_betas is not None:
+        if isinstance(raw_opt_betas, str):
+            raise ValueError("optim.opt_betas must be null or a list/tuple with two floats.")
+        try:
+            betas = list(raw_opt_betas)
+        except TypeError as exc:
+            raise ValueError("optim.opt_betas must be null or a list/tuple with two floats.") from exc
+        if len(betas) != 2:
+            raise ValueError("optim.opt_betas must be null or a list/tuple with two floats.")
+        opt_betas = (float(betas[0]), float(betas[1]))
 
     if name == "adam":
-        return torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+        kwargs = {"lr": lr, "weight_decay": wd}
+        if opt_eps is not None:
+            kwargs["eps"] = opt_eps
+        if opt_betas is not None:
+            kwargs["betas"] = opt_betas
+        return torch.optim.Adam(model.parameters(), **kwargs)
     if name == "adamw":
-        return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+        kwargs = {"lr": lr, "weight_decay": wd}
+        if opt_eps is not None:
+            kwargs["eps"] = opt_eps
+        if opt_betas is not None:
+            kwargs["betas"] = opt_betas
+        return torch.optim.AdamW(model.parameters(), **kwargs)
     if name == "sgd":
         return torch.optim.SGD(model.parameters(), lr=lr, weight_decay=wd, momentum=momentum)
 
@@ -189,9 +214,10 @@ def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
         for k, v in sched_cfg.items()
         if k not in {"name", "use_timm", "step_size", "gamma"}
     }
+    normalized_extra = {str(k).replace("-", "_"): v for k, v in extra.items()}
 
     allowed = set(inspect.signature(timm_create_scheduler_v2).parameters.keys())
-    filtered = {k: v for k, v in extra.items() if k in allowed}
+    filtered = {k: v for k, v in normalized_extra.items() if k in allowed}
     scheduler, _ = timm_create_scheduler_v2(
         optimizer,
         sched=name,

@@ -80,9 +80,19 @@ class HCASTModel(nn.Module):
         self.nb_classes_upstream = list(reversed(self.num_classes_per_level))
         timm_kwargs = dict(model_kwargs)
         pretrained = bool(timm_kwargs.pop("pretrained", False))
+        img_size = int(timm_kwargs.pop("img_size", 224))
+        drop_rate = float(timm_kwargs.pop("drop_rate", 0.0))
+        drop_path_rate = float(timm_kwargs.pop("drop_path_rate", 0.1))
+        drop_block_rate = timm_kwargs.pop("drop_block_rate", None)
+        num_classes = int(self.nb_classes_upstream[0]) if self.nb_classes_upstream else 0
         self.model = timm_create_model(
             variant,
             pretrained=pretrained,
+            num_classes=num_classes,
+            drop_rate=drop_rate,
+            drop_path_rate=drop_path_rate,
+            drop_block_rate=drop_block_rate,
+            img_size=img_size,
             nb_classes=self.nb_classes_upstream,
             **timm_kwargs,
         )

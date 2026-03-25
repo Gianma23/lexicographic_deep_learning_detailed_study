@@ -296,6 +296,7 @@ def build_dataloader(cfg: Any, split: str):
 
     batch_size = int(cfg.dataloader.batch_size)
     workers = int(cfg.dataloader.get("num_workers", 4))
+    pin_memory = bool(cfg.dataloader.get("pin_memory", True))
     windows_spawn_safe = bool(cfg.dataloader.get("windows_spawn_safe", True))
 
     # On Windows, CUDA + worker spawning can hit WinError 1455 when each
@@ -317,6 +318,7 @@ def build_dataloader(cfg: Any, split: str):
         batch_size=batch_size,
         shuffle=split == "train",
         num_workers=workers,
+        pin_memory=pin_memory,
         collate_fn=_collate_fn,
         drop_last=split == "train",
         generator=generator,

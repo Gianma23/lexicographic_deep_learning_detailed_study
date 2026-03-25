@@ -33,13 +33,13 @@ model:
     dynamic_weight: 0.0
 
 dataset:
-  name: cub-200-2011
-  root: /scratch/g.saggini1/datasets/CUB_200_2011
+  name: fgvc-aircraft
+  root: /scratch/g.saggini1/datasets/fgvc-aircraft-2013b
   hierarchy_depth: 3
   image_size: 64
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
-  levels: [order, family, species]
+  levels: [manufacturer, family, variant]
   download: false
   # Keep dataset split policy aligned with H-CAST configs.
   val_split_ratio: 0.2
@@ -63,18 +63,18 @@ dataset:
     test: test.json
 
 dataloader:
-  batch_size: 256
+  batch_size: 32
   num_workers: 16
   pin_memory: true
   windows_spawn_safe: true
 
 train:
-  epochs: 100
+  epochs: 200
   seed: 42
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/capsnet_cub200
+  output_dir: ./outputs/capsnet_aircraft
   smoothing: 0.0
 
 optim:

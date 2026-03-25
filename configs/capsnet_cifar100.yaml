@@ -1,23 +1,29 @@
 model:
   name: ht_capsnet
   caps_dim: 8
-  secondary_dims: [16, 16, 16]
+  # Upstream HT-CapsNet commonly uses SCaps_dim=32 with "decrease" mode over 3 levels.
+  secondary_dims: [32, 16, 8]
   routing_iters: 3
 
   # Backbone (PyTorch translation of upstream custom blocks)
   num_blocks: 4
   initial_filters: 64
   filter_increment: 2
+  # Upstream HT-CapsNet scripts use EfficientNetB7 with ImageNet weights.
+  backbone_net: efficientnet_b7
+  backbone_net_weights: imagenet
 
   # Taxonomy-guided routing controls
   taxonomy_temperature: 0.5
-  mask_threshold_high: 0.9
+  # Upstream notebook args_dict + logged run config use 0.99 for HTR_CapsNet.
+  mask_threshold_high: 0.99
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
 
   # Cross-capsule attention
   attn_heads: 16
+  attn_key_dim: 32
   attn_dropout: 0.0
   loss:
     margin_m_pos: 0.9
@@ -28,19 +34,21 @@ model:
 
 dataset:
   name: cifar-100
-  root: ./data/cifar100
+  root: /scratch/g.saggini1/datasets/cifar100
   hierarchy_depth: 3
   image_size: 32
   mean: [0.5071, 0.4867, 0.4408]
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
-  allow_synthetic_fallback: true
   download: true
-  val_split_ratio: 0.1
+  # Keep dataset split policy aligned with H-CAST configs.
+  val_split_ratio: 0.2
   split_seed: null
   transforms:
+    # Keep HT-CapsNet parity preprocessing (fixed resize + per-image z-score normalization).
     fixed_resize_only: true
     fixed_resize_interpolation: bilinear
+    use_timm: false
     normalization: standardscaler
     mixup: 0.2
     cutmix: 0.0
@@ -56,7 +64,8 @@ dataset:
 
 dataloader:
   batch_size: 256
-  num_workers: 0
+  num_workers: 16
+  pin_memory: true
   windows_spawn_safe: true
 
 train:
@@ -66,25 +75,30 @@ train:
   amp: true
   resume: ""
   output_dir: ./outputs/capsnet_cifar100
-  smoothing: 0.1
+  smoothing: 0.0
 
 optim:
-  name: adamw
-  lr: 0.0005
-  weight_decay: 0.05
+  name: adam
+  lr: 0.001
+  weight_decay: 0.0
   momentum: 0.9
   opt_eps: 1.0e-8
   opt_betas: null
 
 scheduler:
-  name: cosine
-  warmup_lr: 0.000001
-  min_lr: 0.00001
-  decay_epochs: 30
-  warmup_epochs: 5
-  cooldown_epochs: 10
+  # Approximate upstream exponential LR decay (start ~epoch 10, gamma 0.9).
+  name: step
+  warmup_lr: 0.001
+  min_lr: 0.000001
+  noise: null
+  noise_pct: 0.67
+  noise_std: 1.0
+  noise_seed: 42
+  decay_epochs: 1
+  warmup_epochs: 10
+  cooldown_epochs: 0
   patience_epochs: 10
-  decay_rate: 0.1
+  decay_rate: 0.9
 
 runtime:
   deterministic: true

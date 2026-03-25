@@ -1,12 +1,11 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 import yaml
 
 
-LOSS_EXACT_KEYS = {"total", "level_ce", "gk_loss"}
-LOSS_SUFFIXES = ("_loss", "_ce")
+LOSS_KEYS_HINT_FIELD = "__loss_keys__"
 
 
 def _as_float_dict(metrics: Mapping[str, Any]) -> Dict[str, float]:
@@ -19,19 +18,26 @@ def _as_float_dict(metrics: Mapping[str, Any]) -> Dict[str, float]:
     return converted
 
 
-def _is_loss_key(key: str) -> bool:
-    if key in LOSS_EXACT_KEYS:
-        return True
-    if key.startswith("loss_"):
-        return True
-    return key.endswith(LOSS_SUFFIXES)
+def _required_loss_keys(train_outputs: Mapping[str, Any]) -> Set[str]:
+    if LOSS_KEYS_HINT_FIELD not in train_outputs:
+        raise KeyError(f"Missing required '{LOSS_KEYS_HINT_FIELD}' in train outputs.")
+
+    raw_keys = train_outputs[LOSS_KEYS_HINT_FIELD]
+    if not isinstance(raw_keys, (list, tuple, set, frozenset)):
+        raise TypeError(
+            f"'{LOSS_KEYS_HINT_FIELD}' must be a list/tuple/set of metric keys, got {type(raw_keys).__name__}."
+        )
+    return {str(key) for key in raw_keys}
 
 
 def _split_train_outputs(train_outputs: Mapping[str, Any]) -> Tuple[Dict[str, float], Dict[str, float]]:
+    hinted_loss_keys = _required_loss_keys(train_outputs)
+    train_outputs_float = _as_float_dict(train_outputs)
+
     losses: Dict[str, float] = {}
     metrics: Dict[str, float] = {}
-    for key, value in _as_float_dict(train_outputs).items():
-        if _is_loss_key(key):
+    for key, value in train_outputs_float.items():
+        if key in hinted_loss_keys:
             losses[key] = value
         else:
             metrics[key] = value

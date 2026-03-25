@@ -9,18 +9,21 @@ This repo unifies three hierarchical models behind one PyTorch training/eval pip
 Single CLI entrypoint:
 
 ```bash
-python -m train.train --config configs/hcast.yaml
-python -m train.train --config configs/capsnet.yaml
+python -m train.train --config configs/hcast_cub200.yaml
+python -m train.train --config configs/capsnet_cub200.yaml
 python -m train.train --config configs/hrn_cub200.yaml
 ```
 
 Dataset-ready configs:
 
 ```bash
-python -m train.train --config configs/cifar100.yaml
-python -m train.train --config configs/cub200.yaml
-python -m train.train --config configs/aircraft.yaml
-python -m train.train --config configs/inat21mini.yaml
+python -m train.train --config configs/hcast_cifar100.yaml
+python -m train.train --config configs/hcast_cub200.yaml
+python -m train.train --config configs/hcast_aircraft.yaml
+python -m train.train --config configs/hcast_inat21mini.yaml
+python -m train.train --config configs/capsnet_cifar100.yaml
+python -m train.train --config configs/capsnet_cub200.yaml
+python -m train.train --config configs/capsnet_aircraft.yaml
 python -m train.train --config configs/hrn_cifar100.yaml
 python -m train.train --config configs/hrn_cub200.yaml
 python -m train.train --config configs/hrn_aircraft.yaml

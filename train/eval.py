@@ -2,7 +2,13 @@
 
 import torch
 
-from .metrics import full_path_accuracy, per_level_top1, tice_score, weighted_average_precision
+from .metrics import (
+    average_hierarchical_distance,
+    full_path_accuracy,
+    per_level_top1,
+    tice_score,
+    weighted_average_precision,
+)
 
 
 def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Optional[Dict] = None) -> Dict[str, float]:
@@ -66,6 +72,18 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
         taxonomy=taxonomy,
         enforce_hierarchy=True,
     )
+    metrics["ahd_independent"] = average_hierarchical_distance(
+        score_source,
+        targets,
+        taxonomy=taxonomy,
+        enforce_hierarchy=False,
+    )
+    metrics["ahd_topdown"] = average_hierarchical_distance(
+        score_source,
+        targets,
+        taxonomy=taxonomy,
+        enforce_hierarchy=True,
+    )
 
     # H-CAST: TICE is inconsistency rate (lower is better).
     tice_independent = tice_score(
@@ -104,6 +122,10 @@ def _format_ratio(value: float) -> str:
     return f"{100.0 * float(value):.2f}%"
 
 
+def _format_scalar(value: float) -> str:
+    return f"{float(value):.3f}"
+
+
 def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] = None) -> str:
     level_names = level_names or []
     sections: List[str] = []
@@ -137,6 +159,10 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
         summary_parts.append(f"TICE_ind={_format_ratio(metrics['tice_independent'])}")
     if "tice_topdown" in metrics:
         summary_parts.append(f"TICE_td={_format_ratio(metrics['tice_topdown'])}")
+    if "ahd_independent" in metrics:
+        summary_parts.append(f"AHD_ind={_format_scalar(metrics['ahd_independent'])}")
+    if "ahd_topdown" in metrics:
+        summary_parts.append(f"AHD_td={_format_scalar(metrics['ahd_topdown'])}")
     if summary_parts:
         sections.append("Summary[" + ", ".join(summary_parts) + "]")
 
@@ -199,6 +225,8 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
             "fpa_topdown",
             "tice_independent",
             "tice_topdown",
+            "ahd_independent",
+            "ahd_topdown",
             "total",
             "level_ce",
             "gk_loss",
