@@ -34,4 +34,5 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         },
         taxonomy=taxonomy,
         design1_cfg=design1_cfg,
+        train_epochs=int(cfg.train.get("epochs", 1)),
     )

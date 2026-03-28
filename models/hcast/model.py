@@ -1,5 +1,5 @@
-﻿import warnings
-from typing import Any, Dict, List, Optional
+import warnings
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -31,6 +31,7 @@ class HCASTModel(nn.Module):
         segments_cfg: Optional[Dict[str, Any]] = None,
         taxonomy: Optional[Dict[str, Any]] = None,
         design1_cfg: Optional[Dict[str, Any]] = None,
+        train_epochs: int = 1,
     ):
         super().__init__()
         self.num_classes_per_level = list(num_classes_per_level)
@@ -53,6 +54,11 @@ class HCASTModel(nn.Module):
         self.seeds_num_iterations = int(segments_cfg.get("num_iterations", 15))
         self._seeds_warned = False
         self._current_epoch = 0
+        try:
+            parsed_train_epochs = int(train_epochs)
+        except (TypeError, ValueError):
+            parsed_train_epochs = 1
+        self._train_epochs = max(parsed_train_epochs, 1)
         self.design1_cfg = self._build_design1_cfg(design1_cfg)
         self.design1_projector: Optional[HierarchicalAffineProjector] = None
 
@@ -100,19 +106,28 @@ class HCASTModel(nn.Module):
     @staticmethod
     def _build_design1_cfg(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         cfg = cfg or {}
-        raw_warmup = cfg.get("warmup", 0)
+        enabled = bool(cfg.get("enabled", False))
+        if enabled and "temperature" not in cfg:
+            raise ValueError(
+                "cfg.model.design1.temperature is required when cfg.model.design1.enabled=true."
+            )
+
+        raw_temperature = cfg.get("temperature", 1.0)
         try:
-            warmup = int(raw_warmup)
-        except (TypeError, ValueError):
-            warmup = 0
-        if warmup < 0:
-            warmup = 0
+            temperature = float(raw_temperature)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("cfg.model.design1.temperature must be a valid float.") from exc
+        if enabled and temperature <= 0.0:
+            raise ValueError(
+                "cfg.model.design1.temperature must be > 0 when cfg.model.design1.enabled=true."
+            )
+
         eps = float(cfg.get("eps", 1e-12))
         if eps <= 0.0:
             eps = 1e-12
         return {
-            "enabled": bool(cfg.get("enabled", False)),
-            "warmup": warmup,
+            "enabled": enabled,
+            "temperature": temperature,
             "eps": eps,
             "stabilize_simplex": bool(cfg.get("stabilize_simplex", True)),
         }
@@ -124,14 +139,28 @@ class HCASTModel(nn.Module):
             epoch_value = 0
         self._current_epoch = max(epoch_value, 0)
 
-    def _design1_active(self) -> bool:
+    def _design1_enabled(self) -> bool:
         if not self.design1_cfg["enabled"]:
             return False
         if self.design1_projector is None:
             return False
-        if self._current_epoch < int(self.design1_cfg["warmup"]):
-            return False
         return True
+
+    def _design1_temperature_and_alpha(self) -> Tuple[float, float]:
+        base_temperature = float(self.design1_cfg["temperature"])
+        eps = float(self.design1_cfg["eps"])
+
+        # For temperature <= 1, constraints are fully on from the start.
+        if base_temperature <= 1.0:
+            return 1.0, 1.0
+
+        progress = float(self._current_epoch) / float(max(self._train_epochs - 1, 1))
+        progress = min(max(progress, 0.0), 1.0)
+
+        temperature = base_temperature ** (1.0 - progress)
+        alpha = (base_temperature - temperature) / max(base_temperature - 1.0, eps)
+        alpha = min(max(alpha, 0.0), 1.0)
+        return float(temperature), float(alpha)
 
     @staticmethod
     def _build_grid_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
@@ -191,12 +220,29 @@ class HCASTModel(nn.Module):
         logits_per_level = list(reversed(list(raw)))
         effective_probs_per_level = None
         design1_diagnostics = None
-        if self._design1_active():
+        if self._design1_enabled():
             probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
-            projector_output = self.design1_projector(probs_per_level)
-            effective_probs_per_level = projector_output["projected_probs_per_level"]
+            temperature, alpha = self._design1_temperature_and_alpha()
+            eps = float(self.design1_cfg["eps"])
+
+            if alpha <= eps:
+                # Start without any projection effect.
+                effective_probs_per_level = probs_per_level
+            else:
+                projector_output = self.design1_projector(probs_per_level)
+                projected_probs_per_level = projector_output["projected_probs_per_level"]
+                if alpha >= (1.0 - eps):
+                    effective_probs_per_level = projected_probs_per_level
+                else:
+                    effective_probs_per_level = [
+                        ((1.0 - alpha) * probs) + (alpha * projected)
+                        for probs, projected in zip(probs_per_level, projected_probs_per_level)
+                    ]
+
             with torch.no_grad():
                 diag: Dict[str, float] = {}
+                diag["proj_temperature"] = float(temperature)
+                diag["proj_constraint_alpha"] = float(alpha)
                 has_negative = 0.0
                 for level, probs in enumerate(effective_probs_per_level):
                     neg_mask = probs < 0.0

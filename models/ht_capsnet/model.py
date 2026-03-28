@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .routing import (
     hierarchical_agreement,
@@ -22,11 +21,11 @@ class _ConvBackbone(nn.Module):
             layers.extend(
                 [
                     nn.Conv2d(c_in, c_out, kernel_size=3, padding=1),
-                    nn.ReLU(inplace=True),
                     nn.BatchNorm2d(c_out),
+                    nn.ReLU(inplace=True),
                     nn.Conv2d(c_out, c_out, kernel_size=3, padding=1),
-                    nn.ReLU(inplace=True),
                     nn.BatchNorm2d(c_out),
+                    nn.ReLU(inplace=True),
                     nn.MaxPool2d(2),
                 ]
             )
@@ -38,57 +37,30 @@ class _ConvBackbone(nn.Module):
         return self.net(x)
 
 
-class _HTRMultiHeadAttention(nn.Module):
-    """
-    TensorFlow-style MHA parity:
-    - independent `num_heads` and `key_dim`
-    - output projection back to query dimensionality
-    """
+class _TimmFeatureBackbone(nn.Module):
+    """Wrap timm `features_only` models and return the last feature map."""
 
-    def __init__(
-        self,
-        query_dim: int,
-        kv_dim: int,
-        num_heads: int,
-        key_dim: int,
-        dropout: float = 0.0,
-    ):
+    def __init__(self, timm_model: nn.Module):
         super().__init__()
-        self.query_dim = int(query_dim)
-        self.kv_dim = int(kv_dim)
-        self.num_heads = int(num_heads)
-        self.key_dim = int(key_dim)
-        if self.num_heads < 1:
-            raise ValueError("attn_heads must be >= 1.")
-        if self.key_dim < 1:
-            raise ValueError("attn_key_dim must be >= 1.")
+        self.timm_model = timm_model
 
-        self.attn_dim = self.num_heads * self.key_dim
-        self.dropout = float(dropout)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feats = self.timm_model(x)
+        if isinstance(feats, (list, tuple)):
+            if not feats:
+                raise RuntimeError("timm features_only backbone returned no feature maps.")
+            return feats[-1]
+        return feats
 
-        self.q_proj = nn.Linear(self.query_dim, self.attn_dim, bias=True)
-        self.k_proj = nn.Linear(self.kv_dim, self.attn_dim, bias=True)
-        self.v_proj = nn.Linear(self.kv_dim, self.attn_dim, bias=True)
-        self.out_proj = nn.Linear(self.attn_dim, self.query_dim, bias=True)
 
-    def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
-        bsz, q_len, _ = query.shape
-        k_len = key.size(1)
-
-        q = self.q_proj(query).view(bsz, q_len, self.num_heads, self.key_dim).transpose(1, 2)
-        k = self.k_proj(key).view(bsz, k_len, self.num_heads, self.key_dim).transpose(1, 2)
-        v = self.v_proj(value).view(bsz, k_len, self.num_heads, self.key_dim).transpose(1, 2)
-
-        attn = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=None,
-            dropout_p=self.dropout if self.training else 0.0,
-            is_causal=False,
-        )
-        attn = attn.transpose(1, 2).contiguous().view(bsz, q_len, self.attn_dim)
-        return self.out_proj(attn)
+def _safe_num_heads(embed_dim: int, requested_heads: int) -> int:
+    req = max(1, int(requested_heads))
+    max_heads = max(1, int(embed_dim))
+    req = min(req, max_heads)
+    for heads in range(req, 0, -1):
+        if embed_dim % heads == 0:
+            return heads
+    return 1
 
 
 def _normalize_backbone_name(name: str) -> str:
@@ -136,6 +108,23 @@ def _build_backbone(
         )
 
     if normalized_name == "efficientnet_b7":
+        # Use timm for non-pretrained variants; torchvision for pretrained
+        # weights to avoid remote registry retries in restricted environments.
+        timm_exc: Optional[Exception] = None
+        if normalized_weights is None:
+            try:
+                import timm
+
+                for candidate in ("tf_efficientnet_b7", "efficientnet_b7"):
+                    try:
+                        timm_model = timm.create_model(candidate, pretrained=False, features_only=True)
+                        return _TimmFeatureBackbone(timm_model)
+                    except Exception:
+                        continue
+                raise RuntimeError("No compatible timm EfficientNet-B7 model variant available.")
+            except Exception as exc:
+                timm_exc = exc
+
         from torchvision.models import EfficientNet_B7_Weights, efficientnet_b7
 
         weights = None
@@ -144,12 +133,18 @@ def _build_backbone(
 
         try:
             model = efficientnet_b7(weights=weights)
-        except Exception as exc:
+        except Exception as tv_exc:
             if weights is None:
+                if timm_exc is not None:
+                    warnings.warn(
+                        "timm EfficientNet-B7 (non-pretrained) initialization failed and torchvision fallback also failed. "
+                        f"timm error: {timm_exc} | torchvision error: {tv_exc}",
+                        RuntimeWarning,
+                    )
                 raise
             warnings.warn(
                 "Failed to load EfficientNet-B7 ImageNet weights. "
-                f"Falling back to random initialization. Original error: {exc}",
+                f"Falling back to random initialization. Original error: {tv_exc}",
                 RuntimeWarning,
             )
             model = efficientnet_b7(weights=None)
@@ -179,7 +174,6 @@ class HTCapsNet(nn.Module):
         mask_temperature: float = 0.5,
         mask_center: float = 0.5,
         attn_heads: int = 16,
-        attn_key_dim: int = 32,
         attn_dropout: float = 0.0,
         input_size: int = 224,
     ):
@@ -213,9 +207,8 @@ class HTCapsNet(nn.Module):
         self.backbone.eval()
         try:
             with torch.no_grad():
-                probe_size = max(32, int(input_size))
-                dummy = torch.zeros(1, 3, probe_size, probe_size)
-                feat = self.backbone(self._prepare_backbone_input(dummy))
+                dummy = torch.zeros(1, 3, int(input_size), int(input_size))
+                feat = self.backbone(dummy)
                 flat_dim = int(feat[0].numel())
         finally:
             self.backbone.train(was_training)
@@ -250,20 +243,26 @@ class HTCapsNet(nn.Module):
             self.W.append(w_level)
 
         self.attn_layers = nn.ModuleList()
-        self.norm_layers = nn.ModuleList()
         for level in range(self.depth):
             q_dim = self.secondary_dims[level]
             kv_dim = self.secondary_dims[level - 1] if level > 0 else q_dim
+            heads = _safe_num_heads(q_dim, attn_heads)
+            if heads != int(attn_heads):
+                warnings.warn(
+                    f"Adjusted attn_heads from {int(attn_heads)} to {heads} for level {level} "
+                    f"(embed_dim={q_dim}) to satisfy PyTorch MultiheadAttention constraints.",
+                    RuntimeWarning,
+                )
             self.attn_layers.append(
-                _HTRMultiHeadAttention(
-                    query_dim=q_dim,
-                    kv_dim=kv_dim,
-                    num_heads=int(attn_heads),
-                    key_dim=int(attn_key_dim),
+                nn.MultiheadAttention(
+                    embed_dim=q_dim,
+                    num_heads=heads,
                     dropout=attn_dropout,
+                    batch_first=True,
+                    kdim=kv_dim,
+                    vdim=kv_dim,
                 )
             )
-            self.norm_layers.append(nn.LayerNorm(q_dim))
 
         self.taxonomy_temperature = float(taxonomy_temperature)
         self.mask_threshold_high = float(mask_threshold_high)
@@ -271,21 +270,6 @@ class HTCapsNet(nn.Module):
         self.mask_temperature = float(mask_temperature)
         self.mask_center = float(mask_center)
         self.parent_of = self._normalize_parent_of(taxonomy)
-
-    @staticmethod
-    def _prepare_backbone_input(x: torch.Tensor) -> torch.Tensor:
-        if x.ndim != 4:
-            raise ValueError(f"Expected 4D image tensor [B, C, H, W], got shape={tuple(x.shape)}.")
-        channels = int(x.size(1))
-        if channels == 1:
-            x = x.repeat(1, 3, 1, 1)
-        elif channels != 3:
-            raise ValueError(f"HT-CapsNet expects 1 or 3 input channels, got {channels}.")
-
-        h, w = int(x.size(-2)), int(x.size(-1))
-        if h < 32 or w < 32:
-            x = F.interpolate(x, size=(32, 32), mode="bilinear", align_corners=False)
-        return x
 
     @staticmethod
     def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
@@ -390,15 +374,15 @@ class HTCapsNet(nn.Module):
 
         assert caps_out is not None and routing_weights is not None
         if prev_predictions is not None:
-            attn_out = self.attn_layers[level](caps_out, prev_predictions, prev_predictions)
+            attn_out, _ = self.attn_layers[level](caps_out, prev_predictions, prev_predictions)
         else:
-            attn_out = self.attn_layers[level](caps_out, caps_out, caps_out)
-        caps_out = self.norm_layers[level](caps_out + attn_out)
+            attn_out, _ = self.attn_layers[level](caps_out, caps_out, caps_out)
+        # Keep capsule-length semantics by re-squashing residual refinement.
+        caps_out = squash(caps_out + attn_out, dim=-1)
         return caps_out
 
     def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Dict[str, Any]:
         _ = targets
-        x = self._prepare_backbone_input(x)
         feat = self.backbone(x)
         primary_caps = self._build_primary_caps(feat)
 

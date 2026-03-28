@@ -1,8 +1,9 @@
-﻿# Hierarchical Image Classification (Unified H-CAST + HT-CapsNet + HRN)
+﻿# Hierarchical Image Classification (Unified H-CAST + LH-DNN + HT-CapsNet + HRN)
 
-This repo unifies three hierarchical models behind one PyTorch training/eval pipeline:
+This repo unifies four hierarchical models behind one PyTorch training/eval pipeline:
 
 - H-CAST (upstream commit: `b1a222bb32da5caf48691b5987d56b7483801907`)
+- LH-DNN (paper: arXiv `2409.16956`)
 - HT-CapsNet (upstream commit: `8a0ea23f3e6b68b75d8add07674b4b0288380417`)
 - HRN (upstream repo: `MonsterZhZh/HRN`)
 
@@ -10,6 +11,7 @@ Single CLI entrypoint:
 
 ```bash
 python -m train.train --config configs/hcast_cub200.yaml
+python -m train.train --config configs/lhdnn_cifar100.yaml
 python -m train.train --config configs/capsnet_cub200.yaml
 python -m train.train --config configs/hrn_cub200.yaml
 ```
@@ -18,6 +20,7 @@ Dataset-ready configs:
 
 ```bash
 python -m train.train --config configs/hcast_cifar100.yaml
+python -m train.train --config configs/lhdnn_cifar100.yaml
 python -m train.train --config configs/hcast_cub200.yaml
 python -m train.train --config configs/hcast_aircraft.yaml
 python -m train.train --config configs/hcast_inat21mini.yaml

@@ -15,15 +15,14 @@ model:
 
   # Taxonomy-guided routing controls
   taxonomy_temperature: 0.5
-  # Upstream notebook args_dict + logged run config use 0.99 for HTR_CapsNet.
-  mask_threshold_high: 0.99
+  # Upstream batch script does not override this, so parser default 0.9 is used.
+  mask_threshold_high: 0.9
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
 
   # Cross-capsule attention
   attn_heads: 16
-  attn_key_dim: 32
   attn_dropout: 0.0
   loss:
     margin_m_pos: 0.9
@@ -63,13 +62,15 @@ dataset:
     test: test.json
 
 dataloader:
-  batch_size: 256
+  # run-HT-CapsNet.sh sets batch_size=32.
+  batch_size: 32
   num_workers: 16
   pin_memory: true
   windows_spawn_safe: true
 
 train:
-  epochs: 100
+  # run-HT-CapsNet.sh sets epochs=200.
+  epochs: 200
   seed: 42
   device: cuda
   amp: true

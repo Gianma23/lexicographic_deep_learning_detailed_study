@@ -1,4 +1,4 @@
-﻿from typing import Any, Dict, List, Optional, Tuple
+﻿from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -25,20 +25,24 @@ def compute_loss(
     output: Dict[str, Any],
     targets: Any,
     taxonomy: Optional[Dict[str, Any]] = None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
+    return_aux: bool = False,
+) -> Union[
+    Tuple[torch.Tensor, Dict[str, float]],
+    Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
+]:
     name = str(cfg.model.name).lower()
     if name == "hcast":
         from .hcast.losses import compute_loss as loss_hcast
 
-        return loss_hcast(output, targets, cfg, taxonomy)
+        return loss_hcast(output, targets, cfg, taxonomy, return_aux=return_aux)
     if name == "ht_capsnet":
         from .ht_capsnet.losses import compute_loss as loss_caps
 
-        return loss_caps(output, targets, cfg, taxonomy)
+        return loss_caps(output, targets, cfg, taxonomy, return_aux=return_aux)
     if name == "hrn":
         from .hrn.losses import compute_loss as loss_hrn
 
-        return loss_hrn(output, targets, cfg, taxonomy)
+        return loss_hrn(output, targets, cfg, taxonomy, return_aux=return_aux)
     raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'ht_capsnet', 'hrn']")
 
 

@@ -155,7 +155,11 @@ def compute_loss(
     targets: CapsTargets,
     cfg: Any,
     taxonomy: Optional[Dict[str, Any]] = None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
+    return_aux: bool = False,
+) -> Union[
+    Tuple[torch.Tensor, Dict[str, float]],
+    Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
+]:
     _ = taxonomy
     logits_per_level = output["logits_per_level"]
     mixup_target_probs = _mixup_target_distributions(logits_per_level, targets)
@@ -191,4 +195,10 @@ def compute_loss(
     }
     for level, level_loss in enumerate(level_losses):
         metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
-    return total, metrics
+    if not return_aux:
+        return total, metrics
+
+    aux_payload: Dict[str, Any] = {
+        "level_losses": list(level_losses),
+    }
+    return total, metrics, aux_payload

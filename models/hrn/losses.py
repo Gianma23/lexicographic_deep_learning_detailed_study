@@ -184,7 +184,11 @@ def compute_loss(
     targets: HrnTargets,
     cfg: Any,
     taxonomy: Optional[Dict[str, Any]] = None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
+    return_aux: bool = False,
+) -> Union[
+    Tuple[torch.Tensor, Dict[str, float]],
+    Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
+]:
     loss_cfg = cfg.model.loss
     logits_per_level = output["logits_per_level"]
     if len(logits_per_level) != 3:
@@ -226,4 +230,14 @@ def compute_loss(
         "loss_level_1": float(tree_loss_levels[1].detach().item()),
         "loss_level_2": float(tree_loss_levels[2].detach().item()),
     }
-    return total, metrics
+    if not return_aux:
+        return total, metrics
+
+    aux_payload: Dict[str, Any] = {
+        "level_losses": [
+            tree_loss_levels[0],
+            tree_loss_levels[1],
+            tree_loss_levels[2],
+        ],
+    }
+    return total, metrics, aux_payload
