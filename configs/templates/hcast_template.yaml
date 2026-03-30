@@ -1,0 +1,47 @@
+# Template for the `model:` section when using H-CAST.
+model:
+  name: hcast                      # Model registry id. Must be exactly: hcast
+
+  # Backbone/variant selection
+  variant: cast_small              # timm H-CAST variant (must exist in internal registry)
+  pretrained: false                # Whether timm should initialize model with pretrained weights
+  drop: 0.0                        # Dropout rate passed as drop_rate
+  drop_path: 0.1                   # Stochastic depth rate passed as drop_path_rate
+  finetune: ""                     # Optional checkpoint URL/path loaded by train/utils.load_finetune_checkpoint
+
+  segments:
+    mode: seeds                    # seeds | grid
+
+    # Used when mode=grid
+    patch_size: 8                  # Grid patch size in pixels for deterministic segment map
+
+    # Used when mode=seeds (OpenCV ximgproc backend)
+    num_superpixels: 196           # Target number of superpixels
+    num_levels: 1                  # Number of block levels in SEEDS algorithm
+    prior: 2                       # Spatial prior term for SEEDS
+    histogram_bins: 5              # Color histogram bins for SEEDS
+    double_step: false             # Whether SEEDS uses double-step update
+    num_iterations: 15             # Number of SEEDS optimization iterations
+
+    # Optional normalization override for SEEDS preprocessing.
+    # If omitted, factory falls back to dataset.mean and dataset.std.
+    # mean: [0.485, 0.456, 0.406]
+    # std: [0.229, 0.224, 0.225]
+
+  # Optional Design-1 hierarchical projection block
+  design1:
+    enabled: false                 # true enables hierarchical affine projection constraints
+    # temperature is REQUIRED when enabled=true
+    temperature: 20.0              # Base projection temperature (> 0 when enabled)
+    eps: 1.0e-12                   # Numerical stability epsilon (auto-clamped to > 0)
+    stabilize_simplex: true        # Stabilize simplex operations in projector
+
+  loss:
+    globalkl: true                 # Enable global KL regularization term
+    gk_weight: 0.5                 # Weight multiplier for global KL term
+
+    # Per-level CE weighting strategy
+    level_weighting:
+      mode: static                 # static | dynamic
+      gamma: 0.0                   # Dynamic weighting scale control (clamped to [0,1])
+      eps: 1.0e-12                 # Numerical stability epsilon for dynamic weighting

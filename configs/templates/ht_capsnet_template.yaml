@@ -1,0 +1,41 @@
+# Template for the `model:` section when using HT-CapsNet.
+# Reproducibility note:
+# - HT-CapsNet build path enforces `train.seed` and `runtime.deterministic: true`.
+model:
+  name: ht_capsnet                 # Model registry id. Must be exactly: ht_capsnet
+
+  # Capsule dimensions
+  caps_dim: 8                      # Primary capsule dimension
+  secondary_dims: [64, 32, 16]      # Secondary capsule dims per hierarchy level (length = hierarchy depth)
+
+  # Dynamic routing
+  routing_iters: 3                 # Number of routing-by-agreement iterations per level
+
+  # Backbone controls
+  backbone_net: efficientnet_b7    # Supported: custom | efficientnet_b7
+  backbone_net_weights: imagenet   # Supported: imagenet | none
+  num_blocks: 4                    # Used only for backbone_net=custom: number of conv blocks
+  initial_filters: 64              # Used only for custom backbone: filters in first block
+  filter_increment: 2              # Used only for custom backbone: filter growth multiplier per block
+
+  # Taxonomy-guided routing mask controls
+  taxonomy_temperature: 0.5        # Sigmoid sharpness for taxonomy mask generation
+  mask_threshold_high: 0.99        # Upper bound of soft taxonomy mask range
+  mask_threshold_low: 0.1          # Lower bound of soft taxonomy mask range
+  mask_temperature: 0.5            # Temperature applied before routing softmax
+  mask_center: 0.5                 # Sigmoid center for taxonomy mask transformation
+
+  # Cross-level attention controls
+  attn_heads: 16                   # Requested number of attention heads per level
+  attn_dropout: 0.0                # Dropout inside MultiheadAttention
+  attn_postprocess: layernorm      # Post-attention fusion: layernorm | squash
+
+  loss:
+    margin_m_pos: 0.9              # Positive margin in capsule margin loss
+    margin_m_neg: 0.1              # Negative margin in capsule margin loss
+    lambda_downweight: 0.5         # Weight for non-target term in margin loss
+
+    # Per-level loss weighting
+    weight_mode: dynamic           # dynamic | static (otherwise uses explicit level_weights if provided)
+    dynamic_weight: 0.0            # Decay factor for dynamic level weighting formula
+    # level_weights: [1.0, 1.0, 1.0] # Optional explicit per-level weights (length = hierarchy depth)

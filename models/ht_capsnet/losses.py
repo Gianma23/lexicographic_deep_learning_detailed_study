@@ -7,6 +7,7 @@ CapsTargets = Union[torch.Tensor, Dict[str, Any]]
 
 
 def _target_probs_from_input(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Convert class indices or soft labels to normalized per-class targets."""
     if target.ndim == 1:
         return torch.zeros_like(logits).scatter_(1, target.unsqueeze(1), 1.0)
     if target.ndim == 2 and int(target.size(1)) == int(logits.size(1)):
@@ -18,6 +19,7 @@ def _target_probs_from_input(logits: torch.Tensor, target: torch.Tensor) -> torc
 
 
 def _margin_loss(logits: torch.Tensor, target: torch.Tensor, m_pos: float, m_neg: float, down_weight: float) -> torch.Tensor:
+    """Compute capsule margin loss for one hierarchy level."""
     target_probs = _target_probs_from_input(logits, target)
     pos = target_probs * torch.relu(m_pos - logits).pow(2)
     neg = (1.0 - target_probs) * torch.relu(logits - m_neg).pow(2)
@@ -25,6 +27,7 @@ def _margin_loss(logits: torch.Tensor, target: torch.Tensor, m_pos: float, m_neg
 
 
 def _hard_targets_from_input(targets: CapsTargets) -> torch.Tensor:
+    """Extract integer labels from plain or mixup target payloads."""
     if isinstance(targets, torch.Tensor):
         return targets
     hard_targets = targets.get("hard_targets")
@@ -37,6 +40,7 @@ def _hard_targets_from_input(targets: CapsTargets) -> torch.Tensor:
 
 
 def _mixup_target_distributions(logits_per_level: List[torch.Tensor], targets: CapsTargets) -> Optional[List[torch.Tensor]]:
+    """Extract normalized soft targets for each level when mixup is enabled."""
     if not isinstance(targets, dict):
         return None
     soft_targets = targets.get("soft_targets_per_level")
@@ -55,16 +59,8 @@ def _mixup_target_distributions(logits_per_level: List[torch.Tensor], targets: C
     return out
 
 
-def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
-    if not taxonomy or "parent_of" not in taxonomy:
-        return {}
-    out: Dict[int, Dict[int, int]] = {}
-    for k, v in taxonomy["parent_of"].items():
-        out[int(k)] = {int(ck): int(pk) for ck, pk in v.items()}
-    return out
-
-
 def _initial_caps_loss_weights(num_classes_per_level: List[int]) -> List[float]:
+    """Build static level weights inversely proportional to class-count share."""
     if not num_classes_per_level:
         return []
     total = float(sum(float(v) for v in num_classes_per_level))
@@ -83,6 +79,7 @@ def _dynamic_caps_level_weights(
     hard_targets: Optional[torch.Tensor],
     decay: float,
 ) -> List[float]:
+    """Adapt level weights from per-level accuracy and configured decay."""
     num_classes_per_level = [int(logits.size(-1)) for logits in logits_per_level]
     initial = _initial_caps_loss_weights(num_classes_per_level)
     num_levels = len(logits_per_level)
@@ -113,6 +110,7 @@ def _level_weights(
     targets: CapsTargets,
     hard_targets: Optional[torch.Tensor],
 ) -> List[float]:
+    """Resolve level weights from target overrides and loss configuration."""
     num_levels = len(logits_per_level)
     if isinstance(targets, dict):
         override = targets.get("level_weights")
@@ -160,6 +158,7 @@ def compute_loss(
     Tuple[torch.Tensor, Dict[str, float]],
     Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
 ]:
+    """Compute HT-CapsNet hierarchical margin loss and scalar metrics."""
     _ = taxonomy
     logits_per_level = output["logits_per_level"]
     mixup_target_probs = _mixup_target_distributions(logits_per_level, targets)
@@ -185,7 +184,6 @@ def compute_loss(
         weighted_level_losses.append(weights[level] * level_loss)
 
     margin = torch.stack(weighted_level_losses).sum()
-    cons = torch.zeros((), device=margin.device)
     total = margin
 
     metrics = {

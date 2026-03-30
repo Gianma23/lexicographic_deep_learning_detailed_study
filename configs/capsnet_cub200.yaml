@@ -1,22 +1,18 @@
 model:
   name: ht_capsnet
   caps_dim: 8
-  # Upstream HT-CapsNet commonly uses SCaps_dim=32 with "decrease" mode over 3 levels.
-  secondary_dims: [32, 16, 8]
+  secondary_dims: [64, 32, 16]
   routing_iters: 3
 
-  # Backbone (PyTorch translation of upstream custom blocks)
   num_blocks: 4
   initial_filters: 64
   filter_increment: 2
-  # Upstream HT-CapsNet scripts use EfficientNetB7 with ImageNet weights.
   backbone_net: efficientnet_b7
   backbone_net_weights: imagenet
 
   # Taxonomy-guided routing controls
   taxonomy_temperature: 0.5
-  # Upstream batch script does not override this, so parser default 0.9 is used.
-  mask_threshold_high: 0.9
+  mask_threshold_high: 0.99
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
@@ -75,7 +71,7 @@ train:
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/capsnet_cub200
+  output_dir: /scratch/g.saggini1/outputs/capsnet_cub200
   smoothing: 0.0
 
 optim:

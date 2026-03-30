@@ -1,14 +1,27 @@
 ﻿import warnings
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .routing import (
     hierarchical_agreement,
+    safe_norm,
     squash,
     taxonomy_guided_routing_weights,
 )
+
+
+@dataclass(frozen=True)
+class _CapsuleLevelSpec:
+    """Static shape description for one routing level."""
+
+    n_in: int
+    d_in: int
+    n_out: int
+    d_out: int
 
 
 class _ConvBackbone(nn.Module):
@@ -54,6 +67,7 @@ class _TimmFeatureBackbone(nn.Module):
 
 
 def _safe_num_heads(embed_dim: int, requested_heads: int) -> int:
+    """Return a valid `MultiheadAttention` head count for `embed_dim`."""
     req = max(1, int(requested_heads))
     max_heads = max(1, int(embed_dim))
     req = min(req, max_heads)
@@ -63,11 +77,23 @@ def _safe_num_heads(embed_dim: int, requested_heads: int) -> int:
     return 1
 
 
+def _normalize_attn_postprocess(value: Optional[str]) -> str:
+    text = str(value or "layernorm").strip().lower().replace("-", "_")
+    if text == "layernorm":
+        return "layernorm"
+    if text == "squash":
+        return "squash"
+    raise ValueError(
+        f"Unsupported HT-CapsNet attention postprocess '{value}'. "
+        "Supported values: layernorm, squash."
+    )
+
+
 def _normalize_backbone_name(name: str) -> str:
-    value = str(name or "custom").strip().lower().replace("-", "_")
+    value = str(name or "custom").strip().lower()
     if value in {"custom"}:
         return "custom"
-    if value in {"efficientnetb7", "efficientnet_b7"}:
+    if value == "efficientnet_b7":
         return "efficientnet_b7"
     raise ValueError(
         f"Unsupported HT-CapsNet backbone '{name}'. "
@@ -79,9 +105,9 @@ def _normalize_backbone_weights(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
     text = str(value).strip().lower()
-    if text in {"", "none", "null"}:
+    if text == "none":
         return None
-    if text in {"imagenet", "imagenet1k"}:
+    if text == "imagenet":
         return "imagenet"
     raise ValueError(
         f"Unsupported HT-CapsNet backbone weights '{value}'. "
@@ -108,8 +134,8 @@ def _build_backbone(
         )
 
     if normalized_name == "efficientnet_b7":
-        # Use timm for non-pretrained variants; torchvision for pretrained
-        # weights to avoid remote registry retries in restricted environments.
+        # Prefer timm for random initialization; use torchvision when
+        # explicit ImageNet pretrained weights are requested.
         timm_exc: Optional[Exception] = None
         if normalized_weights is None:
             try:
@@ -154,7 +180,7 @@ def _build_backbone(
 
 
 class HTCapsNet(nn.Module):
-    """Closer structural alignment to the upstream TensorFlow HTR-CapsNet."""
+    """PyTorch HT-CapsNet aligned with the original repo's TensorFlow architecture."""
 
     def __init__(
         self,
@@ -175,6 +201,7 @@ class HTCapsNet(nn.Module):
         mask_center: float = 0.5,
         attn_heads: int = 16,
         attn_dropout: float = 0.0,
+        attn_postprocess: str = "layernorm",
         input_size: int = 224,
     ):
         super().__init__()
@@ -182,6 +209,7 @@ class HTCapsNet(nn.Module):
         self.depth = len(self.num_classes_per_level)
         self.routing_iters = int(routing_iters)
         self.primary_dim = int(primary_dim)
+        self.attn_postprocess = _normalize_attn_postprocess(attn_postprocess)
 
         if self.depth < 2:
             raise ValueError("HT-CapsNet expects at least 2 hierarchy levels.")
@@ -191,6 +219,8 @@ class HTCapsNet(nn.Module):
         if len(secondary_dims) != self.depth:
             raise ValueError("secondary_dims must match hierarchy depth.")
         self.secondary_dims = [int(v) for v in secondary_dims]
+        if any(dim <= 0 for dim in self.secondary_dims):
+            raise ValueError("secondary_dims values must be positive.")
 
         self.backbone = _build_backbone(
             backbone_name=backbone_name,
@@ -200,52 +230,47 @@ class HTCapsNet(nn.Module):
             filter_increment=filter_increment,
         )
 
-        # Upstream reshapes raw backbone features into primary capsules.
-        # Run this shape probe in eval mode so BatchNorm layers don't expect
-        # training statistics from a single-item dummy batch.
+        # Infer the primary-capsule layout from the backbone feature shape.
+        # Probe in eval mode so BatchNorm layers do not update running stats
+        # from a single-item dummy batch during initialization.
         was_training = self.backbone.training
         self.backbone.eval()
         try:
             with torch.no_grad():
                 dummy = torch.zeros(1, 3, int(input_size), int(input_size))
-                feat = self.backbone(dummy)
+                feat = self.backbone(self._prepare_backbone_input(dummy))
                 flat_dim = int(feat[0].numel())
         finally:
             self.backbone.train(was_training)
+
         if flat_dim % self.primary_dim != 0:
             raise ValueError(
                 f"Backbone flattened feature dim ({flat_dim}) must be divisible by primary_dim ({self.primary_dim})."
             )
         self.primary_caps_count = int(flat_dim // self.primary_dim)
+        self._primary_caps_flat_dim = int(self.primary_caps_count * self.primary_dim)
+        self.level_specs = self._build_level_specs()
 
         self.W = nn.ParameterList()
         self.h_gates = nn.ParameterList()
         self.dim_transforms = nn.ParameterList()
+        self.post_attn_norms = nn.ModuleList()
 
-        for level in range(self.depth):
-            n_out = self.num_classes_per_level[level]
-            d_out = self.secondary_dims[level]
-            if level == 0:
-                n_in = self.primary_caps_count
-                d_in = self.primary_dim
-            else:
-                d_prev = self.secondary_dims[level - 1]
-                new_n_caps = (self.primary_caps_count * self.primary_dim) // d_prev
-                n_in = new_n_caps + self.num_classes_per_level[level - 1]
-                d_in = d_prev
-
-                gate = nn.Parameter(torch.full((1, n_out, self.num_classes_per_level[level - 1]), 0.5))
-                dim_t = nn.Parameter(torch.randn(d_in, d_out) * 0.1)
+        for level, spec in enumerate(self.level_specs):
+            if level > 0:
+                gate = nn.Parameter(torch.full((1, spec.n_out, self.num_classes_per_level[level - 1]), 0.5))
+                dim_t = nn.Parameter(torch.randn(spec.d_in, spec.d_out) * 0.1)
                 self.h_gates.append(gate)
                 self.dim_transforms.append(dim_t)
 
-            w_level = nn.Parameter(torch.randn(1, n_in, n_out, d_out, d_in) * 0.1)
+            w_level = nn.Parameter(torch.randn(1, spec.n_in, spec.n_out, spec.d_out, spec.d_in) * 0.1)
             self.W.append(w_level)
+            self.post_attn_norms.append(nn.LayerNorm(spec.d_out))
 
         self.attn_layers = nn.ModuleList()
-        for level in range(self.depth):
-            q_dim = self.secondary_dims[level]
-            kv_dim = self.secondary_dims[level - 1] if level > 0 else q_dim
+        for level, spec in enumerate(self.level_specs):
+            q_dim = spec.d_out
+            kv_dim = spec.d_in if level > 0 else q_dim
             heads = _safe_num_heads(q_dim, attn_heads)
             if heads != int(attn_heads):
                 warnings.warn(
@@ -280,6 +305,59 @@ class HTCapsNet(nn.Module):
             out[int(k)] = {int(ck): int(pk) for ck, pk in v.items()}
         return out
 
+    def _primary_caps_count_for_target_dim(self, target_dim: int) -> int:
+        if target_dim <= 0:
+            raise ValueError(f"Target capsule dim must be positive, got {target_dim}.")
+        if self._primary_caps_flat_dim % target_dim != 0:
+            raise ValueError(
+                f"Primary capsule flattened dim ({self._primary_caps_flat_dim}) must be divisible by target dim ({target_dim})."
+            )
+        return int(self._primary_caps_flat_dim // target_dim)
+
+    def _build_level_specs(self) -> List[_CapsuleLevelSpec]:
+        specs: List[_CapsuleLevelSpec] = []
+        for level in range(self.depth):
+            n_out = int(self.num_classes_per_level[level])
+            d_out = int(self.secondary_dims[level])
+            if level == 0:
+                specs.append(
+                    _CapsuleLevelSpec(
+                        n_in=int(self.primary_caps_count),
+                        d_in=int(self.primary_dim),
+                        n_out=n_out,
+                        d_out=d_out,
+                    )
+                )
+                continue
+
+            d_prev = int(self.secondary_dims[level - 1])
+            new_n_caps = self._primary_caps_count_for_target_dim(d_prev)
+            specs.append(
+                _CapsuleLevelSpec(
+                    n_in=int(new_n_caps + self.num_classes_per_level[level - 1]),
+                    d_in=d_prev,
+                    n_out=n_out,
+                    d_out=d_out,
+                )
+            )
+        return specs
+
+    @staticmethod
+    def _prepare_backbone_input(x: torch.Tensor) -> torch.Tensor:
+        """Mirror upstream pre-backbone guards for small or grayscale inputs."""
+        if x.ndim != 4:
+            raise ValueError(f"Expected image tensor [B, C, H, W], got shape {tuple(x.shape)}.")
+
+        channels = int(x.size(1))
+        if channels == 1:
+            x = x.repeat(1, 3, 1, 1)
+        elif channels != 3:
+            raise ValueError(f"HT-CapsNet expects 1 or 3 input channels, got {channels}.")
+
+        if int(x.size(-2)) < 32 or int(x.size(-1)) < 32:
+            x = F.interpolate(x, size=(32, 32), mode="bilinear", align_corners=False)
+        return x
+
     def _taxonomy_matrix(self, level: int, device: torch.device, dtype: torch.dtype) -> Optional[torch.Tensor]:
         if level <= 0:
             return None
@@ -291,7 +369,7 @@ class HTCapsNet(nn.Module):
         children = self.num_classes_per_level[level]
         mat = torch.zeros((parents, children), dtype=dtype, device=device)
         for child, parent in mapping.items():
-            if child < children and parent < parents:
+            if 0 <= child < children and 0 <= parent < parents:
                 mat[parent, child] = 1.0
         return mat
 
@@ -307,20 +385,19 @@ class HTCapsNet(nn.Module):
 
     def _reshape_primary_for_level(self, primary_caps: torch.Tensor, target_dim: int) -> torch.Tensor:
         bsz = primary_caps.size(0)
-        total = self.primary_caps_count * self.primary_dim
-        if total % target_dim != 0:
-            raise RuntimeError(
-                f"Primary capsule flattened dim ({total}) is not divisible by target level dim ({target_dim})."
-            )
-        new_n_caps = total // target_dim
+        new_n_caps = self._primary_caps_count_for_target_dim(target_dim)
         return primary_caps.reshape(bsz, new_n_caps, target_dim)
 
     @staticmethod
     def _predict_votes(x_caps: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-        """
-        x_caps: [B, N_in, D_in]
-        weight: [1, N_in, N_out, D_out, D_in]
-        returns: [B, N_in, N_out, D_out]
+        """Project input capsules into per-class vote vectors.
+
+        Args:
+            x_caps: Tensor with shape ``[B, N_in, D_in]``.
+            weight: Tensor with shape ``[1, N_in, N_out, D_out, D_in]``.
+
+        Returns:
+            Tensor with shape ``[B, N_in, N_out, D_out]``.
         """
         bsz, _, _, = x_caps.shape
         x_expanded = x_caps.unsqueeze(2).unsqueeze(-1)  # [B, N_in, 1, D_in, 1]
@@ -329,6 +406,12 @@ class HTCapsNet(nn.Module):
         votes = torch.matmul(w_tiled, x_tiled).squeeze(-1)  # [B, N_in, N_out, D_out]
         return votes
 
+    def _fuse_attention_output(self, level: int, caps_out: torch.Tensor, attn_out: torch.Tensor) -> torch.Tensor:
+        fused = caps_out + attn_out
+        if self.attn_postprocess == "layernorm":
+            return self.post_attn_norms[level](fused)
+        return squash(fused, dim=-1)
+
     def _route_level(
         self,
         level: int,
@@ -336,8 +419,9 @@ class HTCapsNet(nn.Module):
         prev_predictions: Optional[torch.Tensor],
         taxonomy_matrix: Optional[torch.Tensor],
     ) -> torch.Tensor:
+        spec = self.level_specs[level]
         bsz, n_in, _ = x_caps.shape
-        n_out = self.num_classes_per_level[level]
+        n_out = spec.n_out
 
         votes = self._predict_votes(x_caps, self.W[level])
 
@@ -377,13 +461,11 @@ class HTCapsNet(nn.Module):
             attn_out, _ = self.attn_layers[level](caps_out, prev_predictions, prev_predictions)
         else:
             attn_out, _ = self.attn_layers[level](caps_out, caps_out, caps_out)
-        # Keep capsule-length semantics by re-squashing residual refinement.
-        caps_out = squash(caps_out + attn_out, dim=-1)
-        return caps_out
+        return self._fuse_attention_output(level, caps_out, attn_out)
 
     def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Dict[str, Any]:
         _ = targets
-        feat = self.backbone(x)
+        feat = self.backbone(self._prepare_backbone_input(x))
         primary_caps = self._build_primary_caps(feat)
 
         logits_per_level: List[torch.Tensor] = []
@@ -406,7 +488,7 @@ class HTCapsNet(nn.Module):
                 prev_predictions=prev_predictions,
                 taxonomy_matrix=taxonomy_matrix,
             )
-            logits = torch.norm(caps, dim=-1)
+            logits = safe_norm(caps, dim=-1)
 
             secondary_caps.append(caps)
             logits_per_level.append(logits)
