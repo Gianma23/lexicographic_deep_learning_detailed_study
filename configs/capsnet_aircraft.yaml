@@ -64,7 +64,7 @@ dataloader:
   windows_spawn_safe: true
 
 train:
-  epochs: 200
+  epochs: 100
   seed: 42
   device: cuda
   amp: true
@@ -81,7 +81,7 @@ optim:
   opt_betas: null
 
 scheduler:
-  # Approximate upstream exponential LR decay (start ~epoch 10, gamma 0.9).
+  # Paper setting: exponential LR decay (start epoch 10, gamma 0.95).
   name: step
   warmup_lr: 0.001
   min_lr: 0.000001
@@ -93,7 +93,7 @@ scheduler:
   warmup_epochs: 10
   cooldown_epochs: 0
   patience_epochs: 10
-  decay_rate: 0.9
+  decay_rate: 0.95
 
 runtime:
   deterministic: true

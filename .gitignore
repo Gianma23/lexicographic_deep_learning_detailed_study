@@ -10,6 +10,7 @@ __pycache__/
 outputs/**
 data/**
 .VSCodeCounter/
+.codex
 
 # Distribution / packaging
 .Python
