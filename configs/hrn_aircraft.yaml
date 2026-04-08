@@ -55,7 +55,7 @@ train:
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/hrn_aircraft
+  output_dir: /scratch/g.saggini1/outputs/hrn_aircraft
   smoothing: 0.1
 
 optim:

@@ -56,7 +56,7 @@ train:
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/hrn_cub200
+  output_dir: /scratch/g.saggini1/outputs/hrn_cub200
   smoothing: 0.1
 
 optim:

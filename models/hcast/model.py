@@ -1,3 +1,4 @@
+import math
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -7,6 +8,7 @@ import torch.nn.functional as F
 
 from .hard_hierarchy import HierarchicalAffineProjector
 from .segments import build_seeds_segments, supports_seeds
+from .soft_topdown import SoftTopDownKLGating
 
 try:
     # Import registers H-CAST variants into timm's global model registry.
@@ -31,6 +33,7 @@ class HCASTModel(nn.Module):
         segments_cfg: Optional[Dict[str, Any]] = None,
         taxonomy: Optional[Dict[str, Any]] = None,
         design1_cfg: Optional[Dict[str, Any]] = None,
+        soft_topdown_cfg: Optional[Dict[str, Any]] = None,
         train_epochs: int = 1,
     ):
         super().__init__()
@@ -61,6 +64,8 @@ class HCASTModel(nn.Module):
         self._train_epochs = max(parsed_train_epochs, 1)
         self.design1_cfg = self._build_design1_cfg(design1_cfg)
         self.design1_projector: Optional[HierarchicalAffineProjector] = None
+        self.soft_topdown_cfg = self._build_soft_topdown_cfg(soft_topdown_cfg)
+        self.soft_topdown_plugin: Optional[SoftTopDownKLGating] = None
 
         if self.design1_cfg["enabled"]:
             if self.depth != 3:
@@ -77,6 +82,22 @@ class HCASTModel(nn.Module):
                 taxonomy=taxonomy,
                 eps=float(self.design1_cfg["eps"]),
                 stabilize_simplex=bool(self.design1_cfg["stabilize_simplex"]),
+            )
+
+        if self.soft_topdown_cfg["enabled"]:
+            if taxonomy is None:
+                raise ValueError(
+                    "cfg.model.soft_topdown.enabled=true requires dataset taxonomy with parent-child mappings."
+                )
+            self.soft_topdown_plugin = SoftTopDownKLGating(
+                num_classes_per_level=self.num_classes_per_level,
+                taxonomy=taxonomy,
+                temperature=float(self.soft_topdown_cfg["temperature"]),
+                gate_strength=float(self.soft_topdown_cfg["gate_strength"]),
+                tau=float(self.soft_topdown_cfg["tau"]),
+                use_gated_logits=bool(self.soft_topdown_cfg["use_gated_logits"]),
+                detach_upper_probs=bool(self.soft_topdown_cfg["detach_upper_probs"]),
+                eps=float(self.soft_topdown_cfg["eps"]),
             )
 
         if timm_create_model is None:
@@ -125,11 +146,62 @@ class HCASTModel(nn.Module):
         eps = float(cfg.get("eps", 1e-12))
         if eps <= 0.0:
             eps = 1e-12
+        alpha_schedule = str(cfg.get("alpha_schedule", "exp")).strip().lower()
+        if alpha_schedule not in {"exp", "tanh"}:
+            raise ValueError("cfg.model.design1.alpha_schedule must be one of ['exp', 'tanh'].")
+        alpha_tanh_beta = float(cfg.get("alpha_tanh_beta", 3.0))
+        if alpha_tanh_beta <= 0.0:
+            alpha_tanh_beta = 3.0
+
         return {
             "enabled": enabled,
             "temperature": temperature,
             "eps": eps,
             "stabilize_simplex": bool(cfg.get("stabilize_simplex", True)),
+            "alpha_schedule": alpha_schedule,
+            "alpha_tanh_beta": alpha_tanh_beta,
+        }
+
+    @staticmethod
+    def _build_soft_topdown_cfg(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        cfg = cfg or {}
+        enabled = bool(cfg.get("enabled", False))
+
+        try:
+            temperature = float(cfg.get("temperature", 1.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("cfg.model.soft_topdown.temperature must be a valid float.") from exc
+        if enabled and temperature <= 0.0:
+            raise ValueError(
+                "cfg.model.soft_topdown.temperature must be > 0 when cfg.model.soft_topdown.enabled=true."
+            )
+        if temperature <= 0.0:
+            temperature = 1.0
+
+        try:
+            gate_strength = float(cfg.get("gate_strength", 1.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("cfg.model.soft_topdown.gate_strength must be a valid float.") from exc
+
+        try:
+            tau = float(cfg.get("tau", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("cfg.model.soft_topdown.tau must be a valid float.") from exc
+        if tau < 0.0:
+            tau = 0.0
+
+        eps = float(cfg.get("eps", 1e-12))
+        if eps <= 0.0:
+            eps = 1e-12
+
+        return {
+            "enabled": enabled,
+            "temperature": temperature,
+            "gate_strength": gate_strength,
+            "tau": tau,
+            "use_gated_logits": bool(cfg.get("use_gated_logits", True)),
+            "detach_upper_probs": bool(cfg.get("detach_upper_probs", False)),
+            "eps": eps,
         }
 
     def set_epoch(self, epoch: int) -> None:
@@ -146,9 +218,20 @@ class HCASTModel(nn.Module):
             return False
         return True
 
+    def _soft_topdown_enabled(self) -> bool:
+        if not self.soft_topdown_cfg["enabled"]:
+            return False
+        if self.soft_topdown_plugin is None:
+            return False
+        return True
+
     def _design1_temperature_and_alpha(self) -> Tuple[float, float]:
         base_temperature = float(self.design1_cfg["temperature"])
         eps = float(self.design1_cfg["eps"])
+        alpha_schedule = str(self.design1_cfg.get("alpha_schedule", "exp")).strip().lower()
+        alpha_tanh_beta = float(self.design1_cfg.get("alpha_tanh_beta", 3.0))
+        if alpha_tanh_beta <= 0.0:
+            alpha_tanh_beta = 3.0
 
         # For temperature <= 1, constraints are fully on from the start.
         if base_temperature <= 1.0:
@@ -157,8 +240,22 @@ class HCASTModel(nn.Module):
         progress = float(self._current_epoch) / float(max(self._train_epochs - 1, 1))
         progress = min(max(progress, 0.0), 1.0)
 
-        temperature = base_temperature ** (1.0 - progress)
-        alpha = (base_temperature - temperature) / max(base_temperature - 1.0, eps)
+        if alpha_schedule == "tanh":
+            # Centered tanh sigmoid on progress in [0, 1]:
+            # alpha(0)=0, alpha(0.5)=0.5, alpha(1)=1.
+            beta = max(alpha_tanh_beta, eps)
+            tanh_beta = math.tanh(beta)
+            denom = 2.0 * tanh_beta
+            if abs(denom) <= eps:
+                alpha = progress
+            else:
+                centered_progress = (2.0 * progress) - 1.0
+                alpha = (math.tanh(beta * centered_progress) + tanh_beta) / denom
+            temperature = base_temperature - (alpha * (base_temperature - 1.0))
+        else:
+            temperature = base_temperature ** (1.0 - progress)
+            alpha = (base_temperature - temperature) / max(base_temperature - 1.0, eps)
+
         alpha = min(max(alpha, 0.0), 1.0)
         return float(temperature), float(alpha)
 
@@ -218,13 +315,31 @@ class HCASTModel(nn.Module):
 
         # Upstream order is fine->coarse; unified API is coarse->fine.
         logits_per_level = list(reversed(list(raw)))
+        gated_logits_per_level = None
+        soft_topdown_priors_per_level = None
+        soft_topdown_penalties = None
+        soft_topdown_diagnostics = None
+        logits_for_scores = logits_per_level
+
+        if self._soft_topdown_enabled():
+            soft_topdown_output = self.soft_topdown_plugin(logits_per_level)
+            gated_logits_per_level = soft_topdown_output.get("gated_logits_per_level")
+            soft_topdown_priors_per_level = soft_topdown_output.get("soft_topdown_priors_per_level")
+            soft_topdown_penalties = soft_topdown_output.get("soft_topdown_penalties")
+            soft_topdown_diagnostics = soft_topdown_output.get("soft_topdown_diagnostics")
+            if (
+                bool(self.soft_topdown_cfg.get("use_gated_logits", True))
+                and isinstance(gated_logits_per_level, list)
+                and len(gated_logits_per_level) == len(logits_per_level)
+            ):
+                logits_for_scores = gated_logits_per_level
+
         effective_probs_per_level = None
         design1_diagnostics = None
         if self._design1_enabled():
-            probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
+            probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_for_scores]
             temperature, alpha = self._design1_temperature_and_alpha()
             eps = float(self.design1_cfg["eps"])
-
             if alpha <= eps:
                 # Start without any projection effect.
                 effective_probs_per_level = probs_per_level
@@ -254,9 +369,21 @@ class HCASTModel(nn.Module):
                     diag[f"proj_min_level_{level}"] = float(probs.min().item())
                 diag["proj_has_negative"] = has_negative
                 design1_diagnostics = diag
+        elif (
+            self._soft_topdown_enabled()
+            and bool(self.soft_topdown_cfg.get("use_gated_logits", True))
+            and isinstance(logits_for_scores, list)
+            and len(logits_for_scores) == len(logits_per_level)
+        ):
+            # Reuse existing "effective_probs_per_level" convention as final model scores.
+            effective_probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_for_scores]
 
         return {
             "logits_per_level": logits_per_level,
             "effective_probs_per_level": effective_probs_per_level,
             "design1_diagnostics": design1_diagnostics,
+            "gated_logits_per_level": gated_logits_per_level,
+            "soft_topdown_priors_per_level": soft_topdown_priors_per_level,
+            "soft_topdown_penalties": soft_topdown_penalties,
+            "soft_topdown_diagnostics": soft_topdown_diagnostics,
         }

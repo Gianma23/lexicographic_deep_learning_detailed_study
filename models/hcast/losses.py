@@ -177,6 +177,22 @@ def compute_loss(
 ]:
     loss_cfg = cfg.model.loss
     logits_per_level = output["logits_per_level"]
+    soft_topdown_cfg = cfg.model.get("soft_topdown", {})
+    soft_topdown_enabled = bool(soft_topdown_cfg.get("enabled", False))
+
+    gated_logits_per_level = output.get("gated_logits_per_level")
+    has_gated_logits = (
+        isinstance(gated_logits_per_level, list)
+        and len(gated_logits_per_level) == len(logits_per_level)
+    )
+    if gated_logits_per_level is not None and not has_gated_logits:
+        raise ValueError(
+            "`gated_logits_per_level` must be either None or a list aligned with `logits_per_level`."
+        )
+
+    use_gated_logits = soft_topdown_enabled and bool(soft_topdown_cfg.get("use_gated_logits", True)) and has_gated_logits
+    logits_for_task = gated_logits_per_level if use_gated_logits else logits_per_level
+
     effective_probs_per_level = output.get("effective_probs_per_level")
     has_effective_probs = (
         isinstance(effective_probs_per_level, list)
@@ -187,7 +203,7 @@ def compute_loss(
             "`effective_probs_per_level` must be either None or a list aligned with `logits_per_level`."
         )
 
-    outputs_for_targets = effective_probs_per_level if has_effective_probs else logits_per_level
+    outputs_for_targets = effective_probs_per_level if has_effective_probs else logits_for_task
 
     target_probs_per_level = _soft_targets_from_input(outputs_for_targets, targets)
     hard_targets = _hard_targets_from_input(targets, num_levels=len(logits_per_level))
@@ -234,13 +250,13 @@ def compute_loss(
             soft_criterion = SoftTargetCrossEntropy()
             level_losses = [
                 soft_criterion(logits, target_probs_per_level[level])
-                for level, logits in enumerate(logits_per_level)
+                for level, logits in enumerate(logits_for_task)
             ]
         else:
             hard_criterion = _hard_criterion_from_cfg(cfg)
             level_losses = [
                 hard_criterion(logits, hard_targets[:, level])
-                for level, logits in enumerate(logits_per_level)
+                for level, logits in enumerate(logits_for_task)
             ]
 
     level_weight_cfg = loss_cfg.get("level_weighting", {})
@@ -286,7 +302,7 @@ def compute_loss(
             )
         else:
             gk_loss = _global_kl_loss(
-                logits_per_level,
+                logits_for_task,
                 hard_targets=hard_targets,
                 target_probs_per_level=target_probs_per_level,
                 outputs_are_log_probs=False,
@@ -295,18 +311,64 @@ def compute_loss(
     else:
         gk_loss = torch.zeros((), device=total.device)
 
+    soft_topdown_kl = torch.zeros((), device=total.device)
+    soft_topdown_penalties = output.get("soft_topdown_penalties")
+    soft_topdown_penalty_by_level: Dict[int, float] = {}
+    if soft_topdown_enabled:
+        if not isinstance(soft_topdown_penalties, (list, tuple)):
+            raise ValueError(
+                "cfg.model.soft_topdown.enabled=true requires `output['soft_topdown_penalties']` "
+                "as a list aligned with hierarchy levels."
+            )
+        if len(soft_topdown_penalties) != len(logits_per_level):
+            raise ValueError(
+                "`soft_topdown_penalties` must be aligned with `logits_per_level` "
+                f"(expected {len(logits_per_level)}, got {len(soft_topdown_penalties)})."
+            )
+
+        penalty_terms: List[torch.Tensor] = []
+        for level, penalty in enumerate(soft_topdown_penalties):
+            if level == 0:
+                continue
+            if isinstance(penalty, torch.Tensor):
+                penalty_tensor = penalty
+            else:
+                penalty_tensor = torch.tensor(
+                    float(penalty),
+                    device=total.device,
+                    dtype=total.dtype,
+                )
+            if penalty_tensor.ndim != 0:
+                penalty_tensor = penalty_tensor.mean()
+            penalty_tensor = penalty_tensor.to(device=total.device, dtype=total.dtype)
+            penalty_terms.append(penalty_tensor)
+            soft_topdown_penalty_by_level[level] = float(penalty_tensor.detach().item())
+
+        if penalty_terms:
+            soft_topdown_kl = torch.stack(penalty_terms).sum()
+
+        soft_topdown_w = float(soft_topdown_cfg.get("kl_weight", 0.0))
+        total = total + (soft_topdown_w * soft_topdown_kl)
+    else:
+        soft_topdown_w = 0.0
+
     metrics = {
         "total": float(total.detach().item()),
         "level_ce": float(ce_loss.detach().item()),
         "gk_loss": float(gk_loss.detach().item()),
+        "soft_topdown_kl": float(soft_topdown_kl.detach().item()),
+        "soft_topdown_kl_weight": float(soft_topdown_w),
     }
     for level, level_loss in enumerate(level_losses):
         metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
         metrics[f"loss_weight_level_{level}"] = float(level_weights[level])
+    for level, value in soft_topdown_penalty_by_level.items():
+        metrics[f"soft_topdown_penalty_level_{level}"] = float(value)
     if not return_aux:
         return total, metrics
 
     aux_payload: Dict[str, Any] = {
         "level_losses": list(level_losses),
+        "soft_topdown_penalties": soft_topdown_penalties,
     }
     return total, metrics, aux_payload

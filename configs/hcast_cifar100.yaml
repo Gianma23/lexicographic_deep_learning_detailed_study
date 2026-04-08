@@ -49,8 +49,8 @@ dataset:
       crop_ratio: 0.875
       interpolation: bicubic
     # H-CAST-style MixUp/CutMix defaults.
-    mixup: 0.8
-    cutmix: 1.0
+    mixup: 0.2
+    cutmix: 0.2
     cutmix_minmax: null
     mixup_prob: 1.0
     mixup_switch_prob: 0.5
@@ -76,7 +76,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: ./outputs/hcast_cifar100
+  output_dir: /scratch/g.saggini1/outputs/hcast_cifar100_0.2mix
   smoothing: 0.1
 
 optim:

@@ -1,24 +1,16 @@
 model:
-  name: hcast
-  variant: cast_small
-  drop: 0.0
-  drop_path: 0.1
-  # Official H-CAST uses ImageNet-pretrained CAST for CUB finetuning.
-  finetune: https://huggingface.co/twke/CAST/blob/main/snapshots/deit/imagenet1k/cast_small/best_checkpoint.pth
-  segments:
-    mode: seeds
-    # for seeds mode
-    num_superpixels: 196
-    num_levels: 1
-    prior: 2
-    histogram_bins: 5
-    double_step: false
-    num_iterations: 15
-    # for grid mode
-    patch_size: 8
-  loss:
-    globalkl: true
-    gk_weight: 0.5
+  name: lhdnn
+  variant: large
+  projection:
+    enabled: true
+    eps: 1.0e-6
+    use_relu_derivative: true
+  advantage:
+    # Direct from LH-DNN paper topology design.
+    enabled: true
+  custom:
+    channels: [64, 128, 256]
+    shared_dim: 256
 
 dataset:
   name: cub-200-2011
@@ -29,6 +21,7 @@ dataset:
   std: [0.229, 0.224, 0.225]
   levels: [order, family, species]
   download: false
+  # Keep repo workflow (not paper-exact protocol) for best-checkpoint selection.
   val_split_ratio: 0.2
   split_seed: null
   transforms:
@@ -62,46 +55,43 @@ dataset:
     test: test.json
 
 dataloader:
-  batch_size: 256
-  # Upstream CUB recipe uses --num_workers 8.
+  # Kept aligned with LH-DNN paper training setup.
+  batch_size: 128
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
 
 train:
-  epochs: 100
-  # Upstream default seed in main_suppix_hier.py.
+  # Extrapolation choice for CUB: short LH-DNN horizon, consistent with paper style.
+  epochs: 20
   seed: 0
   device: cuda
   amp: true
-  scale_lr: true
-  scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hcast_cub200
-  smoothing: 0.1
+  output_dir: /scratch/g.saggini1/outputs/lhdnn_cub200
+  smoothing: 0.0
 
 optim:
-  name: adamw
-  # Upstream base LR; effective LR is scaled in train when train.scale_lr=true.
-  lr: 0.0005
-  weight_decay: 0.05
+  # Inherited training family from LH-DNN paper (SGD + momentum), extrapolated to CUB.
+  name: sgd
+  lr: 0.001
+  weight_decay: 0.0005
   momentum: 0.9
-  opt_eps: 1.0e-8
-  opt_betas: null
 
 scheduler:
-  name: cosine
-  warmup_lr: 0.000001
-  min_lr: 0.00001
+  # Extrapolation for CUB: same two-stage style used in paper-reported CIFAR runs.
+  name: step
+  warmup_lr: 0.001
+  min_lr: 0.0002
   noise: null
   noise_pct: 0.67
   noise_std: 1.0
   noise_seed: 42
-  decay_epochs: 30
-  warmup_epochs: 5
-  cooldown_epochs: 10
+  decay_epochs: 11
+  warmup_epochs: 0
+  cooldown_epochs: 0
   patience_epochs: 10
-  decay_rate: 0.1
+  decay_rate: 0.2
 
 runtime:
   deterministic: true

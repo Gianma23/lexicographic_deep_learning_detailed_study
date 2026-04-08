@@ -145,7 +145,7 @@ class HierarchicalAffineProjector(nn.Module):
         parent_of_child: torch.Tensor,
     ) -> torch.Tensor:
         """Map unconstrained child scores to positive probabilities that sum to parent mass."""
-        bsz, num_children = child_scores.shape
+        bsz, _ = child_scores.shape
         num_parents = int(parent_mass.size(-1))
         idx = parent_of_child.to(device=child_scores.device)
         idx_batch = idx.unsqueeze(0).expand(bsz, -1)

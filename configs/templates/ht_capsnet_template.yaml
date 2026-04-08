@@ -36,6 +36,5 @@ model:
     lambda_downweight: 0.5         # Weight for non-target term in margin loss
 
     # Per-level loss weighting
-    weight_mode: dynamic           # dynamic | static (otherwise uses explicit level_weights if provided)
+    weight_mode: dynamic           # dynamic | static | none
     dynamic_weight: 0.0            # Decay factor for dynamic level weighting formula
-    # level_weights: [1.0, 1.0, 1.0] # Optional explicit per-level weights (length = hierarchy depth)

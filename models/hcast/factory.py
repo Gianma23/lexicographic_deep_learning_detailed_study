@@ -8,6 +8,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
     dataset_std = list(cfg.dataset.get("std", [0.229, 0.224, 0.225]))
     segment_cfg = cfg.model.get("segments", {})
     design1_cfg = cfg.model.get("design1", {})
+    soft_topdown_cfg = cfg.model.get("soft_topdown", {})
     model_drop = float(cfg.model.get("drop", 0.0))
     model_drop_path = float(cfg.model.get("drop_path", 0.1))
     return HCASTModel(
@@ -34,5 +35,6 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         },
         taxonomy=taxonomy,
         design1_cfg=design1_cfg,
+        soft_topdown_cfg=soft_topdown_cfg,
         train_epochs=int(cfg.train.get("epochs", 1)),
     )

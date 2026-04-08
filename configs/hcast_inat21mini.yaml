@@ -76,7 +76,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: ./outputs/hcast_inat21mini
+  output_dir: /scratch/g.saggini1/outputs/hcast_inat21mini
   smoothing: 0.1
 
 optim:

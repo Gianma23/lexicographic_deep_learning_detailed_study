@@ -35,6 +35,8 @@ model:
     temperature: 20.0              # Base projection temperature (> 0 when enabled)
     eps: 1.0e-12                   # Numerical stability epsilon (auto-clamped to > 0)
     stabilize_simplex: true        # Stabilize simplex operations in projector
+    alpha_schedule: exp            # exp | tanh
+    alpha_tanh_beta: 3.0           # Steepness for centered tanh alpha schedule (slow-fast-slow), used when alpha_schedule=tanh
 
   loss:
     globalkl: true                 # Enable global KL regularization term

@@ -1,11 +1,13 @@
 model:
   name: lhdnn
-  variant: small
+  # Direct from LH-DNN paper (arXiv:2409.16956): s-LH-DNN on CIFAR-100.
+  variant: large
   projection:
     enabled: true
     eps: 1.0e-6
     use_relu_derivative: true
   advantage:
+    # Direct from LH-DNN paper: use advantage topology.
     enabled: true
   custom:
     channels: [64, 128, 256]
@@ -21,22 +23,27 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
   download: true
+  # Keep repo workflow (not paper-exact protocol) for best-checkpoint selection.
   val_split_ratio: 0.2
   split_seed: null
   transforms:
-    use_timm: false
+    use_timm: true
     normalization: torchvision
-    manual:
-      crop_mode: random_crop
-      random_crop_padding: 4
-      random_horizontal_flip_prob: 0.5
-      interpolation: bicubic
-      random_resized_crop_scale: [0.08, 1.0]
-      random_resized_crop_ratio: [0.75, 1.3333333333]
+    timm:
+      color_jitter: 0.3
+      auto_augment: rand-m9-mstd0.5-inc1
+      train_interpolation: bicubic
+      random_erase:
+        prob: 0.25
+        mode: pixel
+        count: 1
+      # For image_size <= 32, timm train crop is replaced with RandomCrop(image_size, padding=4).
+      small_image_random_crop_padding: 4
     eval:
       resize_mode: auto
       crop_ratio: 0.875
       interpolation: bicubic
+    # H-CAST-style MixUp/CutMix defaults.
     mixup: 0.8
     cutmix: 1.0
     cutmix_minmax: null
@@ -50,28 +57,45 @@ dataset:
     test: test.json
 
 dataloader:
+  # Direct from LH-DNN paper experiments section.
   batch_size: 128
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
 
 train:
-  epochs: 100
+  # Direct from LH-DNN paper for s-LH-DNN on CIFAR-100.
+  epochs: 40
   seed: 0
   device: cuda
   amp: true
   resume: ""
-  output_dir: ./outputs/lhdnn_cifar100_small
-  smoothing: 0.1
+  output_dir: /scratch/g.saggini1/outputs/lhdnn_cifar100
+  # Paper-faithful default CE behavior (label smoothing not specified in paper).
+  smoothing: 0.0
 
 optim:
+  # Inherited from B-CNN reference setup used by LH-DNN paper.
   name: sgd
   lr: 0.001
   weight_decay: 0.0005
   momentum: 0.9
 
 scheduler:
-  name: cosine
+  # Direct from LH-DNN paper text + inherited B-CNN schedule style:
+  # CIFAR-100 LH-DNN uses 0.001 then 0.0002, switched at epoch 11.
+  name: step
+  warmup_lr: 0.001
+  min_lr: 0.0002
+  noise: null
+  noise_pct: 0.67
+  noise_std: 1.0
+  noise_seed: 42
+  decay_epochs: 11
+  warmup_epochs: 0
+  cooldown_epochs: 0
+  patience_epochs: 10
+  decay_rate: 0.2
 
 runtime:
   deterministic: true
