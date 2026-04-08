@@ -179,6 +179,16 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
             raise ValueError("optim.opt_betas must be null or a list/tuple with two floats.")
         opt_betas = (float(betas[0]), float(betas[1]))
 
+    raw_lte_eps = cfg.optim.get("lte_eps", None)
+    lte_eps = None
+    if raw_lte_eps is not None:
+        if isinstance(raw_lte_eps, str):
+            raise ValueError("optim.lte_eps must be null or a list/tuple of floats.")
+        try:
+            lte_eps = [float(v) for v in list(raw_lte_eps)]
+        except TypeError as exc:
+            raise ValueError("optim.lte_eps must be null or a list/tuple of floats.") from exc
+
     if name == "adam":
         kwargs = {"lr": lr, "weight_decay": wd}
         if opt_eps is not None:
@@ -193,6 +203,26 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
         if opt_betas is not None:
             kwargs["betas"] = opt_betas
         return torch.optim.AdamW(model.parameters(), **kwargs)
+    if name in {"lte_adam", "lteadam", "lte_adamw", "lteadamw"}:
+        from .lte_adam import LTEAdam, LTEAdamW
+
+        kwargs = {
+            "lr": lr,
+            "weight_decay": wd,
+            "eps_adam": float(opt_eps) if opt_eps is not None else 1e-8,
+            "betas": opt_betas if opt_betas is not None else (0.9, 0.999),
+            "lte_eps": lte_eps if lte_eps is not None else [],
+            "beta_backtrack": float(cfg.optim.get("beta_backtrack", 0.5)),
+            "max_backtracks": int(cfg.optim.get("max_backtracks", 5)),
+            "reject_if_inadmissible": bool(cfg.optim.get("reject_if_inadmissible", True)),
+            "fallback_small_step": bool(cfg.optim.get("fallback_small_step", False)),
+        }
+        raw_fallback_scale = cfg.optim.get("fallback_step_scale", None)
+        kwargs["fallback_step_scale"] = (
+            None if raw_fallback_scale is None else float(raw_fallback_scale)
+        )
+        optimizer_cls = LTEAdamW if name in {"lte_adamw", "lteadamw"} else LTEAdam
+        return optimizer_cls(model.parameters(), **kwargs)
     if name == "sgd":
         return torch.optim.SGD(model.parameters(), lr=lr, weight_decay=wd, momentum=momentum)
 

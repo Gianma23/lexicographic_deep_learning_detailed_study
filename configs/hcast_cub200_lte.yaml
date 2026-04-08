@@ -1,0 +1,114 @@
+model:
+  name: hcast
+  variant: cast_small
+  drop: 0.0
+  drop_path: 0.1
+  # Official H-CAST uses ImageNet-pretrained CAST for CUB finetuning.
+  finetune: https://huggingface.co/twke/CAST/blob/main/snapshots/deit/imagenet1k/cast_small/best_checkpoint.pth
+  segments:
+    mode: seeds
+    # for seeds mode
+    num_superpixels: 196
+    num_levels: 1
+    prior: 2
+    histogram_bins: 5
+    double_step: false
+    num_iterations: 15
+    # for grid mode
+    patch_size: 8
+  loss:
+    globalkl: true
+    gk_weight: 0.5
+
+dataset:
+  name: cub-200-2011
+  root: /scratch/g.saggini1/datasets/CUB_200_2011
+  hierarchy_depth: 3
+  image_size: 224
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+  levels: [order, family, species]
+  download: false
+  val_split_ratio: 0.2
+  split_seed: null
+  transforms:
+    use_timm: true
+    normalization: torchvision
+    timm:
+      color_jitter: 0.3
+      auto_augment: rand-m9-mstd0.5-inc1
+      train_interpolation: bicubic
+      random_erase:
+        prob: 0.25
+        mode: pixel
+        count: 1
+      # For image_size <= 32, timm train crop is replaced with RandomCrop(image_size, padding=4).
+      small_image_random_crop_padding: 4
+    eval:
+      resize_mode: auto
+      crop_ratio: 0.875
+      interpolation: bicubic
+    # H-CAST-style MixUp/CutMix defaults.
+    mixup: 0.8
+    cutmix: 1.0
+    cutmix_minmax: null
+    mixup_prob: 1.0
+    mixup_switch_prob: 0.5
+    mixup_mode: batch
+
+  annotations:
+    train: train.json
+    val: val.json
+    test: test.json
+
+dataloader:
+  batch_size: 256
+  # Upstream CUB recipe uses --num_workers 8.
+  num_workers: 8
+  pin_memory: true
+  windows_spawn_safe: true
+
+train:
+  epochs: 100
+  # Upstream default seed in main_suppix_hier.py.
+  seed: 0
+  device: cuda
+  amp: true
+  scale_lr: true
+  scale_lr_reference_batch_size: 512
+  resume: ""
+  output_dir: ./outputs/hcast_cub200_lteadamw
+  smoothing: 0.1
+
+optim:
+  name: lte_adamw
+  # Base LR; effective LR is scaled in train when train.scale_lr=true.
+  lr: 0.0005
+  weight_decay: 0.05
+  momentum: 0.9
+  opt_eps: 1.0e-8
+  opt_betas: [0.9, 0.999]
+  # For hierarchy depth L=3, lte_eps must have L-1=2 values.
+  lte_eps: [1.0e-4, 1.0e-4]
+  beta_backtrack: 0.5
+  max_backtracks: 8
+  reject_if_inadmissible: true
+  fallback_small_step: false
+  fallback_step_scale: null
+
+scheduler:
+  name: cosine
+  warmup_lr: 0.000001
+  min_lr: 0.00001
+  noise: null
+  noise_pct: 0.67
+  noise_std: 1.0
+  noise_seed: 42
+  decay_epochs: 30
+  warmup_epochs: 5
+  cooldown_epochs: 10
+  patience_epochs: 10
+  decay_rate: 0.1
+
+runtime:
+  deterministic: true
