@@ -5,21 +5,6 @@ import torch
 import torch.nn as nn
 
 
-def _parse_positive_int_list(name: str, value: Any) -> List[int]:
-    if not isinstance(value, (list, tuple)) or not value:
-        raise ValueError(f"`{name}` must be a non-empty list of integers.")
-    out: List[int] = []
-    for idx, raw in enumerate(value):
-        try:
-            parsed = int(raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"`{name}[{idx}]` must be an integer.") from exc
-        if parsed <= 0:
-            raise ValueError(f"`{name}[{idx}]` must be > 0, got {parsed}.")
-        out.append(parsed)
-    return out
-
-
 def _normalize_parent_of(taxonomy: Dict[str, Any]) -> Dict[int, Dict[int, int]]:
     if not taxonomy or "parent_of" not in taxonomy:
         raise ValueError("Taxonomy with `parent_of` mappings is required for LH-DNN advantage topology.")
@@ -85,10 +70,10 @@ class _ConvStage(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=True),
+            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),
@@ -99,22 +84,17 @@ class _ConvStage(nn.Module):
 
 
 class LHDNNModel(nn.Module):
-    """Lexicographic Hybrid DNN with projection blocks and optional advantage topology."""
+    """Paper-aligned LH-DNN with fixed large topology and always-on projection/advantage paths."""
 
-    PRESETS = {
-        "small": {"channels": [64, 128, 256], "shared_dim": 256},
-        "large": {"channels": [64, 128, 256, 512], "shared_dim": 512},
-    }
+    LARGE_CHANNELS = [64, 128, 256, 512]
+    SHARED_DIM = 512
 
     def __init__(
         self,
         num_classes_per_level: List[int],
         taxonomy: Optional[Dict[str, Any]] = None,
         image_size: int = 32,
-        variant: str = "small",
-        custom_cfg: Optional[Dict[str, Any]] = None,
         projection_cfg: Optional[Dict[str, Any]] = None,
-        advantage_cfg: Optional[Dict[str, Any]] = None,
         in_channels: int = 3,
     ):
         super().__init__()
@@ -127,36 +107,27 @@ class LHDNNModel(nn.Module):
                 f"All hierarchy class counts must be > 0, got {self.num_classes_per_level}."
             )
 
-        custom_cfg = custom_cfg or {}
+        if taxonomy is None:
+            raise ValueError(
+                "LH-DNN advantage topology is always enabled and requires taxonomy. "
+                "Provide dataset taxonomy with parent mappings."
+            )
+
         projection_cfg = projection_cfg or {}
-        advantage_cfg = advantage_cfg or {}
-
-        variant_normalized = str(variant).strip().lower()
-        if variant_normalized in self.PRESETS:
-            channels = list(self.PRESETS[variant_normalized]["channels"])
-            shared_dim = int(self.PRESETS[variant_normalized]["shared_dim"])
-        elif variant_normalized == "custom":
-            channels = _parse_positive_int_list("model.custom.channels", custom_cfg.get("channels", []))
-            shared_dim = int(custom_cfg.get("shared_dim", 0))
-            if shared_dim <= 0:
-                raise ValueError("`model.custom.shared_dim` must be > 0 for variant='custom'.")
-        else:
-            raise ValueError("Unsupported LH-DNN variant. Expected one of: small, large, custom.")
-
-        self.variant = variant_normalized
-        self.channels = channels
-        self.shared_dim = int(shared_dim)
+        self.channels = list(self.LARGE_CHANNELS)
+        self.shared_dim = int(self.SHARED_DIM)
         self.image_size = int(image_size)
         if self.image_size <= 0:
             raise ValueError("`image_size` must be > 0.")
 
-        self.projection_enabled = bool(projection_cfg.get("enabled", True))
         self.projection_eps = float(projection_cfg.get("eps", 1e-6))
         if self.projection_eps <= 0.0:
             raise ValueError("`model.projection.eps` must be > 0.")
-        self.use_relu_derivative = bool(projection_cfg.get("use_relu_derivative", True))
 
-        self.advantage_enabled = bool(advantage_cfg.get("enabled", True))
+        # Exposed for parity checks and clarity.
+        self.projection_enabled = True
+        self.advantage_enabled = True
+        self.use_relu_derivative = True
 
         self.stages = nn.ModuleList()
         current_in = int(in_channels)
@@ -171,31 +142,24 @@ class LHDNNModel(nn.Module):
             [nn.Linear(self.shared_dim, int(classes)) for classes in self.num_classes_per_level]
         )
 
-        if self.projection_enabled:
-            cumulative = 0
-            for level in range(1, self.depth):
-                cumulative += int(self.num_classes_per_level[level - 1])
-                if self.shared_dim <= cumulative:
-                    raise ValueError(
-                        "Projection non-triviality condition violated: "
-                        f"shared_dim ({self.shared_dim}) must be > sum(classes[:{level}]) ({cumulative})."
-                    )
-
-        self.parent_index_buffers: List[Optional[str]] = [None]
-        if self.advantage_enabled:
-            if taxonomy is None:
+        cumulative = 0
+        for level in range(1, self.depth):
+            cumulative += int(self.num_classes_per_level[level - 1])
+            if self.shared_dim <= cumulative:
                 raise ValueError(
-                    "LH-DNN advantage topology is enabled, but taxonomy is missing. "
-                    "Provide dataset taxonomy or set `model.advantage.enabled=false`."
+                    "Projection non-triviality condition violated: "
+                    f"shared_dim ({self.shared_dim}) must be > sum(classes[:{level}]) ({cumulative})."
                 )
-            parent_idx_per_level = _build_parent_index_per_level(
-                num_classes_per_level=self.num_classes_per_level,
-                taxonomy=taxonomy,
-            )
-            for level in range(1, self.depth):
-                buffer_name = f"parent_index_level_{level}"
-                self.register_buffer(buffer_name, parent_idx_per_level[level], persistent=False)
-                self.parent_index_buffers.append(buffer_name)
+
+        parent_idx_per_level = _build_parent_index_per_level(
+            num_classes_per_level=self.num_classes_per_level,
+            taxonomy=taxonomy,
+        )
+        self.parent_index_buffers: List[Optional[str]] = [None]
+        for level in range(1, self.depth):
+            buffer_name = f"parent_index_level_{level}"
+            self.register_buffer(buffer_name, parent_idx_per_level[level], persistent=False)
+            self.parent_index_buffers.append(buffer_name)
 
     def _infer_flattened_dim(self, image_size: int, in_channels: int) -> int:
         dummy = torch.zeros(1, int(in_channels), int(image_size), int(image_size))
@@ -260,10 +224,7 @@ class LHDNNModel(nn.Module):
             k = k + self.shared_linear.bias
         z = self.shared_relu(k)
 
-        if self.use_relu_derivative:
-            rho_prime = (k > 0).to(dtype=z.dtype)
-        else:
-            rho_prime = torch.ones_like(z)
+        rho_prime = (k > 0).to(dtype=z.dtype)
 
         logits_per_level: List[torch.Tensor] = []
         projection_debug: List[Optional[Dict[str, torch.Tensor]]] = []
@@ -278,7 +239,7 @@ class LHDNNModel(nn.Module):
             rho_work = rho_prime.to(dtype=compute_dtype)
 
             for level, head in enumerate(self.heads):
-                if self.projection_enabled and level > 0:
+                if level > 0:
                     prev_weights = torch.cat(
                         [self.heads[j].weight.detach().to(dtype=compute_dtype) for j in range(level)],
                         dim=0,
@@ -307,7 +268,7 @@ class LHDNNModel(nn.Module):
                 logits_level = torch.matmul(head_input, head.weight.transpose(0, 1).contiguous())
                 if head.bias is not None:
                     logits_level = logits_level + head.bias
-                if self.advantage_enabled and level > 0:
+                if level > 0:
                     baseline = self._parent_baseline(level=level, prev_logits=logits_per_level[level - 1].detach())
                     logits_level = logits_level + baseline
                 logits_per_level.append(logits_level)

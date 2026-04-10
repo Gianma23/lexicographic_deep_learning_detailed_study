@@ -1,16 +1,8 @@
 model:
   name: lhdnn
-  variant: small
+  # Paper-aligned code path: fixed large LH-DNN topology.
   projection:
-    enabled: true
     eps: 1.0e-6
-    use_relu_derivative: true
-  advantage:
-    # Direct from LH-DNN paper topology design.
-    enabled: true
-  custom:
-    channels: [64, 128, 256]
-    shared_dim: 256
 
 dataset:
   name: fgvc-aircraft
@@ -41,12 +33,12 @@ dataset:
       resize_mode: auto
       crop_ratio: 0.875
       interpolation: bicubic
-    # H-CAST-style MixUp/CutMix defaults.
-    mixup: 0.8
-    cutmix: 1.0
+    # Extrapolated LH-DNN setup: no MixUp/CutMix.
+    mixup: 0.0
+    cutmix: 0.0
     cutmix_minmax: null
-    mixup_prob: 1.0
-    mixup_switch_prob: 0.5
+    mixup_prob: 0.0
+    mixup_switch_prob: 0.0
     mixup_mode: batch
 
   annotations:
@@ -68,7 +60,7 @@ train:
   device: cuda
   amp: true
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/lhdnn_aircraft_small
+  output_dir: /scratch/g.saggini1/outputs/lhdnn_aircraft
   smoothing: 0.0
 
 optim:
