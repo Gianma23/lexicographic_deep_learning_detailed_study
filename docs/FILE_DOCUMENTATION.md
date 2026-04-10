@@ -22,38 +22,38 @@ Scope notes:
 
 ## 2. Config Folder (`configs/`)
 
-### 2.1. `configs/hcast_cifar100.yaml`
+### 2.1. `configs/hcast/hcast_cifar100.yaml`
 - Purpose: H-CAST preset for CIFAR-100 hierarchy experiments.
 
-### 2.2. `configs/hcast_cub200.yaml`
+### 2.2. `configs/hcast/hcast_cub200.yaml`
 - Purpose: H-CAST preset for CUB-200 hierarchy experiments.
 
 
-### 2.3. `configs/hcast_aircraft.yaml`
+### 2.3. `configs/hcast/hcast_aircraft.yaml`
 - Purpose: H-CAST preset for FGVC-Aircraft hierarchy experiments.
 
-### 2.4. `configs/hcast_inat21mini.yaml`
+### 2.4. `configs/hcast/hcast_inat21mini.yaml`
 - Purpose: H-CAST preset for iNat21-mini hierarchy experiments.
 
-### 2.5. `configs/hcast_design1_cifar100.yaml`
+### 2.5. `configs/hcast/hcast_design1_cifar100.yaml`
 - Purpose: Alternate H-CAST CIFAR-100 preset using design-1 segmentation mode.
 
-### 2.6. `configs/capsnet_cifar100.yaml`
+### 2.6. `configs/capsnet/capsnet_cifar100.yaml`
 - Purpose: HT-CapsNet preset for CIFAR-100 hierarchy experiments.
 
-### 2.7. `configs/capsnet_cub200.yaml`
+### 2.7. `configs/capsnet/capsnet_cub200.yaml`
 - Purpose: HT-CapsNet preset for CUB-200 hierarchy experiments.
 
-### 2.8. `configs/capsnet_aircraft.yaml`
+### 2.8. `configs/capsnet/capsnet_aircraft.yaml`
 - Purpose: HT-CapsNet preset for FGVC-Aircraft hierarchy experiments.
 
-### 2.9. `configs/hrn_cifar100.yaml`
+### 2.9. `configs/hrn/hrn_cifar100.yaml`
 - Purpose: HRN preset for CIFAR-100 three-level hierarchy experiments.
 
-### 2.10. `configs/hrn_cub200.yaml`
+### 2.10. `configs/hrn/hrn_cub200.yaml`
 - Purpose: HRN preset for CUB-200 three-level hierarchy experiments.
 
-### 2.11. `configs/hrn_aircraft.yaml`
+### 2.11. `configs/hrn/hrn_aircraft.yaml`
 - Purpose: HRN preset for FGVC-Aircraft three-level hierarchy experiments.
 
 ### 2.12. `configs/templates/`

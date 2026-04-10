@@ -10,26 +10,26 @@ This repo unifies four hierarchical models behind one PyTorch training/eval pipe
 Single CLI entrypoint:
 
 ```bash
-python -m train.train --config configs/hcast_cub200.yaml
-python -m train.train --config configs/lhdnn_cifar100.yaml
-python -m train.train --config configs/capsnet_cub200.yaml
-python -m train.train --config configs/hrn_cub200.yaml
+python -m train.train --config configs/hcast/hcast_cub200.yaml
+python -m train.train --config configs/lhdnn/lhdnn_cifar100.yaml
+python -m train.train --config configs/capsnet/capsnet_cub200.yaml
+python -m train.train --config configs/hrn/hrn_cub200.yaml
 ```
 
 Dataset-ready configs:
 
 ```bash
-python -m train.train --config configs/hcast_cifar100.yaml
-python -m train.train --config configs/lhdnn_cifar100.yaml
-python -m train.train --config configs/hcast_cub200.yaml
-python -m train.train --config configs/hcast_aircraft.yaml
-python -m train.train --config configs/hcast_inat21mini.yaml
-python -m train.train --config configs/capsnet_cifar100.yaml
-python -m train.train --config configs/capsnet_cub200.yaml
-python -m train.train --config configs/capsnet_aircraft.yaml
-python -m train.train --config configs/hrn_cifar100.yaml
-python -m train.train --config configs/hrn_cub200.yaml
-python -m train.train --config configs/hrn_aircraft.yaml
+python -m train.train --config configs/hcast/hcast_cifar100.yaml
+python -m train.train --config configs/lhdnn/lhdnn_cifar100.yaml
+python -m train.train --config configs/hcast/hcast_cub200.yaml
+python -m train.train --config configs/hcast/hcast_aircraft.yaml
+python -m train.train --config configs/hcast/hcast_inat21mini.yaml
+python -m train.train --config configs/capsnet/capsnet_cifar100.yaml
+python -m train.train --config configs/capsnet/capsnet_cub200.yaml
+python -m train.train --config configs/capsnet/capsnet_aircraft.yaml
+python -m train.train --config configs/hrn/hrn_cifar100.yaml
+python -m train.train --config configs/hrn/hrn_cub200.yaml
+python -m train.train --config configs/hrn/hrn_aircraft.yaml
 ```
 ## Setup
 ```bash

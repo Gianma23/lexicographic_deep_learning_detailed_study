@@ -27,7 +27,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Optuna tuner for H-CAST soft-topdown (grid/TPE with optional halving-style pruning)."
     )
-    parser.add_argument("--config", type=str, default="configs/hcast_soft_topdown_cifar100.yaml")
+    parser.add_argument("--config", type=str, default="configs/hcast/hcast_soft_topdown_cifar100.yaml")
     parser.add_argument("--output-root", type=str, default="/scratch/g.saggini1/outputs")
     parser.add_argument("--study-tag", type=str, default=datetime.now().strftime("%Y%m%d_%H%M%S"))
     parser.add_argument("--study-name", type=str, default="")
@@ -45,6 +45,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--n-startup-trials", type=int, default=8)
 
     parser.add_argument("--samples", type=int, default=3)
+    parser.add_argument(
+        "--samples-kl",
+        type=int,
+        default=0,
+        help=(
+            "Number of grid samples for kl_weight. "
+            "If 0, inherits --samples unless auto-expanded in no-gated-logits mode."
+        ),
+    )
+    parser.add_argument(
+        "--samples-tau",
+        type=int,
+        default=0,
+        help=(
+            "Number of grid samples for tau. "
+            "If 0, inherits --samples unless auto-expanded in no-gated-logits mode."
+        ),
+    )
     parser.add_argument("--gate-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=[0.3, 2.0])
     parser.add_argument("--kl-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=[0.1, 1.0])
     parser.add_argument("--tau-range", type=float, nargs=2, metavar=("MIN", "MAX"), default=[0.0, 0.4])
@@ -71,11 +89,23 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--include-config-values", action="store_true")
     parser.add_argument("--no-include-config-values", dest="include_config_values", action="store_false")
+    parser.add_argument(
+        "--use-gated-logits",
+        dest="use_gated_logits",
+        action="store_true",
+        help="Force gated-logits mode on (includes gate_strength in Optuna search space).",
+    )
+    parser.add_argument(
+        "--no-use-gated-logits",
+        dest="use_gated_logits",
+        action="store_false",
+        help="Force gated-logits mode off (removes gate_strength from Optuna search space).",
+    )
 
     parser.add_argument("--factor", type=int, default=3)
     parser.add_argument("--min-epochs", type=int, default=10)
     parser.add_argument("--max-epochs", type=int, default=0)
-    parser.set_defaults(load_if_exists=True, include_config_values=True)
+    parser.set_defaults(load_if_exists=True, include_config_values=True, use_gated_logits=None)
     return parser.parse_args()
 
 
@@ -242,6 +272,23 @@ def _try_get_float(d: Dict[str, Any], key: str) -> Optional[float]:
     return value
 
 
+def _try_get_bool(d: Dict[str, Any], key: str) -> Optional[bool]:
+    if key not in d:
+        return None
+    raw = d.get(key)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)) and raw in (0, 1):
+        return bool(raw)
+    if isinstance(raw, str):
+        norm = raw.strip().lower()
+        if norm in {"1", "true", "yes", "y", "on"}:
+            return True
+        if norm in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
 def _resource_schedule(min_epochs: int, max_epochs: int, factor: int) -> List[int]:
     if min_epochs < 1:
         raise ValueError("min_epochs must be >= 1")
@@ -278,7 +325,8 @@ def _build_train_cmd(
     base_config: str,
     run_dir: Path,
     target_epochs: int,
-    gate_strength: float,
+    use_gated_logits: bool,
+    gate_strength: Optional[float],
     kl_weight: float,
     tau: float,
 ) -> List[str]:
@@ -293,12 +341,14 @@ def _build_train_cmd(
         "model.loss.globalkl=false",
         "model.soft_topdown.enabled=true",
         "model.soft_topdown.temperature=1.0",
+        f"model.soft_topdown.use_gated_logits={'true' if bool(use_gated_logits) else 'false'}",
         "model.soft_topdown.detach_upper_probs=false",
         "model.soft_topdown.eps=1.0e-12",
-        f"model.soft_topdown.gate_strength={gate_strength}",
         f"model.soft_topdown.kl_weight={kl_weight}",
         f"model.soft_topdown.tau={tau}",
     ]
+    if gate_strength is not None:
+        cmd.append(f"model.soft_topdown.gate_strength={gate_strength}")
     resume_ckpt = run_dir / "latest.pt"
     if resume_ckpt.exists():
         cmd.append(f"train.resume={resume_ckpt}")
@@ -313,6 +363,10 @@ def main() -> None:
 
     if args.samples < 1:
         raise SystemExit("--samples must be >= 1")
+    if int(args.samples_kl) < 0:
+        raise SystemExit("--samples-kl must be >= 0")
+    if int(args.samples_tau) < 0:
+        raise SystemExit("--samples-tau must be >= 0")
     if args.factor <= 1:
         raise SystemExit("--factor must be > 1")
     if args.min_epochs < 1:
@@ -325,43 +379,78 @@ def main() -> None:
 
     soft_topdown_cfg = ((cfg_blob.get("model") or {}).get("soft_topdown") or {})
     config_defaults = {
+        "use_gated_logits": _try_get_bool(soft_topdown_cfg, "use_gated_logits"),
         "gate_strength": _try_get_float(soft_topdown_cfg, "gate_strength"),
         "kl_weight": _try_get_float(soft_topdown_cfg, "kl_weight"),
         "tau": _try_get_float(soft_topdown_cfg, "tau"),
     }
 
+    config_use_gated_logits = config_defaults["use_gated_logits"]
+    if args.use_gated_logits is None:
+        use_gated_logits = bool(config_use_gated_logits) if config_use_gated_logits is not None else False
+    else:
+        use_gated_logits = bool(args.use_gated_logits)
+
+    gate_strength_fixed = (
+        float(config_defaults["gate_strength"]) if config_defaults["gate_strength"] is not None else 0.0
+    )
+
+    base_samples = int(args.samples)
+    kl_samples = int(args.samples_kl) if int(args.samples_kl) > 0 else base_samples
+    tau_samples = int(args.samples_tau) if int(args.samples_tau) > 0 else base_samples
+    auto_expanded_samples: Optional[int] = None
+    if not use_gated_logits:
+        # Keep a similar overall grid budget after removing gate_strength from the search space.
+        expanded_samples = max(base_samples, int(round(float(base_samples) ** 1.5)))
+        if int(args.samples_kl) == 0:
+            kl_samples = max(kl_samples, expanded_samples)
+        if int(args.samples_tau) == 0:
+            tau_samples = max(tau_samples, expanded_samples)
+        if int(args.samples_kl) == 0 or int(args.samples_tau) == 0:
+            auto_expanded_samples = expanded_samples
+
     gate_values: List[float]
     kl_values: List[float]
     tau_values: List[float]
-    if args.gate_values is not None:
-        gate_values = _sorted_unique_values(args.gate_values, "--gate-values")
+    if use_gated_logits:
+        if args.gate_values is not None:
+            gate_values = _sorted_unique_values(args.gate_values, "--gate-values")
+        else:
+            gate_values = _linspace_values(float(args.gate_range[0]), float(args.gate_range[1]), base_samples)
     else:
-        gate_values = _linspace_values(float(args.gate_range[0]), float(args.gate_range[1]), int(args.samples))
+        gate_values = []
     if args.kl_values is not None:
         kl_values = _sorted_unique_values(args.kl_values, "--kl-values")
     else:
-        kl_values = _linspace_values(float(args.kl_range[0]), float(args.kl_range[1]), int(args.samples))
+        kl_values = _linspace_values(float(args.kl_range[0]), float(args.kl_range[1]), int(kl_samples))
     if args.tau_values is not None:
         tau_values = _sorted_unique_values(args.tau_values, "--tau-values")
     else:
-        tau_values = _linspace_values(float(args.tau_range[0]), float(args.tau_range[1]), int(args.samples))
+        tau_values = _linspace_values(float(args.tau_range[0]), float(args.tau_range[1]), int(tau_samples))
 
     if bool(args.include_config_values):
-        if config_defaults["gate_strength"] is not None:
+        if use_gated_logits and config_defaults["gate_strength"] is not None:
             gate_values = _sorted_unique_values([*gate_values, config_defaults["gate_strength"]], "gate_strength values")
         if config_defaults["kl_weight"] is not None:
             kl_values = _sorted_unique_values([*kl_values, config_defaults["kl_weight"]], "kl_weight values")
         if config_defaults["tau"] is not None:
             tau_values = _sorted_unique_values([*tau_values, config_defaults["tau"]], "tau values")
 
-    sampled_values = {
-        "gate_strength": gate_values,
-        "kl_weight": kl_values,
-        "tau": tau_values,
-    }
-    grid_combinations = list(
-        itertools.product(sampled_values["gate_strength"], sampled_values["kl_weight"], sampled_values["tau"])
-    )
+    if use_gated_logits:
+        sampled_values = {
+            "gate_strength": gate_values,
+            "kl_weight": kl_values,
+            "tau": tau_values,
+        }
+        grid_combinations = list(
+            itertools.product(sampled_values["gate_strength"], sampled_values["kl_weight"], sampled_values["tau"])
+        )
+    else:
+        sampled_values = {
+            "kl_weight": kl_values,
+            "tau": tau_values,
+        }
+        grid_combinations = list(itertools.product(sampled_values["kl_weight"], sampled_values["tau"]))
     resource_schedule = _resource_schedule(int(args.min_epochs), int(max_epochs), int(args.factor))
 
     output_root = Path(args.output_root)
@@ -386,6 +475,20 @@ def main() -> None:
     if args.sampler == "grid":
         n_trials = min(n_trials, len(grid_combinations))
 
+    ranges_payload: Dict[str, List[float]] = {
+        "kl_weight": [float(args.kl_range[0]), float(args.kl_range[1])],
+        "tau": [float(args.tau_range[0]), float(args.tau_range[1])],
+    }
+    explicit_values_payload: Dict[str, Optional[List[float]]] = {
+        "kl_weight": _sorted_unique_values(args.kl_values, "--kl-values") if args.kl_values is not None else None,
+        "tau": _sorted_unique_values(args.tau_values, "--tau-values") if args.tau_values is not None else None,
+    }
+    if use_gated_logits:
+        ranges_payload["gate_strength"] = [float(args.gate_range[0]), float(args.gate_range[1])]
+        explicit_values_payload["gate_strength"] = (
+            _sorted_unique_values(args.gate_values, "--gate-values") if args.gate_values is not None else None
+        )
+
     space_payload = {
         "search_type": "optuna",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -398,21 +501,19 @@ def main() -> None:
         "seed": int(args.seed),
         "n_trials": int(n_trials),
         "timeout_sec": timeout_sec,
-        "ranges": {
-            "gate_strength": [float(args.gate_range[0]), float(args.gate_range[1])],
-            "kl_weight": [float(args.kl_range[0]), float(args.kl_range[1])],
-            "tau": [float(args.tau_range[0]), float(args.tau_range[1])],
-        },
-        "explicit_values_if_any": {
-            "gate_strength": _sorted_unique_values(args.gate_values, "--gate-values")
-            if args.gate_values is not None
-            else None,
-            "kl_weight": _sorted_unique_values(args.kl_values, "--kl-values") if args.kl_values is not None else None,
-            "tau": _sorted_unique_values(args.tau_values, "--tau-values") if args.tau_values is not None else None,
-        },
+        "use_gated_logits": bool(use_gated_logits),
+        "ranges": ranges_payload,
+        "explicit_values_if_any": explicit_values_payload,
         "include_config_values": bool(args.include_config_values),
         "config_soft_topdown_defaults": config_defaults,
+        "fixed_params_when_not_tuned": {"gate_strength": gate_strength_fixed} if not use_gated_logits else {},
         "samples_per_param_for_grid": int(args.samples),
+        "effective_samples_for_grid": {
+            "kl_weight": int(kl_samples),
+            "tau": int(tau_samples),
+            "gate_strength": int(base_samples) if use_gated_logits else None,
+            "auto_expanded_samples_in_nogated_mode": auto_expanded_samples,
+        },
         "sampled_values_for_grid": sampled_values,
         "grid_num_combinations": len(grid_combinations),
         "resource_schedule_epochs": resource_schedule,
@@ -426,17 +527,28 @@ def main() -> None:
     print(f"[optuna] study_name={study_name}")
     print(f"[optuna] storage={storage_url}")
     print(f"[optuna] sampler={args.sampler} pruner={args.pruner}")
+    print(f"[optuna] use_gated_logits={bool(use_gated_logits)}")
     print(f"[optuna] n_trials={n_trials} timeout_sec={timeout_sec}")
     print(f"[optuna] resource schedule (epochs)={resource_schedule}")
-    if args.sampler != "grid" and any(v is not None for v in [args.gate_values, args.kl_values, args.tau_values]):
+    explicit_values_args: List[Optional[Sequence[float]]] = [args.kl_values, args.tau_values]
+    if use_gated_logits:
+        explicit_values_args.append(args.gate_values)
+    if args.sampler != "grid" and any(v is not None for v in explicit_values_args):
         print("[optuna][warning] Explicit --*-values are ignored when sampler=tpe (TPE uses continuous ranges).")
+    if not use_gated_logits and args.gate_values is not None:
+        print("[optuna][warning] Ignoring --gate-values because gated logits are disabled.")
     if args.sampler == "grid" and args.pruner != "none":
         print(
             "[optuna][warning] Grid + pruning can drop late-improving configs before max_epochs. "
             "Use --pruner none for exhaustive grid evaluation."
         )
+    if auto_expanded_samples is not None:
+        print(
+            "[optuna] no-gated-logits auto-expansion: "
+            f"--samples {base_samples} -> kl/tau default samples {auto_expanded_samples}"
+        )
     print("[optuna] sampled values (grid baseline):")
-    for key in ["gate_strength", "kl_weight", "tau"]:
+    for key in sampled_values:
         print(f"  - {key}: {sampled_values[key]}")
     print(f"[optuna] wrote: {space_yaml}")
     print(f"[optuna] artifact dir: {artifact_dir}")
@@ -449,13 +561,7 @@ def main() -> None:
         raise SystemExit(f"Optuna is not installed. Install dependencies first. Import error: {_OPTUNA_IMPORT_ERROR}")
 
     if args.sampler == "grid":
-        sampler = optuna.samplers.GridSampler(
-            search_space={
-                "gate_strength": sampled_values["gate_strength"],
-                "kl_weight": sampled_values["kl_weight"],
-                "tau": sampled_values["tau"],
-            }
-        )
+        sampler = optuna.samplers.GridSampler(search_space=sampled_values)
     else:
         sampler = optuna.samplers.TPESampler(seed=int(args.seed), n_startup_trials=int(args.n_startup_trials))
 
@@ -489,13 +595,19 @@ def main() -> None:
 
     def objective(trial: "optuna.Trial") -> float:
         if args.sampler == "grid":
-            gate_strength = float(trial.suggest_categorical("gate_strength", sampled_values["gate_strength"]))
+            if use_gated_logits:
+                gate_strength = float(trial.suggest_categorical("gate_strength", sampled_values["gate_strength"]))
+            else:
+                gate_strength = gate_strength_fixed
             kl_weight = float(trial.suggest_categorical("kl_weight", sampled_values["kl_weight"]))
             tau = float(trial.suggest_categorical("tau", sampled_values["tau"]))
         else:
-            gate_strength = float(
-                trial.suggest_float("gate_strength", float(args.gate_range[0]), float(args.gate_range[1]))
-            )
+            if use_gated_logits:
+                gate_strength = float(
+                    trial.suggest_float("gate_strength", float(args.gate_range[0]), float(args.gate_range[1]))
+                )
+            else:
+                gate_strength = gate_strength_fixed
             kl_weight = float(trial.suggest_float("kl_weight", float(args.kl_range[0]), float(args.kl_range[1])))
             tau = float(trial.suggest_float("tau", float(args.tau_range[0]), float(args.tau_range[1])))
 
@@ -512,7 +624,8 @@ def main() -> None:
                 base_config=base_config,
                 run_dir=run_dir,
                 target_epochs=int(target_epochs),
-                gate_strength=gate_strength,
+                use_gated_logits=bool(use_gated_logits),
+                gate_strength=gate_strength if use_gated_logits else None,
                 kl_weight=kl_weight,
                 tau=tau,
             )
@@ -596,6 +709,12 @@ def main() -> None:
     for trial in study.trials:
         attrs = trial.user_attrs or {}
         value = trial.value if trial.value is not None else float("nan")
+        if "gate_strength" in trial.params:
+            gate_strength_value = float(trial.params["gate_strength"])
+        elif not use_gated_logits:
+            gate_strength_value = float(gate_strength_fixed)
+        else:
+            gate_strength_value = float("nan")
         row = {
             "trial_number": int(trial.number),
             "state": str(trial.state.name),
@@ -603,7 +722,7 @@ def main() -> None:
             "best_val_fpa_topdown": float(attrs.get("best_val_fpa_topdown", float("nan"))),
             "best_rank_score": float(attrs.get("best_rank_score", float("nan"))),
             "best_epoch": attrs.get("best_epoch"),
-            "gate_strength": float(trial.params.get("gate_strength", float("nan"))),
+            "gate_strength": gate_strength_value,
             "kl_weight": float(trial.params.get("kl_weight", float("nan"))),
             "tau": float(trial.params.get("tau", float("nan"))),
             "run_dir": str(attrs.get("run_dir", "")),
@@ -656,6 +775,7 @@ def main() -> None:
         "storage_url": storage_url,
         "sampler": args.sampler,
         "pruner": args.pruner,
+        "use_gated_logits": bool(use_gated_logits),
         "n_trials_requested": n_trials,
         "n_trials_total": len(rows),
         "n_trials_complete": sum(1 for row in rows if row["state"] == "COMPLETE"),

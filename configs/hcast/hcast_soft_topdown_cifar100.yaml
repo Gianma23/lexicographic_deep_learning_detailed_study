@@ -16,10 +16,19 @@ model:
     num_iterations: 15
     # for grid mode
     patch_size: 8
+  soft_topdown:
+    enabled: true
+    temperature: 1.0
+    gate_strength: 0.94
+    kl_weight: 0.95
+    tau: 0.3
+    use_gated_logits: true
+    detach_upper_probs: false
+    eps: 1.0e-12
   loss:
-    globalkl: true
+    globalkl: false
     gk_weight: 0.5
-    
+
 dataset:
   name: cifar-100
   root: /scratch/g.saggini1/datasets/cifar100
@@ -49,10 +58,10 @@ dataset:
       crop_ratio: 0.875
       interpolation: bicubic
     # H-CAST-style MixUp/CutMix defaults.
-    mixup: 0.2
-    cutmix: 0.2
+    mixup: 0.3
+    cutmix: 0.0
     cutmix_minmax: null
-    mixup_prob: 1.0
+    mixup_prob: 0.5
     mixup_switch_prob: 0.5
     mixup_mode: batch
 
@@ -76,7 +85,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hcast_cifar100_0.2mix
+  output_dir: /scratch/g.saggini1/outputs/hcast_soft_topdown_cifar100_0.2mixup
   smoothing: 0.1
 
 optim:
