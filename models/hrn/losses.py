@@ -156,7 +156,6 @@ def compute_loss(
     Tuple[torch.Tensor, Dict[str, float]],
     Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
 ]:
-    _ = cfg
     if isinstance(targets, dict) and targets.get("soft_targets_per_level") is not None:
         raise ValueError("HRN parity loss does not support mixup/cutmix soft targets. Disable mixup/cutmix for HRN.")
 
@@ -164,14 +163,18 @@ def compute_loss(
     if hard_targets.ndim != 2 or int(hard_targets.size(1)) != 3:
         raise ValueError(f"HRN expects hard targets of shape [B, 3], got {tuple(hard_targets.shape)}.")
 
+    logits_per_level = output.get("logits_per_level")
+    has_logits_per_level = isinstance(logits_per_level, list) and len(logits_per_level) == 3
+    if logits_per_level is not None and not has_logits_per_level:
+        raise ValueError("HRN output `logits_per_level` must be a 3-level list when provided.")
+
     tree_scores_per_level = output.get("tree_scores_per_level")
     if not isinstance(tree_scores_per_level, list) or len(tree_scores_per_level) != 3:
         raise ValueError("HRN output must provide `tree_scores_per_level` with 3 tensors.")
 
     species_ce_logits = output.get("species_ce_logits")
     if not isinstance(species_ce_logits, torch.Tensor):
-        logits_per_level = output.get("logits_per_level")
-        if not isinstance(logits_per_level, list) or len(logits_per_level) != 3:
+        if not has_logits_per_level:
             raise ValueError("HRN output must provide `species_ce_logits` or a 3-level `logits_per_level`.")
         species_ce_logits = logits_per_level[2]
 
@@ -197,7 +200,6 @@ def compute_loss(
         )
     else:
         ce_loss = hier_loss.new_zeros(())
-
     total = hier_loss + ce_loss
 
     metrics = {

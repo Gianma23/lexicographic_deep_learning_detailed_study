@@ -101,9 +101,9 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
     if tice_topdown is not None:
         metrics["tice_topdown"] = tice_topdown
 
-    design1_diagnostics = output.get("design1_diagnostics")
-    if isinstance(design1_diagnostics, dict):
-        for key, value in design1_diagnostics.items():
+    hcc_diagnostics = output.get("hcc_diagnostics")
+    if isinstance(hcc_diagnostics, dict):
+        for key, value in hcc_diagnostics.items():
             if isinstance(value, torch.Tensor):
                 if value.numel() == 1:
                     metrics[key] = float(value.detach().item())

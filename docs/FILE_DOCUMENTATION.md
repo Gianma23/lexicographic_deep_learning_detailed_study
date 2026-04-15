@@ -1,382 +1,142 @@
-# File Documentation
+# Repository Map
 
-This document gives a high-level map of the repository by folder. For Python modules, each section describes files plus top-level functions/classes (including important class methods), without going into low-level implementation details.
+This document is a concise map of the tracked repository files. It describes what each area is responsible for today and is intended to stay aligned with the current code, not to duplicate every internal method.
 
-Scope notes:
-- Includes source, configs, docs, and runtime artifact folders under the project root.
-- Excludes `.git/` internals and `__pycache__/` bytecode files.
+## Root
 
-## 1. Root Folder (`/`)
+- `README.md`: Project overview, setup, usage, datasets, metrics, and outputs.
+- `requirements.txt`: Python dependencies other than the user-installed `torch` and `torchvision`.
+- `TODO.md`: Local project notes.
 
-### 1.1. `.gitignore`
-- Purpose: Ignore Python caches, environments, editor state, and training artifacts.
+## Configs
 
-### 1.2. `README.md`
-- Purpose: Project overview, setup commands, unified CLI usage, and API conventions for datasets/models/metrics.
+All experiment configs follow the same top-level sections: `model`, `dataset`, `dataloader`, `train`, `optim`, `scheduler`, and `runtime`.
 
-### 1.3. `requirements.txt`
-- Purpose: Core dependency list used to run training and evaluation.
+### H-CAST presets
 
-### 1.4. `TODO.md`
-- Purpose: Local planning notes and pending tasks for the repository.
-
-## 2. Config Folder (`configs/`)
-
-### 2.1. `configs/hcast/hcast_cifar100.yaml`
-- Purpose: H-CAST preset for CIFAR-100 hierarchy experiments.
-
-### 2.2. `configs/hcast/hcast_cub200.yaml`
-- Purpose: H-CAST preset for CUB-200 hierarchy experiments.
-
-
-### 2.3. `configs/hcast/hcast_aircraft.yaml`
-- Purpose: H-CAST preset for FGVC-Aircraft hierarchy experiments.
-
-### 2.4. `configs/hcast/hcast_inat21mini.yaml`
-- Purpose: H-CAST preset for iNat21-mini hierarchy experiments.
-
-### 2.5. `configs/hcast/hcast_design1_cifar100.yaml`
-- Purpose: Alternate H-CAST CIFAR-100 preset using design-1 segmentation mode.
-
-### 2.6. `configs/capsnet/capsnet_cifar100.yaml`
-- Purpose: HT-CapsNet preset for CIFAR-100 hierarchy experiments.
-
-### 2.7. `configs/capsnet/capsnet_cub200.yaml`
-- Purpose: HT-CapsNet preset for CUB-200 hierarchy experiments.
-
-### 2.8. `configs/capsnet/capsnet_aircraft.yaml`
-- Purpose: HT-CapsNet preset for FGVC-Aircraft hierarchy experiments.
-
-### 2.9. `configs/hrn/hrn_cifar100.yaml`
-- Purpose: HRN preset for CIFAR-100 three-level hierarchy experiments.
-
-### 2.10. `configs/hrn/hrn_cub200.yaml`
-- Purpose: HRN preset for CUB-200 three-level hierarchy experiments.
-
-### 2.11. `configs/hrn/hrn_aircraft.yaml`
-- Purpose: HRN preset for FGVC-Aircraft three-level hierarchy experiments.
-
-### 2.12. `configs/templates/`
-- Purpose: Reusable commented YAML templates and shared defaults for new configs.
-
-## 3. Data Folder (`data/`)
-
-### 3.1. `data/` (directory)
-- Purpose: Local raw dataset storage used by dataset adapters.
-- Notes: Contains external dataset payloads; contents can vary by machine and are not part of the code API.
-
-## 4. Docs Folder (`docs/`)
-
-### 4.1. `docs/FILE_DOCUMENTATION.md`
-- Purpose: This full repository reference document.
-
-## 5. Dataset Package (`datasets/`)
-
-### 5.1. `datasets/__init__.py`
-- Purpose: Dataset registry and dataloader assembly entrypoint.
-- Functions:
-  - `build_transforms`: Creates split-aware image transforms from config (timm-based train pipeline + H-CAST-style eval path).
-    - Reads optional `dataset.transforms` knobs:
-      - `use_timm`, `color_jitter`, `aa`, `train_interpolation`, `reprob`, `remode`, `recount`, `eval_crop_ratio`, `mixup`, `cutmix`, `cutmix_minmax`, `mixup_prob`, `mixup_switch_prob`, `mixup_mode`.
-    - Keeps normalization config-driven via `dataset.mean/std`.
-    - Applies CIFAR-style small-image rule (`image_size <= 32`) by using train `RandomCrop(..., padding=4)` and eval without resize/crop.
-  - `_collate_fn`: Batch collation helper for `(image, labels, meta)` samples.
-  - `build_dataloader`: Instantiates the selected dataset and returns loader plus hierarchy metadata.
-
-### 5.2. `datasets/base.py`
-- Purpose: Shared hierarchical dataset base class and common split/taxonomy utilities.
-- Functions:
-  - `infer_parent_of_from_samples`: Infers parent-child mapping from labeled samples.
-  - `taxonomy_from_parent_of`: Converts parent mapping into normalized taxonomy payload.
-  - `resolve_split_seed`: Resolves deterministic split seed from config.
-  - `resolve_val_split_ratio`: Reads/validates validation split ratio from config.
-  - `stratified_train_val_indices`: Builds deterministic stratified index split.
-  - `split_train_val_samples`: Applies train/val partitioning logic to sample lists.
-- Class `BaseHierDataset`: Base interface for hierarchical dataset adapters.
-  - `__init__`: Loads split data, normalizes labels, and prepares taxonomy/metadata.
-  - `load_samples`: Abstract hook implemented by concrete datasets.
-  - `load_taxonomy`: Optional taxonomy override hook.
-  - `_infer_taxonomy`: Internal fallback taxonomy inference path.
-  - `_remap_taxonomy_ids`: Keeps taxonomy consistent after label remapping.
-  - `_remap_labels_to_contiguous`: Enforces contiguous ids per hierarchy level.
-  - `_compute_num_classes_per_level`: Computes class count per level.
-  - `__len__`: Returns dataset size.
-  - `__getitem__`: Returns one transformed sample with multi-level labels and meta.
-  - `_load_image`: Centralized image loading helper.
-  - `_read_json_samples`: Reads optional JSON annotation format.
-  - `_annotation_file_for_split`: Resolves split-specific annotation file path.
-
-### 5.3. `datasets/cifar100.py`
-- Purpose: CIFAR-100 adapter with canonical coarse/fine hierarchy.
-- Class `CIFAR100Dataset`:
-  - `__init__`: Extends base init with CIFAR-specific setup options.
-  - `_label_path`: Resolves optional label metadata path.
-  - `_default_parent_of`: Provides built-in coarse-to-fine class mapping.
-  - `load_samples`: Reads torchvision samples and builds hierarchical labels.
-  - `_load_image`: Handles CIFAR image conversion to expected format.
-  - `load_taxonomy`: Returns taxonomy object for coarse/fine structure.
-
-### 5.4. `datasets/cub.py`
-- Purpose: CUB-200 adapter supporting multiple on-disk formats.
-- Class `CUBDataset`:
-  - `load_samples`: Main split loader with format auto-detection.
-  - `_load_from_split_folders`: Reads `train/test` folder layouts.
-  - `_read_folder_classes`: Builds class mapping from folder names.
-  - `_species_from_class_name`: Normalizes species identifiers from raw class names.
-  - `_load_from_official_files`: Reads official CUB metadata files.
-  - `_read_int_str_map`: Utility parser for int-to-string metadata files.
-  - `_read_int_int_map`: Utility parser for int-to-int metadata files.
-  - `load_taxonomy`: Builds hierarchy using static CUB mapping table.
-
-### 5.5. `datasets/cub_tree.py`
-- Purpose: Static species-to-family/order mapping table used by `CUBDataset`.
-
-### 5.6. `datasets/aircraft.py`
-- Purpose: FGVC-Aircraft adapter with official split support and fallbacks.
-- Class `AircraftDataset`:
-  - `load_samples`: Loads split lists and constructs hierarchical targets.
-  - `_resolve_data_root`: Locates expected Aircraft `data/` directory.
-  - `_build_variant_to_id`: Creates stable variant label indexing.
-  - `_read_variant_file`: Parses official split text files.
-  - `load_taxonomy`: Builds manufacturer/family/variant taxonomy.
-
-### 5.7. `datasets/aircraft_tree.py`
-- Purpose: Static variant-to-family/manufacturer mapping table used by `AircraftDataset`.
-
-### 5.8. `datasets/inat.py`
-- Purpose: iNaturalist adapter supporting iNat18 and iNat21-mini style formats.
-- Class `INatDataset`:
-  - `load_samples`: Main routing entry that selects supported annotation format.
-  - `_load_inat18_split`: Loads iNat18 JSON-based split data.
-  - `_load_inat21_split`: Loads iNat21 text-list split data.
-  - `_find_inat21_split_file`: Searches for available split file candidates.
-  - `_find_existing`: Returns first existing path from candidate list.
-  - `_read_txt_annotations`: Parses simple text annotation lines.
-  - `_resolve_image_path`: Resolves absolute path for each image entry.
-  - `_read_inat18`: Reads iNat18 JSON structures.
-  - `load_taxonomy`: Builds normalized taxonomy payload for hierarchy metrics.
-
-## 6. Model Package (`models/`)
-
-### 6.1. `models/__init__.py`
-- Purpose: Unified model/loss dispatcher across model families.
-- Functions:
-  - `build_model`: Builds selected model backend (`hcast`, `ht_capsnet`, or `hrn`).
-  - `compute_loss`: Dispatches loss computation to the selected backend.
-
-## 7. H-CAST Package (`models/hcast/`)
-
-### 7.1. `models/hcast/__init__.py`
-- Purpose: Public exports for H-CAST model construction and loss API.
-
-### 7.2. `models/hcast/factory.py`
-- Purpose: H-CAST-specific model construction glue.
-- Functions:
-  - `build_model`: Builds `HCASTModel` using model config and hierarchy metadata.
-
-### 7.3. `models/hcast/model.py`
-- Purpose: Runtime wrapper for timm-backed H-CAST and unified output formatting.
-- Class `HCASTModel`:
-  - `__init__`: Builds upstream CAST variant and validates required dependencies.
-  - `_build_default_segments`: Generates default token segmentation metadata.
-  - `forward`: Runs H-CAST and normalizes outputs to unified schema.
-
-### 7.4. `models/hcast/losses.py`
-- Purpose: Composite loss for hierarchical H-CAST training.
-- Functions:
-  - `_normalize_parent_of`: Sanitizes taxonomy parent map into a consistent shape.
-  - `_project_children_to_parent`: Aggregates child probabilities into parent space.
-  - `_hierarchy_violation_loss`: Penalizes invalid parent-child confidence patterns.
-  - `_tree_path_kl_loss`: Encourages level-wise path consistency through KL terms.
-  - `_global_kl_loss`: Adds optional global distribution regularization.
-  - `compute_loss`: Combines task and hierarchy-aware terms into final training loss.
-
-## 8. H-CAST Internal Modules (`models/hcast/internal/`)
-
-### 8.1. `models/hcast/internal/__init__.py`
-- Purpose: Internal export surface for CAST constructor variants.
-
-### 8.2. `models/hcast/internal/cast_deit_hier.py`
-- Purpose: Core CAST transformer architecture and size presets.
-- Class `CAST`:
-  - `__init__`: Configures hierarchical transformer stages and heads.
-  - `_block_operations`: Shared stage block execution routine.
-  - `forward_features`: Produces hierarchical intermediate features.
-  - `forward`: Produces multi-level logits in CAST format.
-- Functions:
-  - `cast_small`: Small preset constructor.
-  - `cast_small_deep`: Small-deep preset constructor.
-  - `cast_base`: Base preset constructor.
-  - `cast_base_deep`: Base-deep preset constructor.
-
-### 8.3. `models/hcast/internal/graph_pool.py`
-- Purpose: Graph attention/pooling blocks used in hierarchical token processing.
-- Class `Attention`:
-  - `__init__`: Builds attention projection layers.
-  - `forward`: Applies attention over token/node features.
-- Class `Block`:
-  - `__init__`: Composes attention and MLP sublayers.
-  - `forward`: Applies one transformer-style block step.
-- Class `GraphPooling`:
-  - `__init__`: Configures graph-based downsampling strategy.
-  - `_fill_with_mean`: Fills missing pooled positions with averaged features.
-  - `forward`: Pools graph tokens for next hierarchy stage.
-- Function:
-  - `valid_mean`: Computes masked mean used by pooling logic.
-
-### 8.4. `models/hcast/internal/modules.py`
-- Purpose: Reusable neural modules used by CAST internals.
-- Class `Pooling`:
-  - `__init__`: Configures pooled token readout behavior.
-  - `forward`: Runs selected pooling strategy.
-- Class `ConvStem`:
-  - `__init__`: Builds convolutional patch/token stem.
-  - `forward`: Converts image input to token embedding grid.
-- Class `_BatchNorm1d`:
-  - `__init__`: Wraps batch norm behavior for expected tensor layout.
-  - `forward`: Applies normalization with layout handling.
-- Class `BlockFusion`:
-  - `__init__`: Sets up multi-stage feature fusion layers.
-  - `_make_proj_block`: Builds projection sub-blocks.
-  - `_unpool`: Restores pooled features for fusion alignment.
-  - `_proj_block_operations`: Shared projection/fusion step routine.
-  - `forward`: Fuses hierarchical block outputs before heads.
-
-### 8.5. `models/hcast/internal/utils.py`
-- Purpose: Tensor and embedding utility helpers used by CAST internals.
-- Functions:
-  - `resize_labels`: Resizes label maps to target resolution.
-  - `calculate_principal_components`: Computes PCA basis vectors.
-  - `pca`: Projects embeddings with computed/provided PCA basis.
-  - `one_hot`: Builds one-hot encoded label tensors.
-  - `normalize_embedding`: Applies feature normalization for stability.
-  - `segment_mean`: Computes mean per segment id.
-  - `segment_mean_nd`: Segment mean helper for higher-dimensional tensors.
-
-## 9. HT-CapsNet Package (`models/ht_capsnet/`)
-
-### 9.1. `models/ht_capsnet/__init__.py`
-- Purpose: Public exports for HT-CapsNet model construction and loss API.
-
-### 9.2. `models/ht_capsnet/factory.py`
-- Purpose: HT-CapsNet-specific model constructor.
-- Functions:
-  - `build_model`: Builds `HTCapsNet` using routing/capsule config parameters.
-
-### 9.3. `models/ht_capsnet/model.py`
-- Purpose: PyTorch implementation of taxonomy-guided capsule model.
-- Class `_ConvBackbone`:
-  - `__init__`: Builds CNN feature extractor for primary capsules.
-  - `forward`: Produces feature maps for capsule projection.
-- Class `HTCapsNet`:
-  - `__init__`: Configures capsule hierarchy, routing, and classifier heads.
-  - `_normalize_parent_of`: Standardizes taxonomy map for routing constraints.
-  - `_taxonomy_matrix`: Builds matrix view of parent-child relations.
-  - `_build_primary_caps`: Converts backbone features into primary capsules.
-  - `forward`: Runs routing per level and returns unified logits payload.
-
-### 9.4. `models/ht_capsnet/routing.py`
-- Purpose: Taxonomy-constrained routing primitives.
-- Functions:
-  - `squash`: Capsule squashing nonlinearity.
-  - `taxonomy_mask_from_matrix`: Converts taxonomy matrix into routing mask.
-  - `taxonomy_guided_routing`: Runs iterative dynamic routing with optional masks.
-
-### 9.5. `models/ht_capsnet/losses.py`
-- Purpose: Composite HT-CapsNet training loss.
-- Functions:
-  - `_margin_loss`: Computes capsule-style per-level margin loss.
-  - `_normalize_parent_of`: Normalizes taxonomy map for consistency penalty.
-  - `_hier_consistency_penalty`: Penalizes parent-child prediction conflicts.
-  - `_level_weights`: Resolves level-wise loss weighting from config.
-  - `compute_loss`: Combines per-level margin loss and hierarchy penalty terms.
-
-## 10. HRN Package (`models/hrn/`)
-
-### 10.1. `models/hrn/__init__.py`
-- Purpose: Public exports for HRN model construction and loss API.
-
-### 10.2. `models/hrn/factory.py`
-- Purpose: HRN-specific model constructor and validation.
-- Functions:
-  - `build_model`: Builds `HRNModel` and enforces exactly 3 hierarchy levels.
-
-### 10.3. `models/hrn/model.py`
-- Purpose: PyTorch HRN implementation with residual hierarchical branch fusion.
-- Class `BasicConv`:
-  - `__init__`: Configures branch convolutional refinement block.
-  - `forward`: Applies conv/bn/relu operations.
-- Class `HRNModel`:
-  - `__init__`: Builds ResNet-50 trunk, branch projections, and per-level heads.
-  - `_branch_embedding`: Produces level-specific pooled embedding.
-  - `forward`: Applies residual feature transfer (`L1+=L0`, `L2+=L1`) and returns unified logits payload.
-
-### 10.4. `models/hrn/losses.py`
-- Purpose: HRN combinatorial taxonomy-aware loss and fine-level CE.
-- Functions:
-  - `_normalize_parent_of`: Normalizes taxonomy parent maps.
-  - `_build_state_space`: Builds combinatorial state-space from taxonomy.
-  - `_combinatorial_tree_loss`: Computes numerically stable tree marginal loss.
-  - `compute_loss`: Combines tree loss with fine-level CE and emits per-level metrics.
-
-## 11. Training Package (`train/`)
-
-### 11.1. `train/__init__.py`
-- Purpose: Public exports for epoch-level training/evaluation loops.
-
-### 11.2. `train/train.py`
-- Purpose: Main CLI entrypoint and config orchestration.
-- Class `AttrDict`:
-  - `__getattr__`: Attribute-style read access for config dictionaries.
-  - `__setattr__`: Attribute-style write access for config dictionaries.
-- Functions:
-  - `_to_attr`: Recursively converts dictionaries to `AttrDict`.
-  - `_coerce_scalar`: Converts CLI override strings to scalar Python types.
-  - `_apply_dotlist`: Applies dot-list overrides into nested config objects.
-  - `_load_config`: Loads YAML config and merges CLI overrides.
-  - `_parse_args`: Defines/reads command-line arguments.
-  - `main`: Full training workflow (load config, build components, run epochs, checkpoint, evaluate).
-
-### 11.3. `train/engine.py`
-- Purpose: Epoch-level optimization and evaluation loops.
-- Functions:
-  - `train_one_epoch`: Executes one training epoch with optimizer/scaler integration.
-  - `evaluate`: Runs model on validation/test loader and aggregates metrics.
-
-### 11.4. `train/eval.py`
-- Purpose: Batch-level evaluation metric assembly and report formatting.
-- Functions:
-  - `evaluate_batch`: Computes metrics for one model output batch.
-  - `pretty_metrics`: Formats metric dictionary for human-readable logging.
-
-### 11.5. `train/metrics.py`
-- Purpose: Shared metric calculations for hierarchical classification.
-- Functions:
-  - `per_level_top1`: Computes top-1 accuracy per hierarchy level.
-  - `full_path_accuracy`: Computes exact path (all levels) accuracy.
-  - `inconsistency_rate`: Measures taxonomy-violating prediction frequency.
-  - `tice_like_score`: Computes taxonomy-informed confidence/consistency score.
-  - `merge_metric_batches`: Merges batch metric dictionaries into epoch summary.
-
-### 11.6. `train/utils.py`
-- Purpose: Reproducibility, optimization setup, and checkpoint lifecycle helpers.
-- Functions:
-  - `seed_everything`: Sets global random seeds and deterministic runtime switches.
-  - `build_optimizer`: Creates optimizer from config.
-  - `build_scheduler`: Creates LR scheduler from config.
-  - `save_checkpoint`: Saves model/optimizer/scheduler/scaler/training state.
-  - `resume_if_available`: Restores training state from checkpoint when requested.
-  - `metric_for_best`: Selects scalar metric used to track/save best checkpoint.
-
-## 12. Outputs Folder (`outputs/`)
-
-### 12.1. `outputs/` (directory)
-- Purpose: Runtime artifacts from training runs.
-- Typical contents:
-  - Per-run folders (for example `cifar100/`, `smoke_capsnet/`).
-  - `latest.pt`: Most recent checkpoint snapshot.
-  - `best.pt`: Best-scoring checkpoint according to configured selection metric.
+- `configs/hcast/hcast_cifar100.yaml`: Base H-CAST on CIFAR-100.
+- `configs/hcast/hcast_cub200.yaml`: Base H-CAST on CUB-200-2011.
+- `configs/hcast/hcast_aircraft.yaml`: Base H-CAST on FGVC-Aircraft.
+- `configs/hcast/hcast_inat21mini.yaml`: Base H-CAST on iNat21-style data.
+- `configs/hcast/hcast_hcc_cifar100.yaml`: H-CAST with the hard hierarchy projection block on CIFAR-100.
+- `configs/hcast/hcast_hcc_cub200.yaml`: Same HCC variant on CUB.
+- `configs/hcast/hcast_hcc_aircraft.yaml`: Same HCC variant on Aircraft.
 
+### LH-DNN presets
 
+- `configs/lhdnn/lhdnn_cifar100.yaml`
+- `configs/lhdnn/lhdnn_cub200.yaml`
+- `configs/lhdnn/lhdnn_aircraft.yaml`
 
+These are paper-aligned LH-DNN presets for the supported datasets.
 
+### HT-CapsNet presets
+
+- `configs/capsnet/capsnet_cifar100.yaml`
+- `configs/capsnet/capsnet_cub200.yaml`
+- `configs/capsnet/capsnet_aircraft.yaml`
+
+These presets configure the PyTorch HT-CapsNet port and its routing/loss parameters.
+
+### HRN presets
+
+- `configs/hrn/hrn_cifar100.yaml`
+- `configs/hrn/hrn_cub200.yaml`
+- `configs/hrn/hrn_aircraft.yaml`
+
+The HRN family supports exactly three hierarchy levels.
+
+### Templates
+
+- `configs/templates/dataset_template.yaml`: Commented template for dataset and transform settings.
+- `configs/templates/hcast_template.yaml`: Commented template for H-CAST-specific model options.
+- `configs/templates/ht_capsnet_template.yaml`: Commented template for HT-CapsNet-specific model options.
+
+## Datasets
+
+- `datasets/__init__.py`: Dataset registry, alias resolution, transforms, collate function, and dataloader builder.
+- `datasets/base.py`: Shared hierarchical dataset base class, train/val splitting, normalized JSON annotations, label remapping, and taxonomy inference.
+- `datasets/cifar100.py`: CIFAR-100 adapter. Supports 2-level `coarse -> fine` and 3-level `super -> coarse -> fine` hierarchies.
+- `datasets/cub.py`: CUB-200-2011 adapter for folder-based and official metadata layouts.
+- `datasets/cub_tree.py`: Static order/family/species mapping used by the CUB adapter.
+- `datasets/aircraft.py`: FGVC-Aircraft adapter for official variant split files and related fallbacks.
+- `datasets/aircraft_tree.py`: Static manufacturer/family/variant mapping used by the Aircraft adapter.
+- `datasets/inat.py`: iNat21-style adapter for JSON and JSON-in-tar annotations, with repo-specific split fallback logic.
+
+## Models
+
+- `models/__init__.py`: Unified `build_model` and `compute_loss` dispatcher. Supported model ids are `hcast`, `lhdnn`, `ht_capsnet`, and `hrn`.
+
+### H-CAST
+
+- `models/hcast/__init__.py`: Public H-CAST exports.
+- `models/hcast/factory.py`: Converts config sections into `HCASTModel` constructor arguments.
+- `models/hcast/model.py`: Main H-CAST wrapper around the vendored CAST backbone, segmentation, and optional HCC projection.
+- `models/hcast/losses.py`: H-CAST loss combining per-level task loss, optional global KL regularization, and HCC-aware probability handling.
+- `models/hcast/segments.py`: OpenCV SEEDS-based segment generation helpers.
+- `models/hcast/hard_hierarchy.py`: Hierarchical Constraint Cascade (HCC) affine projector used for hard hierarchy constraints.
+
+#### Vendored H-CAST internals
+
+- `models/hcast/internal/__init__.py`: Internal export surface.
+- `models/hcast/internal/cast_deit_hier.py`: CAST architecture and size variants.
+- `models/hcast/internal/graph_pool.py`: Graph pooling and attention blocks.
+- `models/hcast/internal/modules.py`: Shared low-level modules used by CAST.
+- `models/hcast/internal/utils.py`: Tensor and embedding helpers.
+
+These files are the closest local equivalents of the upstream CAST internals and are usually treated as vendored backbone code.
+
+### LH-DNN
+
+- `models/lhdnn/__init__.py`: Public LH-DNN exports.
+- `models/lhdnn/factory.py`: Builds the fixed-topology LH-DNN model from config.
+- `models/lhdnn/model.py`: Paper-aligned LH-DNN implementation with shared features, projection component, and taxonomy-aware advantage topology.
+- `models/lhdnn/losses.py`: LH-DNN per-level cross-entropy loss with optional soft-target support from mixup/cutmix.
+
+### HT-CapsNet
+
+- `models/ht_capsnet/__init__.py`: Public HT-CapsNet exports.
+- `models/ht_capsnet/factory.py`: Validates config and builds the HT-CapsNet model.
+- `models/ht_capsnet/model.py`: PyTorch HT-CapsNet implementation with configurable backbone, routing levels, and cross-capsule attention.
+- `models/ht_capsnet/routing.py`: Routing primitives and taxonomy-guided routing helpers.
+- `models/ht_capsnet/losses.py`: Capsule margin loss and hierarchy-aware penalties.
+
+### HRN
+
+- `models/hrn/__init__.py`: Public HRN exports.
+- `models/hrn/factory.py`: Enforces the 3-level constraint and builds `HRNModel`.
+- `models/hrn/model.py`: ResNet-50 HRN implementation with hierarchical branches and residual fusion.
+- `models/hrn/losses.py`: HRN combinatorial tree loss and fine-level cross-entropy objective.
+
+## Training
+
+- `train/__init__.py`: Package marker for training utilities.
+- `train/train.py`: Main CLI entrypoint. Loads config, builds loaders/model/optimizer/scheduler, trains, saves checkpoints, and evaluates the best checkpoint on the test split.
+- `train/config_loader.py`: YAML config loader with optional OmegaConf support and dotlist override handling.
+- `train/engine.py`: `train_one_epoch` and `evaluate` loops.
+- `train/eval.py`: Batch metric assembly and console metric formatting.
+- `train/metrics.py`: Shared hierarchical metrics such as per-level accuracy, weighted AP, FPA, AHD, and TICE.
+- `train/mixup.py`: Mixup/CutMix helpers used by the unified training loop.
+- `train/training_logger.py`: Writes `config_resolved.yaml`, `run_log.jsonl`, and `test_metrics.yaml`.
+- `train/utils.py`: Seeding, optimizer/scheduler construction, finetune loading, checkpoint save/resume, and best-metric selection.
+
+## Notebooks
+
+- `notebooks/hcast_analysis.ipynb`: H-CAST result analysis notebook.
+- `notebooks/model_comparison_all_datasets.ipynb`: Cross-model comparison notebook across datasets.
+
+## Docs
+
+- `docs/FILE_DOCUMENTATION.md`: This repository map.
+
+## Runtime Artifacts
+
+Runtime outputs are not tracked in the repository tree. Each training run writes to its configured `train.output_dir`, typically producing:
+
+- `latest.pt`
+- `best.pt`
+- `config_resolved.yaml`
+- `run_log.jsonl`
+- `test_metrics.yaml`
+
+Dataset files are also external to the repository and are located through `dataset.root` in each config.

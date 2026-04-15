@@ -84,7 +84,7 @@ def _extract_parent_arrays(
         return parent_of_middle, parent_of_fine
 
     raise ValueError(
-        "Unsupported taxonomy format for design1 projector. Expected either "
+        "Unsupported taxonomy format for hcc projector. Expected either "
         "`taxonomy['parent_of']` with transitions 1 and 2, or explicit "
         "`parent_of_middle`/`parent_of_fine` arrays."
     )
@@ -115,7 +115,7 @@ class HierarchicalAffineProjector(nn.Module):
                 f"HierarchicalAffineProjector currently supports exactly 3 levels, got {len(classes)}."
             )
         if taxonomy is None:
-            raise ValueError("taxonomy is required when design1 projector is enabled.")
+            raise ValueError("taxonomy is required when hcc is enabled.")
 
         c1, c2, c3 = classes
         parent_of_middle, parent_of_fine = _extract_parent_arrays(taxonomy, c1=c1, c2=c2, c3=c3)
@@ -216,7 +216,7 @@ class HierarchicalAffineProjector(nn.Module):
 
             p1_hat = p1_work
             if self.stabilize_simplex:
-                # p1 is not projected in design1; keep it unchanged and only
+                # p1 is not projected in HCC; keep it unchanged and only
                 # re-normalize children to match parent masses.
                 p2_hat = self._mass_renormalize(
                     child_scores=p2_hat,

@@ -49,7 +49,7 @@ dataloader:
   windows_spawn_safe: true
 
 train:
-  epochs: 200
+  epochs: 100
   seed: 0
   device: cuda
   amp: false

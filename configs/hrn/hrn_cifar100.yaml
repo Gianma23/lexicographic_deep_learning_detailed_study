@@ -5,15 +5,11 @@
   branch_hidden_dim: 1024
   embedding_dim: 512
   dropout: 0.0
-  loss:
-    tree_weight: 1.0
-    fine_ce_weight: 1.0
-    temperature: 1.0
-    eps: 1.0e-8
+  trunk_lr_scale: 0.1
 
 dataset:
   name: cifar-100
-  root: ./data/cifar100
+  root: /scratch/g.saggini1/datasets/cifar100
   hierarchy_depth: 3
   image_size: 32
   mean: [0.5071, 0.4867, 0.4408]
@@ -33,10 +29,10 @@ dataset:
       resize_mode: auto
       crop_ratio: 0.875
       interpolation: bicubic
-    mixup: 0.8
-    cutmix: 1.0
+    mixup: 0.0
+    cutmix: 0.0
     cutmix_minmax: null
-    mixup_prob: 1.0
+    mixup_prob: 0.0
     mixup_switch_prob: 0.5
     mixup_mode: batch
 
@@ -46,8 +42,8 @@ dataset:
     test: test.json
 
 dataloader:
-  batch_size: 128
-  num_workers: 0
+  batch_size: 8
+  num_workers: 4
   windows_spawn_safe: true
 
 train:

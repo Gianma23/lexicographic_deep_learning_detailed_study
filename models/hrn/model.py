@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class BasicConv(nn.Module):
@@ -79,10 +80,8 @@ class HRNModel(nn.Module):
         embedding_dim: int = 512,
         dropout: float = 0.0,
         trunk_grad_scale: float = 0.1,
-        taxonomy: Optional[Dict[str, Any]] = None,
     ):
         super().__init__()
-        _ = taxonomy
         self.num_classes_per_level = [int(n) for n in num_classes_per_level]
         if len(self.num_classes_per_level) != 3:
             raise ValueError(f"HRN expects exactly 3 hierarchy levels, got: {self.num_classes_per_level}")
@@ -115,21 +114,10 @@ class HRNModel(nn.Module):
         self.fc2 = self._build_fc_block(int(branch_hidden_dim), int(embedding_dim), float(dropout))
         self.fc3 = self._build_fc_block(int(branch_hidden_dim), int(embedding_dim), float(dropout))
 
-        self.classifier_1 = nn.Sequential(
-            nn.Linear(int(embedding_dim), self.num_classes_per_level[0]),
-            nn.Sigmoid(),
-        )
-        self.classifier_2 = nn.Sequential(
-            nn.Linear(int(embedding_dim), self.num_classes_per_level[1]),
-            nn.Sigmoid(),
-        )
-        self.classifier_3 = nn.Sequential(
-            nn.Linear(int(embedding_dim), self.num_classes_per_level[2]),
-            nn.Sigmoid(),
-        )
-        self.classifier_3_1 = nn.Sequential(
-            nn.Linear(int(embedding_dim), self.num_classes_per_level[2]),
-        )
+        self.classifier_1 = nn.Linear(int(embedding_dim), self.num_classes_per_level[0])
+        self.classifier_2 = nn.Linear(int(embedding_dim), self.num_classes_per_level[1])
+        self.classifier_3 = nn.Linear(int(embedding_dim), self.num_classes_per_level[2])
+        self.classifier_3_1 = nn.Linear(int(embedding_dim), self.num_classes_per_level[2])
 
         self._register_trunk_gradient_scaling()
 
@@ -178,13 +166,20 @@ class HRNModel(nn.Module):
         emb_family = x_family_fc + x_order_fc
         emb_species = x_species_fc + x_family_fc + x_order_fc
 
-        order_sig = self.classifier_1(self.relu(emb_order))
-        family_sig = self.classifier_2(self.relu(emb_family))
-        species_sig = self.classifier_3(self.relu(emb_species))
+        order_logits = self.classifier_1(self.relu(emb_order))
+        family_logits = self.classifier_2(self.relu(emb_family))
+        species_tree_logits = self.classifier_3(self.relu(emb_species))
         species_ce_logits = self.classifier_3_1(self.relu(emb_species))
+        order_sig = torch.sigmoid(order_logits)
+        family_sig = torch.sigmoid(family_logits)
+        species_sig = torch.sigmoid(species_tree_logits)
+
+        logits_per_level: List[torch.Tensor] = [order_logits, family_logits, species_ce_logits]
+        effective_probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
 
         return {
-            "logits_per_level": [order_sig, family_sig, species_ce_logits],
+            "logits_per_level": logits_per_level,
+            "effective_probs_per_level": effective_probs_per_level,
             "tree_scores_per_level": [order_sig, family_sig, species_sig],
             "species_ce_logits": species_ce_logits,
             "embeddings_per_level": [emb_order, emb_family, emb_species],

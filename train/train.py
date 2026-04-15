@@ -116,7 +116,17 @@ def main():
     print(f"[LOGGER] logging run events to: {logger.run_log_path}")
 
     epochs = int(cfg.train.epochs)
-    for epoch in range(start_epoch, epochs):
+    stop_epoch = int(cfg.train.get("stop_epoch", epochs))
+    if stop_epoch < 1:
+        raise ValueError("train.stop_epoch must be >= 1.")
+    if stop_epoch > epochs:
+        raise ValueError("train.stop_epoch must be <= train.epochs.")
+    if stop_epoch < epochs:
+        print(f"[train] stop_epoch active: {stop_epoch} (scheduler horizon: {epochs})")
+    if start_epoch >= stop_epoch:
+        print(f"[train] resume start_epoch={start_epoch} >= stop_epoch={stop_epoch}; skipping train loop.")
+
+    for epoch in range(start_epoch, stop_epoch):
         train_outputs = train_one_epoch(
             model,
             train_loader,
@@ -168,12 +178,17 @@ def main():
             val_metrics=val_metrics,
         )
 
-        epoch_tag = f"[epoch {epoch + 1:03d}/{epochs:03d}]"
+        epoch_tag = f"[epoch {epoch + 1:03d}/{stop_epoch:03d}]"
         print(f"{epoch_tag} train | {pretty_metrics(train_outputs, level_names=level_names)}")
         print(f"{epoch_tag} val   | {pretty_metrics(val_metrics, level_names=level_names)}")
         print("")
 
     # Evaluate the best validation checkpoint on the test set.
+    if not best_ckpt.exists():
+        raise RuntimeError(
+            f"Best checkpoint not found at {best_ckpt}. "
+            "Training likely ran zero epochs; check train.resume and train.stop_epoch."
+        )
     checkpoint = torch.load(best_ckpt, map_location=device)
     model.load_state_dict(checkpoint["model_state"])
     checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))

@@ -1,190 +1,185 @@
-﻿# Hierarchical Image Classification (Unified H-CAST + LH-DNN + HT-CapsNet + HRN)
+# Hierarchical Image Classification
 
-This repo unifies four hierarchical models behind one PyTorch training/eval pipeline:
+Unified PyTorch training code for four hierarchical image classifiers:
 
-- H-CAST (upstream commit: `b1a222bb32da5caf48691b5987d56b7483801907`)
-- LH-DNN (paper: arXiv `2409.16956`)
-- HT-CapsNet (upstream commit: `8a0ea23f3e6b68b75d8add07674b4b0288380417`)
-- HRN (upstream repo: `MonsterZhZh/HRN`)
+- `hcast`
+- `lhdnn`
+- `ht_capsnet`
+- `hrn`
 
-Single CLI entrypoint:
+The main user-facing entrypoint is `python -m train.train`. It handles config loading, training, validation, checkpointing, and final test evaluation from `best.pt`.
+
+## What Is In Scope
+
+- One config-driven training pipeline for all supported models
+- Dataset adapters for CIFAR-100, CUB-200-2011, FGVC-Aircraft, and iNat21-style data
+- Shared hierarchical metrics and logging
+- Optional H-CAST Hierarchical Constraint Cascade (HCC) variants
+
+## Setup
+
+Install a compatible `torch` and `torchvision` build for your machine first, then install the repo dependencies:
 
 ```bash
-python -m train.train --config configs/hcast/hcast_cub200.yaml
-python -m train.train --config configs/lhdnn/lhdnn_cifar100.yaml
-python -m train.train --config configs/capsnet/capsnet_cub200.yaml
-python -m train.train --config configs/hrn/hrn_cub200.yaml
+pip install torch torchvision
+pip install -r requirements.txt
 ```
 
-Dataset-ready configs:
+Notes:
+
+- `timm` is required for H-CAST and timm-backed schedulers.
+- `opencv-contrib-python` is required for H-CAST `segments.mode: seeds`.
+- Preset configs in `configs/` use machine-specific dataset/output paths. Update them before running.
+
+## Quick Start
+
+1. Pick a preset config from `configs/`.
+2. Edit at least `dataset.root` and `train.output_dir`.
+3. Run training:
 
 ```bash
 python -m train.train --config configs/hcast/hcast_cifar100.yaml
-python -m train.train --config configs/lhdnn/lhdnn_cifar100.yaml
-python -m train.train --config configs/hcast/hcast_cub200.yaml
-python -m train.train --config configs/hcast/hcast_aircraft.yaml
-python -m train.train --config configs/hcast/hcast_inat21mini.yaml
-python -m train.train --config configs/capsnet/capsnet_cifar100.yaml
-python -m train.train --config configs/capsnet/capsnet_cub200.yaml
-python -m train.train --config configs/capsnet/capsnet_aircraft.yaml
-python -m train.train --config configs/hrn/hrn_cifar100.yaml
-python -m train.train --config configs/hrn/hrn_cub200.yaml
-python -m train.train --config configs/hrn/hrn_aircraft.yaml
 ```
-## Setup
+
+CLI dotlist overrides are supported:
+
 ```bash
-pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
-```
-## File Reference
-
-Full file-by-file documentation is available at:
-
-- `docs/FILE_DOCUMENTATION.md`
-
-## Upstream File Mapping
-
-| Upstream | Local |
-|---|---|
-| `hcast/cast_models/cast_deit_hier.py` | `models/hcast/internal/cast_deit_hier.py` |
-| `hcast/cast_models/graph_pool.py` | `models/hcast/internal/graph_pool.py` |
-| `hcast/cast_models/modules.py` | `models/hcast/internal/modules.py` |
-| `hcast/cast_models/utils.py` | `models/hcast/internal/utils.py` |
-| `ht-capsnet/src/model_arch/HTRCapsNet.py` (routing logic) | `models/ht_capsnet/routing.py` + `models/ht_capsnet/model.py` (PyTorch translation) |
-| `ht-capsnet/src/models.py` (loss/config ideas) | `models/ht_capsnet/losses.py` + `models/ht_capsnet/factory.py` |
-| `HRN/CUB_Aircraft/RFM.py` + `HRN/CUB_Aircraft/tree_loss.py` | `models/hrn/model.py` + `models/hrn/losses.py` (clean PyTorch port) |
-
-## Unified APIs
-
-### Dataset API
-`build_dataloader(cfg, split)` returns:
-
-1. `dataloader`
-2. `num_classes_per_level`
-3. `taxonomy` (`parent_of` map when available)
-
-Each sample is:
-
-```python
-(image_tensor, labels_tensor[L], meta_dict)
+python -m train.train --config configs/hrn/hrn_cub200.yaml train.epochs=1 dataloader.batch_size=4
 ```
 
-### Model API
-`build_model(cfg, num_classes_per_level, taxonomy)` returns `torch.nn.Module`.
+There is no separate standalone evaluation CLI at the moment. End-of-run test evaluation is part of `train/train.py`.
 
-Each model forward returns:
+## Available Presets
 
-```python
-{
-  "logits_per_level": [Tensor[B, C0], ..., Tensor[B, CL-1]],
-  ...
-}
-```
+H-CAST:
 
-### Metrics logged
+- `configs/hcast/hcast_cifar100.yaml`
+- `configs/hcast/hcast_cub200.yaml`
+- `configs/hcast/hcast_aircraft.yaml`
+- `configs/hcast/hcast_inat21mini.yaml`
+- `configs/hcast/hcast_hcc_cifar100.yaml`
+- `configs/hcast/hcast_hcc_cub200.yaml`
+- `configs/hcast/hcast_hcc_aircraft.yaml`
 
-- `acc_level_0 ... acc_level_L-1`
-- `weighted_ap` (wAP; class-count weighted Top-1 across levels, H-CAST style)
-- `fpa` (Full Path Accuracy)
-- `tice` (Tree-Induced Consistency Error, lower is better)
+LH-DNN:
 
-Backward-compatible aliases remain available in logs/checkpoints:
+- `configs/lhdnn/lhdnn_cifar100.yaml`
+- `configs/lhdnn/lhdnn_cub200.yaml`
+- `configs/lhdnn/lhdnn_aircraft.yaml`
 
-- `acc_path` -> `fpa`
-- `inconsistency_rate` -> `tice`
-- `tice_like` -> `1 - tice`
-- `weighted_acc` -> `weighted_ap`
+HT-CapsNet:
 
-## Dataset Adapters
+- `configs/capsnet/capsnet_cifar100.yaml`
+- `configs/capsnet/capsnet_cub200.yaml`
+- `configs/capsnet/capsnet_aircraft.yaml`
 
-Implemented adapters:
+HRN:
 
-- `datasets/cifar100.py`
-- `datasets/cub.py`
-- `datasets/aircraft.py`
-- `datasets/inat.py`
+- `configs/hrn/hrn_cifar100.yaml`
+- `configs/hrn/hrn_cub200.yaml`
+- `configs/hrn/hrn_aircraft.yaml`
 
-Supported dataset names:
+Reusable templates:
+
+- `configs/templates/dataset_template.yaml`
+- `configs/templates/hcast_template.yaml`
+- `configs/templates/ht_capsnet_template.yaml`
+
+## Config Structure
+
+Experiment YAMLs use the same top-level sections:
+
+- `model`
+- `dataset`
+- `dataloader`
+- `train`
+- `optim`
+- `scheduler`
+- `runtime`
+
+Common fields worth checking first:
+
+- `dataset.root`
+- `dataset.annotations.{train,val,test}`
+- `dataset.hierarchy_depth`
+- `train.output_dir`
+- `train.device`
+- `train.resume`
+
+The config loader supports positional dotlist overrides such as `train.epochs=10` or `optim.lr=1e-4`.
+
+## Supported Datasets
+
+Dataset ids and aliases:
 
 - `cifar100`, `cifar-100`
 - `cub`, `cub-200-2011`
 - `aircraft`, `fgvc-aircraft`
 - `inat`, `inat21-mini`, `inat21_mini`
 
-### Dataset YAML template
+Adapter behavior:
 
-See [`configs/templates/dataset_template.yaml`](configs/templates/dataset_template.yaml) for the full commented template.
+- CIFAR-100 loads through `torchvision.datasets.CIFAR100` and supports `hierarchy_depth: 2` or `3`. The 3-level layout is `super -> coarse -> fine`.
+- CUB supports `train/` and `test/` folder splits, `images_split/{train,test}`, or the official `images.txt` / `image_class_labels.txt` / `train_test_split.txt` layout.
+- FGVC-Aircraft reads the official `images_variant_{train,val,test,trainval}.txt` files under `data/`-style roots.
+- iNat uses official iNat21-style JSON or JSON-in-tar annotations. For the repo `test` split it prefers official validation labels, then `public_test` / `test`, then a deterministic fallback split if needed.
 
-Priority order per dataset:
-
-1. Use `dataset.annotations.{train,val,test}` JSON/TXT if present.
-2. Use dataset-specific canonical formats.
-
-### Expected canonical formats
-
-- CIFAR-100:
-  - Loaded via `torchvision.datasets.CIFAR100`.
-  - Canonical hierarchy is 2-level `coarse -> fine` (20/100).
-
-- CUB-200-2011:
-  - Pre-split folders: `root/train/<class>/...` and `root/test/<class>/...`.
-  - Also supported: `root/images_split/{train,test}/...`.
-  - Official raw layout fallback: `images.txt`, `image_class_labels.txt`, `train_test_split.txt`, and `images/` under `root` or `root/CUB_200_2011`.
-
-- FGVC-Aircraft:
-  - Official txt files under `.../data/`:
-    - `images_variant_train.txt`
-    - `images_variant_val.txt`
-    - `images_variant_test.txt`
-  - Fallback: `images_variant_trainval.txt` + deterministic train/val split.
-
-- iNat21-Mini:
-  - Primary list format: `path species family order`.
-  - Expected hierarchy: 3-level `order -> family -> species`.
-  - Auto-detects common split-list names in `dataset.root`, `dataset.root/data`, and `./data`.
-
-### Split fallback policy
-
-If a dataset has no explicit validation split:
-
-- A deterministic stratified validation subset is created from train data.
-- Controls:
-  - `dataset.val_split_ratio` (default: `0.1`)
-  - `dataset.split_seed` (default fallback: `train.seed`)
-
-For iNat test split fallback:
-
-- Use explicit test file if present.
-- Else use val file.
-- Else use the deterministic val subset derived from train/trainval.
-
-## Taxonomy JSON Schema
-
-Expected minimal structure:
+Optional normalized JSON annotations are also supported for all datasets:
 
 ```json
 {
-  "levels": ["level0", "level1", "level2"],
-  "parent_of": {
-    "1": {"child_id": 0},
-    "2": {"child_id": 4}
-  }
+  "samples": [
+    {"image": "relative/path.jpg", "labels": [0, 1, 2]}
+  ]
 }
 ```
 
-`parent_of[level][child] = parent` where `level` is child level index.
+`labels` must match `dataset.hierarchy_depth`.
 
-## Reproducibility
+## Model-Specific Constraints
 
-- Seed: `train.seed`
-- Determinism: `runtime.deterministic`
-- AMP: `train.amp`
-- Checkpoints: `latest.pt`, `best.pt`
-- Resume: `train.resume`
+- `hcast` requires at least 2 hierarchy levels.
+- `hcast` `hcc.enabled: true` requires exactly 3 levels and a valid taxonomy.
+- `lhdnn` requires at least 2 levels and always requires taxonomy.
+- `ht_capsnet` requires at least 2 levels. The builder also enforces `train.seed` and `runtime.deterministic: true`.
+- `hrn` supports exactly 3 levels.
+- `hrn` parity loss does not support mixup/cutmix soft targets, so the shipped HRN presets keep them disabled.
 
-## Notes
+If no explicit taxonomy file is provided by an adapter, the dataset base class tries to infer `taxonomy["parent_of"]` from the labels.
 
-- H-CAST path uses upstream internals directly under `models/hcast/internal/`.
-- HT-CapsNet upstream is TensorFlow; this repo provides a PyTorch translation of the taxonomy-guided routing path while preserving the unified interfaces and training flow.
-- HRN backend supports exactly 3 hierarchy levels and uses HRN-style residual branch heads with combinatorial tree loss plus fine-level CE.
-- If optional deps for full H-CAST stack are missing (e.g., `timm`), model code falls back to a lightweight path so the CLI remains runnable.
+## Outputs And Metrics
+
+Each run writes to `train.output_dir`:
+
+- `latest.pt`
+- `best.pt`
+- `config_resolved.yaml`
+- `run_log.jsonl`
+- `test_metrics.yaml`
+
+`best.pt` is selected from validation metrics using:
+
+1. `fpa_topdown` higher is better
+2. `tice_topdown` lower is better
+3. `weighted_ap_topdown` higher is better
+
+Standard logged metric keys:
+
+- `acc_level_independent_<level>`
+- `acc_level_topdown_<level>`
+- `weighted_ap_independent`
+- `weighted_ap_topdown`
+- `fpa_independent`
+- `fpa_topdown`
+- `ahd_independent`
+- `ahd_topdown`
+- `tice_independent` when taxonomy is available
+- `tice_topdown` when taxonomy is available
+
+`topdown` metrics use taxonomy-constrained decoding. `independent` metrics use per-level argmax without hierarchy enforcement.
+
+Model-specific losses and diagnostics can add extra keys such as `loss_level_*`, `gk_loss`, `hier_loss`, `ce_loss_leaf`, or projection diagnostics.
+
+## Repository Guide
+
+See `docs/FILE_DOCUMENTATION.md` for a concise map of the codebase.

@@ -28,8 +28,8 @@ model:
     # mean: [0.485, 0.456, 0.406]
     # std: [0.229, 0.224, 0.225]
 
-  # Optional Design-1 hierarchical projection block
-  design1:
+  # Optional Hierarchical Constraint Cascade (HCC) projection block
+  hcc:
     enabled: false                 # true enables hierarchical affine projection constraints
     # temperature is REQUIRED when enabled=true
     temperature: 20.0              # Base projection temperature (> 0 when enabled)
