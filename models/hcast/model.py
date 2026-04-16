@@ -66,12 +66,12 @@ class HCASTModel(nn.Module):
         if self.hcc_cfg["enabled"]:
             if self.depth != 3:
                 raise ValueError(
-                    "cfg.model.hcc.enabled=true requires exactly 3 hierarchy levels "
+                    "hcc.enabled=true requires exactly 3 hierarchy levels "
                     f"(coarse->middle->fine), got {self.depth}."
                 )
             if taxonomy is None:
                 raise ValueError(
-                    "cfg.model.hcc.enabled=true requires dataset taxonomy with parent-child mappings."
+                    "hcc.enabled=true requires dataset taxonomy with parent-child mappings."
                 )
             self.hcc_projector = HierarchicalAffineProjector(
                 num_classes_per_level=self.num_classes_per_level,
@@ -110,25 +110,39 @@ class HCASTModel(nn.Module):
         enabled = bool(cfg.get("enabled", False))
         if enabled and "temperature" not in cfg:
             raise ValueError(
-                "cfg.model.hcc.temperature is required when cfg.model.hcc.enabled=true."
+                "hcc.temperature is required when hcc.enabled=true."
             )
 
         raw_temperature = cfg.get("temperature", 1.0)
         try:
             temperature = float(raw_temperature)
         except (TypeError, ValueError) as exc:
-            raise ValueError("cfg.model.hcc.temperature must be a valid float.") from exc
+            raise ValueError("hcc.temperature must be a valid float.") from exc
         if enabled and temperature <= 0.0:
             raise ValueError(
-                "cfg.model.hcc.temperature must be > 0 when cfg.model.hcc.enabled=true."
+                "hcc.temperature must be > 0 when hcc.enabled=true."
             )
 
         eps = float(cfg.get("eps", 1e-12))
         if eps <= 0.0:
             eps = 1e-12
         alpha_schedule = str(cfg.get("alpha_schedule", "exp")).strip().lower()
-        if alpha_schedule not in {"exp", "tanh"}:
-            raise ValueError("cfg.model.hcc.alpha_schedule must be one of ['exp', 'tanh'].")
+        if alpha_schedule not in {"exp", "tanh", "linear", "step"}:
+            raise ValueError(
+                "hcc.alpha_schedule must be one of ['exp', 'tanh', 'linear', 'step']."
+            )
+        try:
+            alpha_start_epoch = int(cfg.get("alpha_start_epoch", 0))
+        except (TypeError, ValueError):
+            alpha_start_epoch = 0
+        if alpha_start_epoch < 0:
+            alpha_start_epoch = 0
+        try:
+            alpha_ramp_epochs = int(cfg.get("alpha_ramp_epochs", 0))
+        except (TypeError, ValueError):
+            alpha_ramp_epochs = 0
+        if alpha_ramp_epochs <= 0:
+            alpha_ramp_epochs = 0
         alpha_tanh_beta = float(cfg.get("alpha_tanh_beta", 3.0))
         if alpha_tanh_beta <= 0.0:
             alpha_tanh_beta = 3.0
@@ -142,6 +156,8 @@ class HCASTModel(nn.Module):
             "eps": eps,
             "stabilize_simplex": bool(cfg.get("stabilize_simplex", True)),
             "alpha_schedule": alpha_schedule,
+            "alpha_start_epoch": alpha_start_epoch,
+            "alpha_ramp_epochs": alpha_ramp_epochs,
             "alpha_tanh_beta": alpha_tanh_beta,
             "alpha_tanh_center": alpha_tanh_center,
         }
@@ -164,6 +180,14 @@ class HCASTModel(nn.Module):
         base_temperature = float(self.hcc_cfg["temperature"])
         eps = float(self.hcc_cfg["eps"])
         alpha_schedule = str(self.hcc_cfg.get("alpha_schedule", "exp")).strip().lower()
+        alpha_start_epoch = int(self.hcc_cfg.get("alpha_start_epoch", 0))
+        if alpha_start_epoch < 0:
+            alpha_start_epoch = 0
+        raw_alpha_ramp_epochs = int(self.hcc_cfg.get("alpha_ramp_epochs", 0))
+        default_ramp_epochs = max(self._train_epochs - alpha_start_epoch, 1)
+        alpha_ramp_epochs = raw_alpha_ramp_epochs if raw_alpha_ramp_epochs > 0 else default_ramp_epochs
+        if alpha_ramp_epochs <= 0:
+            alpha_ramp_epochs = 1
         alpha_tanh_beta = float(self.hcc_cfg.get("alpha_tanh_beta", 3.0))
         if alpha_tanh_beta <= 0.0:
             alpha_tanh_beta = 3.0
@@ -173,8 +197,17 @@ class HCASTModel(nn.Module):
         if base_temperature <= 1.0:
             return 1.0, 1.0
 
-        progress = float(self._current_epoch) / float(max(self._train_epochs - 1, 1))
-        progress = min(max(progress, 0.0), 1.0)
+        if self._current_epoch < alpha_start_epoch:
+            return float(base_temperature), 0.0
+
+        if alpha_schedule == "step":
+            return 1.0, 1.0
+
+        if alpha_ramp_epochs <= 1:
+            progress = 1.0
+        else:
+            progress = float(self._current_epoch - alpha_start_epoch) / float(max(alpha_ramp_epochs - 1, 1))
+            progress = min(max(progress, 0.0), 1.0)
 
         if alpha_schedule == "tanh":
             # Centered tanh sigmoid on progress in [0, 1]:
@@ -193,12 +226,42 @@ class HCASTModel(nn.Module):
                 centered_progress = (2.0 * shifted_progress) - 1.0
                 alpha = (math.tanh(beta * centered_progress) + tanh_beta) / denom
             temperature = base_temperature - (alpha * (base_temperature - 1.0))
+        elif alpha_schedule == "linear":
+            alpha = progress
+            temperature = base_temperature - (alpha * (base_temperature - 1.0))
         else:
             temperature = base_temperature ** (1.0 - progress)
             alpha = (base_temperature - temperature) / max(base_temperature - 1.0, eps)
 
         alpha = min(max(alpha, 0.0), 1.0)
         return float(temperature), float(alpha)
+
+    @staticmethod
+    def _blend_hcc_probs(
+        probs_per_level: List[torch.Tensor],
+        projected_probs_per_level: List[torch.Tensor],
+        alpha: float,
+        eps: float,
+    ) -> List[torch.Tensor]:
+        if alpha <= eps:
+            # Start without any projection effect.
+            return probs_per_level
+        if alpha >= (1.0 - eps):
+            return projected_probs_per_level
+        return [
+            ((1.0 - alpha) * probs) + (alpha * projected)
+            for probs, projected in zip(probs_per_level, projected_probs_per_level)
+        ]
+
+    @staticmethod
+    def _hcc_diagnostics(
+        temperature: float,
+        alpha: float,
+    ) -> Dict[str, float]:
+        return {
+            "proj_temperature": float(temperature),
+            "proj_constraint_alpha": float(alpha),
+        }
 
     @staticmethod
     def _build_grid_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
@@ -257,44 +320,31 @@ class HCASTModel(nn.Module):
         # Upstream order is fine->coarse; unified API is coarse->fine.
         logits_per_level = list(reversed(list(raw)))
 
+        projected_probs_per_level = None
         effective_probs_per_level = None
         hcc_diagnostics = None
         if self._hcc_enabled():
             probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
+            projector_output = self.hcc_projector(probs_per_level)
+            projected_probs_per_level = projector_output["projected_probs_per_level"]
             temperature, alpha = self._hcc_temperature_and_alpha()
             eps = float(self.hcc_cfg["eps"])
-            if alpha <= eps:
-                # Start without any projection effect.
-                effective_probs_per_level = probs_per_level
-            else:
-                projector_output = self.hcc_projector(probs_per_level)
-                projected_probs_per_level = projector_output["projected_probs_per_level"]
-                if alpha >= (1.0 - eps):
-                    effective_probs_per_level = projected_probs_per_level
-                else:
-                    effective_probs_per_level = [
-                        ((1.0 - alpha) * probs) + (alpha * projected)
-                        for probs, projected in zip(probs_per_level, projected_probs_per_level)
-                    ]
+            effective_probs_per_level = self._blend_hcc_probs(
+                probs_per_level=probs_per_level,
+                projected_probs_per_level=projected_probs_per_level,
+                alpha=alpha,
+                eps=eps,
+            )
 
             with torch.no_grad():
-                diag: Dict[str, float] = {}
-                diag["proj_temperature"] = float(temperature)
-                diag["proj_constraint_alpha"] = float(alpha)
-                has_negative = 0.0
-                for level, probs in enumerate(effective_probs_per_level):
-                    neg_mask = probs < 0.0
-                    neg_count = int(neg_mask.sum().item())
-                    total_count = max(int(probs.numel()), 1)
-                    if neg_count > 0:
-                        has_negative = 1.0
-                    diag[f"proj_neg_frac_level_{level}"] = float(neg_count / total_count)
-                    diag[f"proj_min_level_{level}"] = float(probs.min().item())
-                diag["proj_has_negative"] = has_negative
-                hcc_diagnostics = diag
+                hcc_diagnostics = self._hcc_diagnostics(
+                    temperature=temperature,
+                    alpha=alpha,
+                )
 
         return {
             "logits_per_level": logits_per_level,
+            "projected_probs_per_level": projected_probs_per_level,
             "effective_probs_per_level": effective_probs_per_level,
             "hcc_diagnostics": hcc_diagnostics,
         }

@@ -3,11 +3,36 @@
 from .model import HCASTModel
 
 
+def _section_to_dict(section: Any) -> Dict[str, Any]:
+    if section is None:
+        return {}
+    if isinstance(section, dict):
+        return dict(section)
+    if hasattr(section, "items"):
+        return {k: v for k, v in section.items()}
+    return {}
+
+
+def _resolve_hcc_cfg(cfg: Any) -> Dict[str, Any]:
+    # Canonical location for model-agnostic constraints.
+    hcc_cfg = _section_to_dict(getattr(cfg, "hcc", None))
+    if hcc_cfg:
+        return hcc_cfg
+    if hasattr(cfg, "get"):
+        hcc_cfg = _section_to_dict(cfg.get("hcc", None))
+        if hcc_cfg:
+            return hcc_cfg
+
+    # Backward-compatible fallback.
+    model_cfg = _section_to_dict(getattr(cfg, "model", None))
+    return _section_to_dict(model_cfg.get("hcc", None))
+
+
 def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[Dict] = None):
     dataset_mean = list(cfg.dataset.get("mean", [0.485, 0.456, 0.406]))
     dataset_std = list(cfg.dataset.get("std", [0.229, 0.224, 0.225]))
     segment_cfg = cfg.model.get("segments", {})
-    hcc_cfg = cfg.model.get("hcc", {})
+    hcc_cfg = _resolve_hcc_cfg(cfg)
     model_drop = float(cfg.model.get("drop", 0.0))
     model_drop_path = float(cfg.model.get("drop_path", 0.1))
     return HCASTModel(

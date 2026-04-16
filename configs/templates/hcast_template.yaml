@@ -28,16 +28,6 @@ model:
     # mean: [0.485, 0.456, 0.406]
     # std: [0.229, 0.224, 0.225]
 
-  # Optional Hierarchical Constraint Cascade (HCC) projection block
-  hcc:
-    enabled: false                 # true enables hierarchical affine projection constraints
-    # temperature is REQUIRED when enabled=true
-    temperature: 20.0              # Base projection temperature (> 0 when enabled)
-    eps: 1.0e-12                   # Numerical stability epsilon (auto-clamped to > 0)
-    stabilize_simplex: true        # Stabilize simplex operations in projector
-    alpha_schedule: exp            # exp | tanh
-    alpha_tanh_beta: 3.0           # Steepness for centered tanh alpha schedule (slow-fast-slow), used when alpha_schedule=tanh
-
   loss:
     globalkl: true                 # Enable global KL regularization term
     gk_weight: 0.5                 # Weight multiplier for global KL term
@@ -47,3 +37,16 @@ model:
       mode: static                 # static | dynamic
       gamma: 0.0                   # Dynamic weighting scale control (clamped to [0,1])
       eps: 1.0e-12                 # Numerical stability epsilon for dynamic weighting
+
+# Optional model-agnostic Hierarchical Constraint Cascade (HCC) projection block.
+hcc:
+  enabled: false                   # true enables hierarchical affine projection constraints
+  # temperature is REQUIRED when enabled=true
+  temperature: 20.0                # Base projection temperature (> 0 when enabled)
+  eps: 1.0e-12                     # Numerical stability epsilon (auto-clamped to > 0)
+  stabilize_simplex: true          # Stabilize simplex operations in projector
+  alpha_schedule: exp              # exp | tanh | linear | step
+  alpha_start_epoch: 0             # Epoch index where constraint blending starts
+  alpha_ramp_epochs: 0             # Ramp length; <=0 means "until train end"
+  alpha_tanh_beta: 3.0             # Steepness for centered tanh alpha schedule, used for alpha_schedule=tanh
+  alpha_tanh_center: 0.5           # Midpoint in [0,1] for tanh schedule

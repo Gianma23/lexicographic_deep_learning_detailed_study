@@ -162,6 +162,14 @@ class HierarchicalAffineProjector(nn.Module):
         child_parent_denom = mass_per_parent[:, idx].clamp_min(self.eps)
         return child_pos * (child_parent_mass / child_parent_denom)
 
+    @staticmethod
+    def _constraint_residual(
+        child_probs: torch.Tensor,
+        parent_probs: torch.Tensor,
+        mapping: torch.Tensor,
+    ) -> torch.Tensor:
+        return child_probs @ mapping.transpose(0, 1).contiguous() - parent_probs
+
     def forward(
         self,
         probs_per_level: List[torch.Tensor],
@@ -193,8 +201,8 @@ class HierarchicalAffineProjector(nn.Module):
             m23 = self.m23.to(device=p2.device, dtype=compute_dtype)
 
             # residual before projection for [M12 p2 - p1, M23 p3 - p2]
-            residual_12_before = p2_work @ m12.transpose(0, 1).contiguous() - p1_work
-            residual_23_before = p3_work @ m23.transpose(0, 1).contiguous() - p2_work
+            residual_12_before = self._constraint_residual(p2_work, p1_work, m12)
+            residual_23_before = self._constraint_residual(p3_work, p2_work, m23)
             residual_before = torch.cat([residual_12_before, residual_23_before], dim=1)
 
             gram_12 = m12 @ m12.transpose(0, 1).contiguous()
@@ -205,7 +213,7 @@ class HierarchicalAffineProjector(nn.Module):
             ).transpose(0, 1).contiguous()
             p2_hat = p2_work - coeff_12 @ m12
 
-            residual_23_stage = p3_work @ m23.transpose(0, 1).contiguous() - p2_hat
+            residual_23_stage = self._constraint_residual(p3_work, p2_hat, m23)
             gram_23 = m23 @ m23.transpose(0, 1).contiguous()
             eye_23 = torch.eye(gram_23.shape[0], dtype=compute_dtype, device=p2.device)
             coeff_23 = torch.linalg.solve(
@@ -229,8 +237,8 @@ class HierarchicalAffineProjector(nn.Module):
                     parent_of_child=self.parent_of_fine,
                 )
 
-            residual_12_after = p2_hat @ m12.transpose(0, 1).contiguous() - p1_hat
-            residual_23_after = p3_hat @ m23.transpose(0, 1).contiguous() - p2_hat
+            residual_12_after = self._constraint_residual(p2_hat, p1_hat, m12)
+            residual_23_after = self._constraint_residual(p3_hat, p2_hat, m23)
             residual_after = torch.cat([residual_12_after, residual_23_after], dim=1)
 
         return {
