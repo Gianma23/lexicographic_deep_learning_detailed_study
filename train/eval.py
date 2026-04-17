@@ -4,11 +4,92 @@ import torch
 
 from .metrics import (
     average_hierarchical_distance,
+    decoded_preds,
     full_path_accuracy,
     per_level_top1,
     tice_score,
     weighted_average_precision,
 )
+
+
+def _parent_mapping_for_level(
+    taxonomy: Optional[Dict[str, Any]],
+    level: int,
+    num_children: int,
+    num_parents: int,
+) -> Optional[Dict[int, int]]:
+    if not taxonomy or "parent_of" not in taxonomy:
+        return None
+
+    parent_of = taxonomy["parent_of"]
+    if not isinstance(parent_of, dict):
+        return None
+
+    raw_mapping = parent_of.get(level, parent_of.get(str(level)))
+    if not isinstance(raw_mapping, dict):
+        return None
+
+    mapping: Dict[int, int] = {}
+    for child_raw, parent_raw in raw_mapping.items():
+        try:
+            child = int(child_raw)
+            parent = int(parent_raw)
+        except (TypeError, ValueError):
+            continue
+        if child < 0 or child >= num_children:
+            continue
+        if parent < 0 or parent >= num_parents:
+            continue
+        mapping[child] = parent
+
+    if len(mapping) != num_children:
+        return None
+    return mapping
+
+
+def _conditional_fine_accuracy(
+    parent_pred: torch.Tensor,
+    fine_pred: torch.Tensor,
+    parent_target: torch.Tensor,
+    fine_target: torch.Tensor,
+) -> Dict[str, float]:
+    parent_correct_mask = parent_pred.eq(parent_target)
+    support = float(parent_correct_mask.float().mean().item())
+    if bool(parent_correct_mask.any()):
+        fine_acc = float(fine_pred[parent_correct_mask].eq(fine_target[parent_correct_mask]).float().mean().item())
+    else:
+        fine_acc = 0.0
+    return {"acc": fine_acc, "support": support}
+
+
+def _mean_gt_rank_within_parent(
+    probs: torch.Tensor,
+    gt_parent: torch.Tensor,
+    gt_child: torch.Tensor,
+    children_by_parent: List[torch.Tensor],
+) -> Optional[float]:
+    ranks: List[float] = []
+    batch_size = int(probs.size(0))
+    for sample_idx in range(batch_size):
+        parent_id = int(gt_parent[sample_idx].item())
+        if parent_id < 0 or parent_id >= len(children_by_parent):
+            continue
+        siblings = children_by_parent[parent_id]
+        if siblings.numel() == 0:
+            continue
+
+        gt_child_id = int(gt_child[sample_idx].item())
+        if not bool((siblings == gt_child_id).any()):
+            continue
+
+        sibling_scores = probs[sample_idx, siblings]
+        gt_score = probs[sample_idx, gt_child_id]
+        rank = 1 + int((sibling_scores > gt_score).sum().item())
+        ranks.append(float(rank))
+
+    if not ranks:
+        return None
+    return float(sum(ranks) / len(ranks))
 
 
 def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Optional[Dict] = None) -> Dict[str, float]:
@@ -101,6 +182,92 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
     if tice_topdown is not None:
         metrics["tice_topdown"] = tice_topdown
 
+    if len(logits_per_level) >= 3:
+        # Always define diagnostics on probability scores:
+        # pre = raw softmax(logits), post = final scores used by metrics.
+        pre_probs = [torch.softmax(logits, dim=-1) for logits in logits_per_level]
+        post_scores = effective_probs_per_level if has_effective_probs else pre_probs
+
+        level_middle = 1
+        level_fine = 2
+        fine_pre = pre_probs[level_fine]
+        fine_post = post_scores[level_fine]
+
+        gt_middle = targets[:, level_middle].long()
+        gt_fine = targets[:, level_fine].long()
+        row_ids = torch.arange(targets.size(0), device=targets.device)
+
+        metrics["proj_delta_l1_level_2"] = float((fine_post - fine_pre).abs().sum(dim=-1).mean().item())
+        metrics["proj_flip_rate_level_2"] = float(fine_pre.argmax(dim=-1).ne(fine_post.argmax(dim=-1)).float().mean().item())
+        metrics["proj_gt_prob_delta_level_2"] = float(
+            (fine_post[row_ids, gt_fine] - fine_pre[row_ids, gt_fine]).mean().item()
+        )
+
+        preds_ind = decoded_preds(post_scores, taxonomy=taxonomy, enforce_hierarchy=False)
+        preds_td = decoded_preds(post_scores, taxonomy=taxonomy, enforce_hierarchy=True)
+        if len(preds_ind) >= 3:
+            cond_ind = _conditional_fine_accuracy(
+                parent_pred=preds_ind[level_middle],
+                fine_pred=preds_ind[level_fine],
+                parent_target=gt_middle,
+                fine_target=gt_fine,
+            )
+            metrics["acc_l2_ind_given_l1_correct"] = cond_ind["acc"]
+            metrics["support_l1_ind_correct"] = cond_ind["support"]
+        if len(preds_td) >= 3:
+            cond_td = _conditional_fine_accuracy(
+                parent_pred=preds_td[level_middle],
+                fine_pred=preds_td[level_fine],
+                parent_target=gt_middle,
+                fine_target=gt_fine,
+            )
+            metrics["acc_l2_td_given_l1_correct"] = cond_td["acc"]
+            metrics["support_l1_td_correct"] = cond_td["support"]
+
+        num_middle = int(post_scores[level_middle].size(-1))
+        num_fine = int(fine_post.size(-1))
+        parent_of_fine = _parent_mapping_for_level(
+            taxonomy=taxonomy,
+            level=2,
+            num_children=num_fine,
+            num_parents=num_middle,
+        )
+        if parent_of_fine is not None:
+            parent_child_mask = torch.zeros(
+                (num_middle, num_fine),
+                dtype=fine_post.dtype,
+                device=fine_post.device,
+            )
+            children_by_parent_py: List[List[int]] = [[] for _ in range(num_middle)]
+            for child_id, parent_id in parent_of_fine.items():
+                parent_child_mask[parent_id, child_id] = 1.0
+                children_by_parent_py[parent_id].append(int(child_id))
+            children_by_parent = [
+                torch.tensor(child_ids, dtype=torch.long, device=fine_post.device)
+                for child_ids in children_by_parent_py
+            ]
+
+            gt_parent_mask = parent_child_mask[gt_middle]
+            metrics["gt_parent_mass_pre_l2"] = float((fine_pre * gt_parent_mask).sum(dim=-1).mean().item())
+            metrics["gt_parent_mass_post_l2"] = float((fine_post * gt_parent_mask).sum(dim=-1).mean().item())
+
+            rank_pre = _mean_gt_rank_within_parent(
+                probs=fine_pre,
+                gt_parent=gt_middle,
+                gt_child=gt_fine,
+                children_by_parent=children_by_parent,
+            )
+            rank_post = _mean_gt_rank_within_parent(
+                probs=fine_post,
+                gt_parent=gt_middle,
+                gt_child=gt_fine,
+                children_by_parent=children_by_parent,
+            )
+            if rank_pre is not None:
+                metrics["gt_child_rank_within_parent_pre_l2"] = rank_pre
+            if rank_post is not None:
+                metrics["gt_child_rank_within_parent_post_l2"] = rank_post
+
     hcc_diagnostics = output.get("hcc_diagnostics")
     if isinstance(hcc_diagnostics, dict):
         for key, value in hcc_diagnostics.items():
@@ -182,6 +349,36 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     if loss_parts:
         sections.append("\n\t\tLoss[" + ", ".join(loss_parts) + "]")
 
+    hcc_diag_keys = [
+        "proj_constraint_alpha",
+        "proj_temperature",
+        "proj_residual_before_l1",
+        "proj_residual_after_l1",
+        "proj_residual_reduction",
+        "proj_delta_l1_level_2",
+        "proj_flip_rate_level_2",
+        "proj_gt_prob_delta_level_2",
+        "acc_l2_ind_given_l1_correct",
+        "acc_l2_td_given_l1_correct",
+        "support_l1_ind_correct",
+        "support_l1_td_correct",
+        "gt_parent_mass_pre_l2",
+        "gt_parent_mass_post_l2",
+        "gt_child_rank_within_parent_pre_l2",
+        "gt_child_rank_within_parent_post_l2",
+    ]
+    hcc_parts: List[str] = []
+    for key in hcc_diag_keys:
+        if key not in metrics:
+            continue
+        value = float(metrics[key])
+        if key.startswith("acc_") or key.endswith("_rate_level_2") or key.startswith("support_"):
+            hcc_parts.append(f"{key}={_format_ratio(value)}")
+        else:
+            hcc_parts.append(f"{key}={value:.4f}")
+    if hcc_parts:
+        sections.append("HCC[" + ", ".join(hcc_parts) + "]")
+
     known_keys = set(_level_acc_keys(metrics, "acc_level_independent_"))
     known_keys.update(_level_acc_keys(metrics, "acc_level_topdown_"))
     known_keys.update(
@@ -199,6 +396,7 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
             "gk_loss",
         }
     )
+    known_keys.update(hcc_diag_keys)
     known_keys.update(loss_level_keys)
 
     """ other_keys = sorted([k for k in metrics.keys() if k not in known_keys])

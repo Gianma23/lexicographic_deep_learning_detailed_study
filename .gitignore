@@ -9,6 +9,7 @@ __pycache__/
 # Aggiunte
 outputs/**
 data/**
+docs/figures/**
 .VSCodeCounter/
 .codex
 

@@ -257,11 +257,24 @@ class HCASTModel(nn.Module):
     def _hcc_diagnostics(
         temperature: float,
         alpha: float,
+        projector_output: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
-        return {
+        diagnostics = {
             "proj_temperature": float(temperature),
             "proj_constraint_alpha": float(alpha),
         }
+        if isinstance(projector_output, dict):
+            residual_before = projector_output.get("residual_before")
+            residual_after = projector_output.get("residual_after")
+            if isinstance(residual_before, torch.Tensor) and residual_before.numel() > 0:
+                diagnostics["proj_residual_before_l1"] = float(residual_before.abs().mean().item())
+            if isinstance(residual_after, torch.Tensor) and residual_after.numel() > 0:
+                diagnostics["proj_residual_after_l1"] = float(residual_after.abs().mean().item())
+            if "proj_residual_before_l1" in diagnostics and "proj_residual_after_l1" in diagnostics:
+                before = diagnostics["proj_residual_before_l1"]
+                after = diagnostics["proj_residual_after_l1"]
+                diagnostics["proj_residual_reduction"] = float(before - after)
+        return diagnostics
 
     @staticmethod
     def _build_grid_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
@@ -324,22 +337,28 @@ class HCASTModel(nn.Module):
         effective_probs_per_level = None
         hcc_diagnostics = None
         if self._hcc_enabled():
-            probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
-            projector_output = self.hcc_projector(probs_per_level)
-            projected_probs_per_level = projector_output["projected_probs_per_level"]
             temperature, alpha = self._hcc_temperature_and_alpha()
             eps = float(self.hcc_cfg["eps"])
-            effective_probs_per_level = self._blend_hcc_probs(
-                probs_per_level=probs_per_level,
-                projected_probs_per_level=projected_probs_per_level,
-                alpha=alpha,
-                eps=eps,
-            )
+            projector_output = None
+
+            # Keep pre-activation epochs identical to baseline H-CAST.
+            # Downstream loss/metrics use logits whenever effective probs are absent.
+            if alpha > eps:
+                probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
+                projector_output = self.hcc_projector(probs_per_level)
+                projected_probs_per_level = projector_output["projected_probs_per_level"]
+                effective_probs_per_level = self._blend_hcc_probs(
+                    probs_per_level=probs_per_level,
+                    projected_probs_per_level=projected_probs_per_level,
+                    alpha=alpha,
+                    eps=eps,
+                )
 
             with torch.no_grad():
                 hcc_diagnostics = self._hcc_diagnostics(
                     temperature=temperature,
                     alpha=alpha,
+                    projector_output=projector_output,
                 )
 
         return {

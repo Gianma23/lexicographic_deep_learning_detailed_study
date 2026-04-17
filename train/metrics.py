@@ -74,6 +74,15 @@ def _decoded_preds(
     return _argmax_preds(logits_per_level)
 
 
+def decoded_preds(
+    logits_per_level: List[torch.Tensor],
+    taxonomy: Optional[Dict[str, Any]] = None,
+    enforce_hierarchy: bool = False,
+) -> List[torch.Tensor]:
+    """Public wrapper around internal decoding utility."""
+    return _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+
+
 def per_level_top1(
     logits_per_level: List[torch.Tensor],
     targets: torch.Tensor,

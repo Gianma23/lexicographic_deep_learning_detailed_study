@@ -180,6 +180,8 @@ Standard logged metric keys:
 
 Model-specific losses and diagnostics can add extra keys such as `loss_level_*`, `gk_loss`, `hier_loss`, `ce_loss_leaf`, or projection diagnostics.
 
+For the full HCC diagnostic key glossary and interpretation guide, see `docs/HCC_DIAGNOSTIC_LOGS.md`.
+
 ## Repository Guide
 
 See `docs/FILE_DOCUMENTATION.md` for a concise map of the codebase.
