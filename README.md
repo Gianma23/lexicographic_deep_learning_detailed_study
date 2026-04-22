@@ -106,6 +106,13 @@ Common fields worth checking first:
 - `train.device`
 - `train.resume`
 
+Lexicographic upper-bound mode (H-CAST only, 3-level):
+
+- `train.lexicographic.enabled`: enables gradient-space lexicographic updates
+- `train.lexicographic.eps`: projection denominator epsilon
+- `train.lexicographic.log_metrics`: logs projection diagnostics under `train_metrics`
+- Requires `model.name: hcast`, exactly 3 level losses, and `model.loss.globalkl: false`
+
 The config loader supports positional dotlist overrides such as `train.epochs=10` or `optim.lr=1e-4`.
 
 ## Supported Datasets

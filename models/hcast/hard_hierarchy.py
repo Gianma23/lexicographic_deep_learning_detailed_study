@@ -197,11 +197,15 @@ class HierarchicalAffineProjector(nn.Module):
             p1_work = p1.to(dtype=compute_dtype)
             p2_work = p2.to(dtype=compute_dtype)
             p3_work = p3.to(dtype=compute_dtype)
+            # Stage-wise detached anchors:
+            # - p1 is treated as fixed when projecting p2.
+            # - p2_hat is treated as fixed when projecting p3.
+            p1_anchor = p1_work.detach()
             m12 = self.m12.to(device=p2.device, dtype=compute_dtype)
             m23 = self.m23.to(device=p2.device, dtype=compute_dtype)
 
             # residual before projection for [M12 p2 - p1, M23 p3 - p2]
-            residual_12_before = self._constraint_residual(p2_work, p1_work, m12)
+            residual_12_before = self._constraint_residual(p2_work, p1_anchor, m12)
             residual_23_before = self._constraint_residual(p3_work, p2_work, m23)
             residual_before = torch.cat([residual_12_before, residual_23_before], dim=1)
 
@@ -213,7 +217,8 @@ class HierarchicalAffineProjector(nn.Module):
             ).transpose(0, 1).contiguous()
             p2_hat = p2_work - coeff_12 @ m12
 
-            residual_23_stage = self._constraint_residual(p3_work, p2_hat, m23)
+            p2_anchor = p2_hat.detach()
+            residual_23_stage = self._constraint_residual(p3_work, p2_anchor, m23)
             gram_23 = m23 @ m23.transpose(0, 1).contiguous()
             eye_23 = torch.eye(gram_23.shape[0], dtype=compute_dtype, device=p2.device)
             coeff_23 = torch.linalg.solve(
@@ -228,12 +233,13 @@ class HierarchicalAffineProjector(nn.Module):
                 # re-normalize children to match parent masses.
                 p2_hat = self._mass_renormalize(
                     child_scores=p2_hat,
-                    parent_mass=p1_hat,
+                    parent_mass=p1_anchor,
                     parent_of_child=self.parent_of_middle,
                 )
+                p2_anchor = p2_hat.detach()
                 p3_hat = self._mass_renormalize(
                     child_scores=p3_hat,
-                    parent_mass=p2_hat,
+                    parent_mass=p2_anchor,
                     parent_of_child=self.parent_of_fine,
                 )
 

@@ -123,6 +123,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 ## Notebooks
 
 - `notebooks/hcast_analysis.ipynb`: H-CAST result analysis notebook.
+- `notebooks/hcast_analysis_utils.py`: Shared loaders, run selection, plotting, and table utilities used by `hcast_analysis.ipynb`.
 - `notebooks/hcc_internal_diagnostics.ipynb`: HCC diagnostics notebook over `run_log.jsonl` with switch-focused plots/tables.
 - `notebooks/hcc_failure_examples.ipynb`: CUB/Aircraft qualitative notebook for cases where independent fails and top-down succeeds.
 - `notebooks/model_comparison_all_datasets.ipynb`: Cross-model comparison notebook across datasets.
@@ -131,6 +132,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 
 - `docs/FILE_DOCUMENTATION.md`: This repository map.
 - `docs/HCC_DIAGNOSTIC_LOGS.md`: Glossary and interpretation of HCC diagnostic metric keys.
+- `docs/GRADIENT_PARAM_DIAGNOSTIC_LOGS.md`: Glossary and interpretation of trunk gradient/parameter diagnostics, including lexicographic metrics.
 
 ## Runtime Artifacts
 

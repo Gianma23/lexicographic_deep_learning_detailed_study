@@ -45,8 +45,18 @@ hcc:
   temperature: 20.0                # Base projection temperature (> 0 when enabled)
   eps: 1.0e-12                     # Numerical stability epsilon (auto-clamped to > 0)
   stabilize_simplex: true          # Stabilize simplex operations in projector
+  use_conditional_prob: false      # If true, use log p(child|parent) for level-1/2 HCC probability-path losses
+  conditional_prob_levels: [1, 2]  # Levels to condition: [1], [2], or [1, 2] (ignored when use_conditional_prob=false)
   alpha_schedule: exp              # exp | tanh | linear | step
   alpha_start_epoch: 0             # Epoch index where constraint blending starts
   alpha_ramp_epochs: 0             # Ramp length; <=0 means "until train end"
   alpha_tanh_beta: 3.0             # Steepness for centered tanh alpha schedule, used for alpha_schedule=tanh
   alpha_tanh_center: 0.5           # Midpoint in [0,1] for tanh schedule
+
+# Optional lexicographic optimization (upper-bound analysis mode).
+# This is currently supported for 3-level H-CAST only.
+train:
+  lexicographic:
+    enabled: false                 # true enables coarse->mid->fine projected gradient composition
+    eps: 1.0e-12                   # Numerical epsilon for projection denominators
+    log_metrics: true              # Emit lexicographic projection diagnostics in train_metrics

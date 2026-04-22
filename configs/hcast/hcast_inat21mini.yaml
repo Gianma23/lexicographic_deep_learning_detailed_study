@@ -63,7 +63,7 @@ dataset:
 
 dataloader:
   batch_size: 256
-  num_workers: 12
+  num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
 
