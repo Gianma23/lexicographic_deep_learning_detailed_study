@@ -94,6 +94,14 @@ def _mean_gt_rank_within_parent(
 
 def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Optional[Dict] = None) -> Dict[str, float]:
     logits_per_level = output["logits_per_level"]
+    effective_logits_per_level = output.get("effective_logits_per_level")
+    has_effective_logits = (
+        isinstance(effective_logits_per_level, list)
+        and len(effective_logits_per_level) == len(logits_per_level)
+    )
+    if effective_logits_per_level is not None and not has_effective_logits:
+        raise ValueError("`effective_logits_per_level` must be None or a list aligned with logits levels.")
+
     effective_probs_per_level = output.get("effective_probs_per_level")
     has_effective_probs = (
         isinstance(effective_probs_per_level, list)
@@ -103,8 +111,14 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
         raise ValueError("`effective_probs_per_level` must be None or a list aligned with logits levels.")
 
     # Metrics are computed from final model scores:
-    # projected probabilities when available, otherwise raw logits.
-    score_source = effective_probs_per_level if has_effective_probs else logits_per_level
+    # projected logits when available, legacy projected probabilities when
+    # available, otherwise raw logits.
+    if has_effective_logits:
+        score_source = effective_logits_per_level
+    elif has_effective_probs:
+        score_source = effective_probs_per_level
+    else:
+        score_source = logits_per_level
 
     metrics: Dict[str, float] = {}
     metrics.update(
@@ -184,27 +198,45 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
 
     if len(logits_per_level) >= 3:
         # Always define diagnostics on probability scores:
-        # pre = raw softmax(logits), post = final scores used by metrics.
+        # pre = raw softmax(logits), post = softmax(final logits) or final probabilities.
         pre_probs = [torch.softmax(logits, dim=-1) for logits in logits_per_level]
-        post_scores = effective_probs_per_level if has_effective_probs else pre_probs
+        if has_effective_logits:
+            post_probs = [torch.softmax(logits, dim=-1) for logits in effective_logits_per_level]
+        elif has_effective_probs:
+            post_probs = effective_probs_per_level
+        else:
+            post_probs = pre_probs
 
         level_middle = 1
         level_fine = 2
+        fine_pre_logits = logits_per_level[level_fine]
+        fine_post_logits = (
+            effective_logits_per_level[level_fine]
+            if has_effective_logits
+            else logits_per_level[level_fine]
+        )
         fine_pre = pre_probs[level_fine]
-        fine_post = post_scores[level_fine]
+        fine_post = post_probs[level_fine]
 
         gt_middle = targets[:, level_middle].long()
         gt_fine = targets[:, level_fine].long()
         row_ids = torch.arange(targets.size(0), device=targets.device)
 
+        if has_effective_logits:
+            metrics["proj_logit_delta_l1_level_2"] = float(
+                (fine_post_logits - fine_pre_logits).abs().sum(dim=-1).mean().item()
+            )
+            metrics["proj_gt_logit_delta_level_2"] = float(
+                (fine_post_logits[row_ids, gt_fine] - fine_pre_logits[row_ids, gt_fine]).mean().item()
+            )
         metrics["proj_delta_l1_level_2"] = float((fine_post - fine_pre).abs().sum(dim=-1).mean().item())
         metrics["proj_flip_rate_level_2"] = float(fine_pre.argmax(dim=-1).ne(fine_post.argmax(dim=-1)).float().mean().item())
         metrics["proj_gt_prob_delta_level_2"] = float(
             (fine_post[row_ids, gt_fine] - fine_pre[row_ids, gt_fine]).mean().item()
         )
 
-        preds_ind = decoded_preds(post_scores, taxonomy=taxonomy, enforce_hierarchy=False)
-        preds_td = decoded_preds(post_scores, taxonomy=taxonomy, enforce_hierarchy=True)
+        preds_ind = decoded_preds(score_source, taxonomy=taxonomy, enforce_hierarchy=False)
+        preds_td = decoded_preds(score_source, taxonomy=taxonomy, enforce_hierarchy=True)
         if len(preds_ind) >= 3:
             cond_ind = _conditional_fine_accuracy(
                 parent_pred=preds_ind[level_middle],
@@ -224,7 +256,7 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
             metrics["acc_l2_td_given_l1_correct"] = cond_td["acc"]
             metrics["support_l1_td_correct"] = cond_td["support"]
 
-        num_middle = int(post_scores[level_middle].size(-1))
+        num_middle = int(post_probs[level_middle].size(-1))
         num_fine = int(fine_post.size(-1))
         parent_of_fine = _parent_mapping_for_level(
             taxonomy=taxonomy,
@@ -352,9 +384,11 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     hcc_diag_keys = [
         "proj_constraint_alpha",
         "proj_temperature",
-        "proj_residual_before_l1",
-        "proj_residual_after_l1",
-        "proj_residual_reduction",
+        "proj_logit_residual_before_l1",
+        "proj_logit_residual_after_l1",
+        "proj_logit_residual_reduction",
+        "proj_logit_delta_l1_level_2",
+        "proj_gt_logit_delta_level_2",
         "proj_delta_l1_level_2",
         "proj_flip_rate_level_2",
         "proj_gt_prob_delta_level_2",

@@ -77,7 +77,6 @@ class HCASTModel(nn.Module):
                 num_classes_per_level=self.num_classes_per_level,
                 taxonomy=taxonomy,
                 eps=float(self.hcc_cfg["eps"]),
-                stabilize_simplex=bool(self.hcc_cfg["stabilize_simplex"]),
             )
 
         if timm_create_model is None:
@@ -154,7 +153,6 @@ class HCASTModel(nn.Module):
             "enabled": enabled,
             "temperature": temperature,
             "eps": eps,
-            "stabilize_simplex": bool(cfg.get("stabilize_simplex", True)),
             "alpha_schedule": alpha_schedule,
             "alpha_start_epoch": alpha_start_epoch,
             "alpha_ramp_epochs": alpha_ramp_epochs,
@@ -237,20 +235,20 @@ class HCASTModel(nn.Module):
         return float(temperature), float(alpha)
 
     @staticmethod
-    def _blend_hcc_probs(
-        probs_per_level: List[torch.Tensor],
-        projected_probs_per_level: List[torch.Tensor],
+    def _blend_hcc_logits(
+        logits_per_level: List[torch.Tensor],
+        projected_logits_per_level: List[torch.Tensor],
         alpha: float,
         eps: float,
     ) -> List[torch.Tensor]:
         if alpha <= eps:
             # Start without any projection effect.
-            return probs_per_level
+            return logits_per_level
         if alpha >= (1.0 - eps):
-            return projected_probs_per_level
+            return projected_logits_per_level
         return [
-            ((1.0 - alpha) * probs) + (alpha * projected)
-            for probs, projected in zip(probs_per_level, projected_probs_per_level)
+            ((1.0 - alpha) * logits) + (alpha * projected)
+            for logits, projected in zip(logits_per_level, projected_logits_per_level)
         ]
 
     @staticmethod
@@ -267,13 +265,13 @@ class HCASTModel(nn.Module):
             residual_before = projector_output.get("residual_before")
             residual_after = projector_output.get("residual_after")
             if isinstance(residual_before, torch.Tensor) and residual_before.numel() > 0:
-                diagnostics["proj_residual_before_l1"] = float(residual_before.abs().mean().item())
+                diagnostics["proj_logit_residual_before_l1"] = float(residual_before.abs().mean().item())
             if isinstance(residual_after, torch.Tensor) and residual_after.numel() > 0:
-                diagnostics["proj_residual_after_l1"] = float(residual_after.abs().mean().item())
-            if "proj_residual_before_l1" in diagnostics and "proj_residual_after_l1" in diagnostics:
-                before = diagnostics["proj_residual_before_l1"]
-                after = diagnostics["proj_residual_after_l1"]
-                diagnostics["proj_residual_reduction"] = float(before - after)
+                diagnostics["proj_logit_residual_after_l1"] = float(residual_after.abs().mean().item())
+            if "proj_logit_residual_before_l1" in diagnostics and "proj_logit_residual_after_l1" in diagnostics:
+                before = diagnostics["proj_logit_residual_before_l1"]
+                after = diagnostics["proj_logit_residual_after_l1"]
+                diagnostics["proj_logit_residual_reduction"] = float(before - after)
         return diagnostics
 
     @staticmethod
@@ -333,8 +331,8 @@ class HCASTModel(nn.Module):
         # Upstream order is fine->coarse; unified API is coarse->fine.
         logits_per_level = list(reversed(list(raw)))
 
-        projected_probs_per_level = None
-        effective_probs_per_level = None
+        projected_logits_per_level = None
+        effective_logits_per_level = None
         hcc_diagnostics = None
         if self._hcc_enabled():
             temperature, alpha = self._hcc_temperature_and_alpha()
@@ -342,14 +340,13 @@ class HCASTModel(nn.Module):
             projector_output = None
 
             # Keep pre-activation epochs identical to baseline H-CAST.
-            # Downstream loss/metrics use logits whenever effective probs are absent.
+            # Downstream loss/metrics use raw logits whenever effective logits are absent.
             if alpha > eps:
-                probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
-                projector_output = self.hcc_projector(probs_per_level)
-                projected_probs_per_level = projector_output["projected_probs_per_level"]
-                effective_probs_per_level = self._blend_hcc_probs(
-                    probs_per_level=probs_per_level,
-                    projected_probs_per_level=projected_probs_per_level,
+                projector_output = self.hcc_projector(logits_per_level)
+                projected_logits_per_level = projector_output["projected_logits_per_level"]
+                effective_logits_per_level = self._blend_hcc_logits(
+                    logits_per_level=logits_per_level,
+                    projected_logits_per_level=projected_logits_per_level,
                     alpha=alpha,
                     eps=eps,
                 )
@@ -363,7 +360,7 @@ class HCASTModel(nn.Module):
 
         return {
             "logits_per_level": logits_per_level,
-            "projected_probs_per_level": projected_probs_per_level,
-            "effective_probs_per_level": effective_probs_per_level,
+            "projected_logits_per_level": projected_logits_per_level,
+            "effective_logits_per_level": effective_logits_per_level,
             "hcc_diagnostics": hcc_diagnostics,
         }

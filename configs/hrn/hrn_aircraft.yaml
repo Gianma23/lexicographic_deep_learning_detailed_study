@@ -9,7 +9,7 @@ model:
 
 dataset:
   name: fgvc-aircraft
-  root: ./data/fgvc-aircraft-2013b
+  root: /scratch/g.saggini1/datasets/fgvc-aircraft-2013b
   hierarchy_depth: 3
   image_size: 448
   mean: [0.5, 0.5, 0.5]
@@ -21,14 +21,19 @@ dataset:
     use_timm: false
     normalization: torchvision
     manual:
-      crop_mode: random_resized_crop
-      random_resized_crop_scale: [0.67, 1.0]
-      random_resized_crop_ratio: [1.0, 1.0]
+      crop_mode: random_crop
+      random_crop_padding: 8
+      random_crop_padding_mode: constant
+      resize_before_crop: true
+      resize_before_crop_size: 550
+      resize_before_crop_interpolation: bilinear
       interpolation: bilinear
       random_horizontal_flip_prob: 0.5
     eval:
       resize_mode: resize_center_crop
-      # Approximate upstream 550->448 center crop ratio.
+      resize_size: 550
+      resize_square: true
+      # Upstream HRN uses Resize((550, 550)) followed by CenterCrop(448).
       crop_ratio: 0.8145454545
       interpolation: bilinear
     mixup: 0.0

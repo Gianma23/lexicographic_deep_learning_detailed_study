@@ -10,12 +10,14 @@ dataset:
   hierarchy_depth: 3
   image_size: 32
   in_channels: 3
-  mean: [0.5071, 0.4867, 0.4408]
-  std: [0.2675, 0.2565, 0.2761]
+  # B-CNN reference standardizes with a single CIFAR-wide mean/std; repeat it
+  # across RGB channels for torchvision Normalize.
+  mean: [0.4782, 0.4782, 0.4782]
+  std: [0.2683, 0.2683, 0.2683]
   levels: [coarse1, coarse2, fine]
   download: true
-  # Keep repo workflow (B-CNN used canonical train/test, but this repo requires a val split).
   val_split_ratio: 0.2
+  val_source: test
   split_seed: null
   transforms:
     # B-CNN reference (arXiv:1709.09890) reports training without data augmentation.
@@ -50,16 +52,17 @@ dataloader:
   batch_size: 128
   num_workers: 8
   pin_memory: true
+  drop_last_train: false
   windows_spawn_safe: true
 
 train:
   # Direct from LH-DNN paper for large LH-DNN on CIFAR-100.
-  epochs: 50
+  epochs: 30
   seed: 42
   device: cuda
-  amp: true
+  amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/lhdnn_cifar100
+  output_dir: /scratch/g.saggini1/outputs/lhdnn_cifar100_v2
   # Paper-faithful default CE behavior (label smoothing not specified in paper).
   smoothing: 0.0
 
@@ -67,8 +70,9 @@ optim:
   # Inherited from B-CNN reference setup used by LH-DNN paper.
   name: sgd
   lr: 0.001
-  weight_decay: 0.0005
+  weight_decay: 0.0
   momentum: 0.9
+  nesterov: true
 
 scheduler:
   # CIFAR-100 LH-DNN uses 0.001 then 0.0002, switched at epoch 11.

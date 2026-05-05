@@ -68,7 +68,10 @@ class CIFAR100Dataset(BaseHierDataset):
         if len(_COARSE_TO_SUPER) != 20:
             raise RuntimeError("Invalid CIFAR-100 coarse->super mapping. Expected 20 entries.")
 
-        split_is_train_pool = self.split in {"train", "val"}
+        val_ratio = resolve_val_split_ratio(self.cfg)
+        val_source = str(self.cfg.dataset.get("val_source", "train_split")).strip().lower()
+        val_uses_test = self.split == "val" and val_ratio <= 0.0 and val_source == "test"
+        split_is_train_pool = self.split in {"train", "val"} and not val_uses_test
         download = bool(self.cfg.dataset.get("download", False))
 
         try:
@@ -85,7 +88,7 @@ class CIFAR100Dataset(BaseHierDataset):
         if split_is_train_pool:
             train_idx, val_idx = stratified_train_val_indices(
                 self._cifar_targets,
-                val_ratio=resolve_val_split_ratio(self.cfg),
+                val_ratio=val_ratio,
                 seed=resolve_split_seed(self.cfg),
             )
             chosen = train_idx if self.split == "train" else val_idx

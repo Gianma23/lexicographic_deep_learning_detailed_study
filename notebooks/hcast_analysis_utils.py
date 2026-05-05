@@ -367,10 +367,10 @@ def _detect_color_family(run_like: Mapping[str, Any]) -> str:
         run_dir_name = Path(run_dir).name.lower()
 
     text = f"{label} {run_dir_name}"
-    if ("step_100" in text) or ("step 100" in text) or ("100epoch" in text):
-        return "step100"
-    if ("step_0" in text) or ("step 0" in text) or ("0epoch" in text):
-        return "step0"
+    if "lex" in text:
+        return "lex"
+    if "hcc" in text or "step" in text or "inverse" in text:
+        return "hcc"
     return "other"
 
 
@@ -385,17 +385,31 @@ def _gradient_hexes(cmap_name: str, n: int, lo: float = 0.40, hi: float = 0.88) 
     return [mcolors.to_hex(cmap(float(pos))) for pos in positions]
 
 
+def _palette_gradient_hexes(anchor_hexes: Sequence[str], n: int) -> List[str]:
+    """Interpolate between hand-picked high-contrast anchors."""
+    if int(n) <= 0:
+        return []
+    anchors = list(anchor_hexes)
+    if int(n) == 1:
+        return [anchors[min(len(anchors) // 2, len(anchors) - 1)]]
+    cmap = mcolors.LinearSegmentedColormap.from_list("semantic_run_palette", anchors)
+    return [mcolors.to_hex(cmap(float(pos))) for pos in np.linspace(0.0, 1.0, int(n))]
+
+
 def _apply_semantic_color_gradients(run_data_by_dataset: Mapping[str, List[RunData]]) -> None:
-    family_style = {
-        "baseline": ("Blues", 0.45, 0.88),
-        "step100": ("Reds", 0.45, 0.90),
-        "step0": ("Greens", 0.45, 0.90),
-        "other": ("Purples", 0.40, 0.85),
+    family_palettes = {
+        # Baseline is intentionally stable and blue across datasets.
+        "baseline": ["#1f77b4", "#0b4f8a"],
+        # HCC variants use a perceptually clear warm ramp instead of similar greens.
+        "hcc": ["#f6d32d", "#f59e0b", "#ef4444", "#991b1b"],
+        # Lexicographic runs use a green/teal ramp, separated from baseline blue and HCC warm colors.
+        "lex": ["#006d5b", "#009e73", "#20c997"],
+        "other": ["#9ca3af", "#4b5563"],
     }
 
     for dataset_runs in run_data_by_dataset.values():
         ordered = sorted(dataset_runs, key=lambda run: run.get("_run_order", 0))
-        buckets: Dict[str, List[RunData]] = {key: [] for key in family_style.keys()}
+        buckets: Dict[str, List[RunData]] = {key: [] for key in family_palettes.keys()}
 
         for run in ordered:
             if bool(run.get("color_locked", False)):
@@ -406,8 +420,7 @@ def _apply_semantic_color_gradients(run_data_by_dataset: Mapping[str, List[RunDa
             buckets[family].append(run)
 
         for family, runs in buckets.items():
-            cmap_name, lo, hi = family_style[family]
-            colors = _gradient_hexes(cmap_name, len(runs), lo=lo, hi=hi)
+            colors = _palette_gradient_hexes(family_palettes[family], len(runs))
             for run, color in zip(runs, colors):
                 run["color"] = color
 
@@ -775,7 +788,6 @@ class HCastAnalysis:
             ("proj_constraint_strength", "Constraint strength", False),
             ("proj_temperature", "Projection temperature", False),
             ("proj_mode_intrinsic_soft", "Intrinsic-soft mode flag (1=true)", False),
-            ("proj_has_negative", "Any negative probability in batch", True),
         ]
 
         for dataset_key in self.dataset_keys:
@@ -784,19 +796,6 @@ class HCastAnalysis:
                 continue
 
             diag_specs = list(base_diag_specs)
-            neg_frac_level_ids = sorted(
-                {
-                    int(key.rsplit("_", 1)[-1])
-                    for run_data in dataset_runs
-                    for event in run_data["epoch_events"]
-                    for key in event["val_metrics_norm"].keys()
-                    if key.startswith("proj_neg_frac_level_") and key.rsplit("_", 1)[-1].isdigit()
-                }
-            )
-            for level_idx in neg_frac_level_ids:
-                level_name = get_level_label(level_idx, dataset_runs[0])
-                diag_specs.append((f"proj_neg_frac_level_{level_idx}", f"Negative fraction {level_name} (L{level_idx})", True))
-
             active_diag_specs = []
             for metric_key, title, is_percent in diag_specs:
                 has_finite = False
@@ -976,16 +975,35 @@ class HCastAnalysis:
         legend_gutter_ratio: float = 0.78,
         legend_max_rows_per_col: int = 10,
     ) -> None:
+        plot_ncols = max(1, int(n_cols))
+        gradient_level_specs = [
+            (
+                "coarse",
+                [
+                    ("t1", "coarse"),
+                    ("t2", "coarse"),
+                    ("t3", "coarse"),
+                    ("t2t1", "coarse"),
+                    ("t3t2t1", "coarse"),
+                ],
+            ),
+            (
+                "mid",
+                [
+                    ("t1", "mid"),
+                    ("t2", "mid"),
+                    ("t2t1", "mid"),
+                ],
+            ),
+            (
+                "fine",
+                [
+                    ("t1", "fine"),
+                ],
+            ),
+        ]
         trunk_level_order = [
-            ("t1", "fine"),
-            ("t1", "mid"),
-            ("t1", "coarse"),
-            ("t2", "mid"),
-            ("t2", "coarse"),
-            ("t3", "coarse"),
-            ("t2t1", "mid"),
-            ("t2t1", "coarse"),
-            ("t3t2t1", "coarse"),
+            trunk_level for _level_name, trunk_levels in gradient_level_specs for trunk_level in trunk_levels
         ]
         param_trunk_order = ["t1", "t2", "t3", "t2t1", "t3t2t1"]
 
@@ -993,16 +1011,21 @@ class HCastAnalysis:
             return trunk_name.upper()
 
         metric_titles: Dict[str, str] = {
-            "post_projection_applied_t2t1_mid_coarse": "Post projection applied (T2T1, mid vs coarse, 1=true)",
-            "cos_mid_coarse": "Cosine (mid vs coarse)",
-            "post_cos_mid_coarse": "Post cosine (mid vs coarse)",
-            "post_projection_applied_t1_fine_coarse": "Post projection applied (T1, fine vs coarse, 1=true)",
-            "post_projection_applied_t1_mid_proj_coarse": "Post projection applied (T1, mid_proj vs coarse, 1=true)",
-            "post_projection_applied_t1_fine_mid_proj": "Post projection applied (T1, fine vs mid_proj, 1=true)",
-            "cos_fine_coarse": "Cosine (fine vs coarse)",
-            "post_cos_fine_coarse": "Post cosine (fine vs coarse)",
-            "cos_fine_mid": "Cosine (fine vs mid)",
-            "post_cos_fine_mid": "Post cosine (fine vs mid)",
+            "post_projection_applied_t2_mid_coarse": "Post projection applied (T2, mid vs coarse, 1=true)",
+            "post_projection_applied_t1_mid_coarse": "Post projection applied (T1, mid vs coarse, 1=true)",
+            "post_projection_applied_t1_fine_higher": "Post projection applied (T1, fine vs coarse+mid_proj, 1=true)",
+            "cos_t2_mid_coarse": "Cosine (T2, mid vs coarse)",
+            "cos_t1_mid_coarse": "Cosine (T1, mid vs coarse)",
+            "cos_t2t1_mid_coarse": "Cosine (T2T1, mid vs coarse)",
+            "cos_t1_fine_higher": "Cosine (T1, fine vs coarse+mid)",
+            "cos_t1_fine_coarse": "Cosine (T1, fine vs coarse)",
+            "cos_t1_fine_mid": "Cosine (T1, fine vs mid)",
+            "post_cos_t2_mid_proj_coarse": "Post cosine (T2, mid_proj vs coarse)",
+            "post_cos_t1_mid_proj_coarse": "Post cosine (T1, mid_proj vs coarse)",
+            "post_cos_t2t1_mid_proj_coarse": "Post cosine (T2T1, mid_proj vs coarse)",
+            "post_cos_t1_fine_proj_higher": "Post cosine (T1, fine_proj vs coarse+mid_proj)",
+            "post_cos_t1_fine_proj_coarse": "Post cosine (T1, fine_proj vs coarse)",
+            "post_cos_t1_fine_proj_mid_proj": "Post cosine (T1, fine_proj vs mid_proj)",
         }
 
         for trunk_name, level_name in trunk_level_order:
@@ -1015,46 +1038,123 @@ class HCastAnalysis:
             metric_titles[f"param_norm_{trunk_name}"] = f"Parameter norm ({trunk_tag})"
             metric_titles[f"delta_param_norm_{trunk_name}"] = f"Parameter delta norm ({trunk_tag}, epoch)"
 
-        pre_grad_keys = [f"grad_norm_{trunk}_{level}" for trunk, level in trunk_level_order]
-        post_grad_keys = [f"post_grad_norm_{trunk}_{level}" for trunk, level in trunk_level_order]
+        pre_grad_groups = [
+            (
+                level_name,
+                [f"grad_norm_{trunk}_{grad_level}" for trunk, grad_level in trunk_levels],
+            )
+            for level_name, trunk_levels in gradient_level_specs
+        ]
+        post_grad_groups = [
+            (
+                level_name,
+                [f"post_grad_norm_{trunk}_{grad_level}" for trunk, grad_level in trunk_levels],
+            )
+            for level_name, trunk_levels in gradient_level_specs
+        ]
+        pre_grad_keys = [metric_key for _level_name, metric_keys in pre_grad_groups for metric_key in metric_keys]
+        post_grad_keys = [metric_key for _level_name, metric_keys in post_grad_groups for metric_key in metric_keys]
         param_norm_keys = [f"param_norm_{trunk}" for trunk in param_trunk_order]
         delta_param_norm_keys = [f"delta_param_norm_{trunk}" for trunk in param_trunk_order]
-        requested_pre_cosine_keys = [
-            "cos_mid_coarse",
-            "cos_fine_coarse",
-            "cos_fine_mid",
+        pre_cosine_groups = [
+            (
+                "mid vs coarse",
+                [
+                    "cos_t2_mid_coarse",
+                    "cos_t1_mid_coarse",
+                    "cos_t2t1_mid_coarse",
+                ],
+            ),
+            (
+                "fine vs coarse+mid and components",
+                [
+                    "cos_t1_fine_higher",
+                    "cos_t1_fine_coarse",
+                    "cos_t1_fine_mid",
+                ],
+            ),
+        ]
+        post_cosine_groups = [
+            (
+                "mid_proj vs coarse",
+                [
+                    "post_cos_t2_mid_proj_coarse",
+                    "post_cos_t1_mid_proj_coarse",
+                    "post_cos_t2t1_mid_proj_coarse",
+                ],
+            ),
+            (
+                "fine_proj vs coarse+mid_proj and components",
+                [
+                    "post_cos_t1_fine_proj_higher",
+                    "post_cos_t1_fine_proj_coarse",
+                    "post_cos_t1_fine_proj_mid_proj",
+                ],
+            ),
         ]
         requested_post_cosine_keys = [
-            "post_cos_mid_coarse",
-            "post_cos_fine_coarse",
-            "post_cos_fine_mid",
+            metric_key for _group_name, metric_keys in post_cosine_groups for metric_key in metric_keys
         ]
 
         base_metric_groups = [
-            ("Gradient Norms (Pre, hierarchy order: T1->T2->T3, fine->mid->coarse)", pre_grad_keys, "norm"),
-            ("Gradient Norms (Post-Lex, hierarchy order: T1->T2->T3, fine->mid->coarse)", post_grad_keys, "norm"),
             ("Parameter Norms (Hierarchy Order: T1->T2->T3 + aggregate trunks)", param_norm_keys, "norm"),
             ("Parameter Delta Norms (Hierarchy Order: T1->T2->T3 + aggregate trunks)", delta_param_norm_keys, "delta"),
             (
                 "Lex Projection Applied Flags",
                 [
-                    "post_projection_applied_t2t1_mid_coarse",
-                    "post_projection_applied_t1_fine_coarse",
-                    "post_projection_applied_t1_mid_proj_coarse",
-                    "post_projection_applied_t1_fine_mid_proj",
+                    "post_projection_applied_t2_mid_coarse",
+                    "post_projection_applied_t1_mid_coarse",
+                    "post_projection_applied_t1_fine_higher",
                 ],
                 "flag",
             ),
         ]
 
-        pre_post_pairs = list(zip(pre_grad_keys, post_grad_keys))
+        pre_post_pair_groups = [
+            (
+                level_name,
+                list(zip(pre_keys, post_keys)),
+            )
+            for (level_name, pre_keys), (_post_level_name, post_keys) in zip(pre_grad_groups, post_grad_groups)
+        ]
+        pre_post_pairs = [pair for _level_name, pairs in pre_post_pair_groups for pair in pairs]
+        cosine_pre_post_pair_groups = [
+            (
+                "mid vs coarse",
+                [
+                    ("cos_t2_mid_coarse", "post_cos_t2_mid_proj_coarse"),
+                    ("cos_t1_mid_coarse", "post_cos_t1_mid_proj_coarse"),
+                    ("cos_t2t1_mid_coarse", "post_cos_t2t1_mid_proj_coarse"),
+                ],
+            ),
+            (
+                "fine vs coarse+mid and components",
+                [
+                    ("cos_t1_fine_higher", "post_cos_t1_fine_proj_higher"),
+                    ("cos_t1_fine_coarse", "post_cos_t1_fine_proj_coarse"),
+                    ("cos_t1_fine_mid", "post_cos_t1_fine_proj_mid_proj"),
+                ],
+            ),
+        ]
+        cosine_pre_post_pairs = [
+            pair for _group_name, pairs in cosine_pre_post_pair_groups for pair in pairs
+        ]
+
+        def _param_curve_style(run_data: RunData) -> Dict[str, Any]:
+            """Use baseline solid and comparison runs dashed on parameter plots."""
+            label = str(run_data.get("label", "")).lower()
+            is_baseline = bool(run_data.get("is_baseline", False)) or label in {"h-cast", "hcast", "baseline"}
+            return {
+                "linestyle": "-" if is_baseline else "--",
+                "marker": None,
+                "markevery": None,
+                "linewidth": 2.4 if is_baseline else 2.2,
+            }
 
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
             if not dataset_runs:
                 continue
-
-            metric_groups = list(base_metric_groups)
 
             has_post_requested_cosine = False
             for run_data in dataset_runs:
@@ -1075,21 +1175,20 @@ class HCastAnalysis:
                 if has_post_requested_cosine:
                     break
 
-            requested_cosine_keys = list(requested_pre_cosine_keys)
-            if has_post_requested_cosine:
-                requested_cosine_keys.extend(requested_post_cosine_keys)
-
-            metric_groups.append(
-                (
-                    "Lexicographic Cosines (Requested keys)",
-                    requested_cosine_keys,
-                    "cosine",
+            metric_groups = list(base_metric_groups)
+            if not has_post_requested_cosine:
+                metric_groups.extend(
+                    [
+                        (f"Cosines - Pre - {group_name}", metric_keys, "cosine")
+                        for group_name, metric_keys in pre_cosine_groups
+                    ]
                 )
-            )
 
             base_metric_keys = sorted(
                 {metric for _, group_metrics, _ in metric_groups for metric in group_metrics}.union(
                     {metric for pair in pre_post_pairs for metric in pair}
+                ).union(
+                    {metric for pair in cosine_pre_post_pairs for metric in pair}
                 )
             )
 
@@ -1106,7 +1205,7 @@ class HCastAnalysis:
 
                 plotted_any_group = True
                 n_metrics = len(active_keys)
-                ncols = min(int(n_cols), n_metrics)
+                ncols = plot_ncols
                 nrows = int(np.ceil(n_metrics / ncols))
                 fig_width = ax_width * ncols
                 fig_height = ax_height * nrows
@@ -1115,18 +1214,31 @@ class HCastAnalysis:
 
                 legend_handles = None
                 legend_labels = None
+                is_parameter_group = group_title.startswith("Parameter Norms") or group_title.startswith(
+                    "Parameter Delta Norms"
+                )
 
                 for plot_idx, (ax, metric_key) in enumerate(zip(axes, active_keys)):
                     for run_data, metric_map in run_series_cache:
                         epochs, values = metric_map[metric_key]
                         smooth_values = moving_average_ignore_nan(values, smooth_window)
+                        line_style = _param_curve_style(run_data) if is_parameter_group else {
+                            "linestyle": "-",
+                            "marker": None,
+                            "markevery": None,
+                            "linewidth": 2.2,
+                        }
 
                         ax.plot(
                             epochs,
                             smooth_values,
                             label=run_data["label"],
                             color=run_data["color"],
-                            linewidth=2.2,
+                            linestyle=line_style["linestyle"],
+                            marker=line_style["marker"],
+                            markevery=line_style["markevery"],
+                            markersize=4.0,
+                            linewidth=line_style["linewidth"],
                         )
 
                         if show_raw_overlay and int(smooth_window) > 1:
@@ -1135,6 +1247,7 @@ class HCastAnalysis:
                                 values,
                                 color=run_data["color"],
                                 linewidth=1.0,
+                                linestyle=line_style["linestyle"] if is_parameter_group else "-",
                                 alpha=float(raw_alpha),
                             )
 
@@ -1195,15 +1308,18 @@ class HCastAnalysis:
                 plt.tight_layout(rect=layout_rect)
                 plt.show()
 
-            active_pairs = [
-                pair
-                for pair in pre_post_pairs
-                if has_any_finite(run_series_cache, pair[0]) or has_any_finite(run_series_cache, pair[1])
-            ]
-            if active_pairs:
+            for level_name, pair_group in pre_post_pair_groups:
+                active_pairs = [
+                    pair
+                    for pair in pair_group
+                    if has_any_finite(run_series_cache, pair[0]) or has_any_finite(run_series_cache, pair[1])
+                ]
+                if not active_pairs:
+                    continue
+
                 plotted_any_group = True
                 n_metrics = len(active_pairs)
-                ncols = min(int(n_cols), n_metrics)
+                ncols = plot_ncols
                 nrows = int(np.ceil(n_metrics / ncols))
                 fig_width = ax_width * ncols
                 fig_height = ax_height * nrows
@@ -1291,9 +1407,116 @@ class HCastAnalysis:
                     )
                     layout_rect = (0.0, 0.0, legend_gutter_ratio, 0.94)
 
-                fig.suptitle(f"{dataset_key}: Lex Pre vs Post Gradient Overlays (Hierarchy Order)", fontsize=13, y=0.99)
+                fig.suptitle(
+                    f"{dataset_key}: Lex Pre vs Post Gradient Norms - {level_name.title()}",
+                    fontsize=13,
+                    y=0.99,
+                )
                 plt.tight_layout(rect=layout_rect)
                 plt.show()
+
+            if has_post_requested_cosine:
+                for group_name, pair_group in cosine_pre_post_pair_groups:
+                    active_pairs = [
+                        pair
+                        for pair in pair_group
+                        if has_any_finite(run_series_cache, pair[0]) or has_any_finite(run_series_cache, pair[1])
+                    ]
+                    if not active_pairs:
+                        continue
+
+                    plotted_any_group = True
+                    n_metrics = len(active_pairs)
+                    ncols = plot_ncols
+                    nrows = int(np.ceil(n_metrics / ncols))
+                    fig_width = ax_width * ncols
+                    fig_height = ax_height * nrows
+                    fig, axes = plt.subplots(nrows, ncols, figsize=(fig_width, fig_height), sharex=True)
+                    axes = np.array(axes).reshape(-1)
+
+                    legend_handles = None
+                    legend_labels = None
+
+                    for plot_idx, (ax, (pre_key, post_key)) in enumerate(zip(axes, active_pairs)):
+                        for run_data, metric_map in run_series_cache:
+                            epochs, pre_values = metric_map[pre_key]
+                            _, post_values = metric_map[post_key]
+                            pre_smooth = moving_average_ignore_nan(pre_values, smooth_window)
+                            post_smooth = moving_average_ignore_nan(post_values, smooth_window)
+
+                            ax.plot(
+                                epochs,
+                                pre_smooth,
+                                label=f"{run_data['label']} (pre)",
+                                color=run_data["color"],
+                                linewidth=2.2,
+                            )
+                            ax.plot(
+                                epochs,
+                                post_smooth,
+                                label=f"{run_data['label']} (post)",
+                                color=run_data["color"],
+                                linewidth=2.2,
+                                linestyle="--",
+                            )
+
+                            if show_raw_overlay and int(smooth_window) > 1:
+                                ax.plot(
+                                    epochs,
+                                    pre_values,
+                                    color=run_data["color"],
+                                    linewidth=1.0,
+                                    alpha=float(raw_alpha),
+                                )
+                                ax.plot(
+                                    epochs,
+                                    post_values,
+                                    color=run_data["color"],
+                                    linewidth=1.0,
+                                    alpha=float(raw_alpha),
+                                    linestyle="--",
+                                )
+
+                        ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.55)
+                        ax.set_ylim(-1.05, 1.05)
+                        ax.set_title(metric_titles.get(pre_key, pre_key).replace("Cosine", "Pre/Post cosine"))
+                        ax.set_ylabel("Value")
+                        ax.grid(True, alpha=0.25)
+
+                        if plot_idx >= (nrows - 1) * ncols:
+                            ax.set_xlabel("Epoch")
+
+                        if legend_handles is None:
+                            handles, labels = ax.get_legend_handles_labels()
+                            if handles:
+                                legend_handles, legend_labels = handles, labels
+
+                    for ax in axes[n_metrics:]:
+                        ax.set_visible(False)
+
+                    layout_rect = (0.0, 0.0, 1.0, 0.95)
+                    if legend_handles:
+                        legend_ncol = max(1, int(np.ceil(len(legend_labels) / legend_max_rows_per_col)))
+                        fig.legend(
+                            legend_handles,
+                            legend_labels,
+                            loc="upper left",
+                            bbox_to_anchor=(legend_gutter_ratio + 0.01, 0.975),
+                            ncol=legend_ncol,
+                            borderaxespad=0.0,
+                            frameon=False,
+                            title="Runs (solid=pre, dashed=post)",
+                            fontsize=9,
+                        )
+                        layout_rect = (0.0, 0.0, legend_gutter_ratio, 0.94)
+
+                    fig.suptitle(
+                        f"{dataset_key}: Lex Pre vs Post Cosines - {group_name}",
+                        fontsize=13,
+                        y=0.99,
+                    )
+                    plt.tight_layout(rect=layout_rect)
+                    plt.show()
 
             if not plotted_any_group:
                 print(f"[{dataset_key}] No trunk gradient/parameter diagnostics found in selected runs.")

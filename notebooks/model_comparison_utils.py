@@ -1,0 +1,1402 @@
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Mapping as MappingABC
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+
+import matplotlib.pyplot as plt
+import numpy as np
+import yaml
+
+try:
+    from IPython.display import Markdown, display
+except Exception:  # pragma: no cover - notebook runtime dependent
+    Markdown = None
+    display = None
+
+
+plt.style.use("seaborn-v0_8-whitegrid")
+np.set_printoptions(precision=4, suppress=True)
+
+
+RunSpec = Union[str, Path, Mapping[str, Any]]
+RunData = MutableMapping[str, Any]
+
+_ACC_LEVEL_PATTERN = re.compile(r"^acc_level_(\d+)$")
+_ACC_LEVEL_TOPDOWN_PATTERN = re.compile(r"^acc_level_topdown_(\d+)$")
+_ACC_LEVEL_INDEPENDENT_PATTERN = re.compile(r"^acc_level_independent_(\d+)$")
+_LOSS_LEVEL_PATTERN = re.compile(r"^loss_level_(\d+)$")
+
+_DATASET_ALIASES = {
+    "cifar100": "cifar-100",
+    "cifar-100": "cifar-100",
+    "cub": "cub-200-2011",
+    "cub200": "cub-200-2011",
+    "cub-200": "cub-200-2011",
+    "cub-200-2011": "cub-200-2011",
+    "aircraft": "fgvc-aircraft",
+    "fgvc-aircraft": "fgvc-aircraft",
+    "inat": "inat21-mini",
+    "inat21mini": "inat21-mini",
+    "inat21-mini": "inat21-mini",
+    "inat21_mini": "inat21-mini",
+}
+
+_DATASET_DISPLAY = {
+    "cifar-100": "CIFAR-100",
+    "cub-200-2011": "CUB-200-2011",
+    "fgvc-aircraft": "FGVC-Aircraft",
+    "inat21-mini": "iNat21-Mini",
+}
+
+_MODEL_ALIASES = {
+    "hcast": "hcast",
+    "hrn": "hrn",
+    "ht_capsnet": "ht_capsnet",
+    "htcapsnet": "ht_capsnet",
+    "capsnet": "ht_capsnet",
+    "lhdnn": "lhdnn",
+    "hiercos": "hiercos",
+}
+
+_MODEL_DISPLAY = {
+    "hcast": "H-CAST",
+    "hrn": "HRN",
+    "ht_capsnet": "HT-CapsNet",
+    "lhdnn": "LH-DNN",
+    "hiercos": "HierCoS",
+}
+
+_DEFAULT_MODEL_COLORS = {
+    "hcast": "#1f77b4",
+    "hrn": "#ff7f0e",
+    "ht_capsnet": "#2ca02c",
+    "lhdnn": "#d62728",
+    "hiercos": "#cad627",
+}
+
+_DATASET_RUN_NAME_TOKENS = {
+    "cifar-100": ("cifar100", "cifar-100"),
+    "cub-200-2011": ("cub200", "cub-200", "cub-200-2011", "cub"),
+    "fgvc-aircraft": ("aircraft", "fgvc-aircraft", "fgvcaircraft"),
+    "inat21-mini": ("inat", "inat21mini", "inat21-mini", "inat21_mini"),
+}
+
+
+def resolve_project_root() -> Path:
+    cwd = Path.cwd().resolve()
+    candidates = [cwd, cwd.parent]
+    for candidate in candidates:
+        if (candidate / "configs").exists():
+            return candidate
+    return cwd
+
+
+def show_markdown(text: str) -> None:
+    is_jupyter = False
+    try:
+        from IPython import get_ipython
+
+        shell = get_ipython()
+        is_jupyter = bool(shell) and shell.__class__.__name__ == "ZMQInteractiveShell"
+    except Exception:
+        is_jupyter = False
+
+    if is_jupyter and Markdown is not None and display is not None:
+        display(Markdown(text))
+    else:
+        print(text)
+
+
+def _as_float_dict(metrics: Any) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    if not isinstance(metrics, dict):
+        return out
+    for key, value in metrics.items():
+        try:
+            out[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _canonical_key(raw_name: Optional[str]) -> Optional[str]:
+    if raw_name is None:
+        return None
+    key = "".join(ch for ch in str(raw_name).strip().lower() if ch.isalnum())
+    return key or None
+
+
+def canonical_dataset_name(name: Optional[str]) -> str:
+    canonical = _canonical_key(name)
+    if not canonical:
+        return "unknown-dataset"
+
+    if canonical in _DATASET_ALIASES:
+        return _DATASET_ALIASES[canonical]
+
+    hyphenated = str(name).strip().lower().replace("_", "-").replace(" ", "")
+    if hyphenated in _DATASET_ALIASES:
+        return _DATASET_ALIASES[hyphenated]
+    return hyphenated or "unknown-dataset"
+
+
+def dataset_display_name(name: Optional[str]) -> str:
+    canonical = canonical_dataset_name(name)
+    return _DATASET_DISPLAY.get(canonical, canonical)
+
+
+def canonical_model_name(name: Optional[str]) -> str:
+    canonical = _canonical_key(name)
+    if not canonical:
+        return "unknown-model"
+
+    if canonical in _MODEL_ALIASES:
+        return _MODEL_ALIASES[canonical]
+
+    underscored = str(name).strip().lower().replace("-", "_").replace(" ", "_")
+    return _MODEL_ALIASES.get(underscored, underscored)
+
+
+def model_display_name(name: Optional[str]) -> str:
+    canonical = canonical_model_name(name)
+    return _MODEL_DISPLAY.get(canonical, canonical)
+
+
+def infer_model_name_from_run_name(run_name: str) -> str:
+    normalized = str(run_name).strip().lower()
+    for raw_alias, canonical in _MODEL_ALIASES.items():
+        token = str(raw_alias).replace("_", "")
+        if token in normalized.replace("_", ""):
+            return canonical
+    return "unknown-model"
+
+
+def _model_run_name_tokens(model_name: str) -> List[str]:
+    canonical = canonical_model_name(model_name)
+    tokens = {canonical}
+    for raw_alias, mapped in _MODEL_ALIASES.items():
+        if mapped == canonical:
+            tokens.add(str(raw_alias).strip().lower())
+    return sorted(tokens)
+
+
+def _dataset_run_name_tokens(dataset_name: str) -> List[str]:
+    canonical = canonical_dataset_name(dataset_name)
+    explicit = _DATASET_RUN_NAME_TOKENS.get(canonical, ())
+    if explicit:
+        return sorted({str(token).strip().lower() for token in explicit if str(token).strip()})
+
+    fallback = str(canonical).strip().lower()
+    compact = "".join(ch for ch in fallback if ch.isalnum())
+    return sorted({fallback, compact} - {""})
+
+
+def matches_model_dataset_run_name(run_data: Mapping[str, Any]) -> bool:
+    run_name = str(run_data.get("run_name", "")).strip().lower()
+    model_name = str(run_data.get("model_name", "")).strip().lower()
+    dataset_name = str(run_data.get("dataset_name", "")).strip().lower()
+
+    if not run_name or not model_name or not dataset_name:
+        return False
+
+    model_tokens = _model_run_name_tokens(model_name)
+    dataset_tokens = _dataset_run_name_tokens(dataset_name)
+
+    for model_token in model_tokens:
+        for dataset_token in dataset_tokens:
+            if run_name == f"{model_token}_{dataset_token}":
+                return True
+    return False
+
+
+def normalize_metrics(metrics: Any) -> Dict[str, float]:
+    out = _as_float_dict(metrics)
+
+    if "weighted_ap_topdown" not in out:
+        if "weighted_ap" in out:
+            out["weighted_ap_topdown"] = out["weighted_ap"]
+        elif "weighted_ap_independent" in out:
+            out["weighted_ap_topdown"] = out["weighted_ap_independent"]
+    if "weighted_ap_independent" not in out and "weighted_ap_topdown" in out:
+        out["weighted_ap_independent"] = out["weighted_ap_topdown"]
+
+    if "fpa_topdown" not in out:
+        if "fpa" in out:
+            out["fpa_topdown"] = out["fpa"]
+        elif "fpa_independent" in out:
+            out["fpa_topdown"] = out["fpa_independent"]
+    if "fpa_independent" not in out and "fpa_topdown" in out:
+        out["fpa_independent"] = out["fpa_topdown"]
+
+    if "tice_topdown" not in out:
+        if "tice" in out:
+            out["tice_topdown"] = out["tice"]
+        elif "tice_independent" in out:
+            out["tice_topdown"] = out["tice_independent"]
+    if "tice_independent" not in out and "tice_topdown" in out:
+        out["tice_independent"] = out["tice_topdown"]
+
+    if "ahd_topdown" not in out:
+        if "ahd" in out:
+            out["ahd_topdown"] = out["ahd"]
+        elif "ahd_independent" in out:
+            out["ahd_topdown"] = out["ahd_independent"]
+    if "ahd_independent" not in out and "ahd_topdown" in out:
+        out["ahd_independent"] = out["ahd_topdown"]
+
+    for key, value in list(out.items()):
+        match = _ACC_LEVEL_PATTERN.match(key)
+        if match:
+            level_idx = int(match.group(1))
+            out.setdefault(f"acc_level_independent_{level_idx}", value)
+            out.setdefault(f"acc_level_topdown_{level_idx}", value)
+
+    level_ids = set()
+    for key in list(out.keys()):
+        match = _ACC_LEVEL_TOPDOWN_PATTERN.match(key)
+        if match:
+            level_ids.add(int(match.group(1)))
+            continue
+
+        match = _ACC_LEVEL_INDEPENDENT_PATTERN.match(key)
+        if match:
+            level_ids.add(int(match.group(1)))
+
+    for level_idx in level_ids:
+        topdown_key = f"acc_level_topdown_{level_idx}"
+        independent_key = f"acc_level_independent_{level_idx}"
+        if topdown_key not in out and independent_key in out:
+            out[topdown_key] = out[independent_key]
+        if independent_key not in out and topdown_key in out:
+            out[independent_key] = out[topdown_key]
+
+    return out
+
+
+def load_jsonl_events(path: Path) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                events.append(json.loads(line))
+    return events
+
+
+def load_yaml(path: Path) -> Dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def metric_for_best(metrics: Mapping[str, float]) -> float:
+    m = normalize_metrics(metrics)
+
+    has_fpa = "fpa_topdown" in m
+    has_tice = "tice_topdown" in m
+    has_wap = "weighted_ap_topdown" in m
+
+    if has_fpa or has_tice or has_wap:
+        fpa = float(m.get("fpa_topdown", 0.0))
+        neg_tice = -float(m.get("tice_topdown", 1.0))
+        wap = float(m.get("weighted_ap_topdown", 0.0))
+        return float(fpa + 1e-3 * neg_tice + 1e-6 * wap)
+
+    topdown_keys = [
+        key
+        for key in m
+        if key.startswith("acc_level_topdown_") and key.rsplit("_", 1)[-1].isdigit()
+    ]
+    independent_keys = [
+        key
+        for key in m
+        if key.startswith("acc_level_independent_") and key.rsplit("_", 1)[-1].isdigit()
+    ]
+    deepest = topdown_keys or independent_keys
+
+    if not deepest:
+        return float(m.get("fpa_topdown", 0.0))
+
+    deepest_key = max(deepest, key=lambda key: int(key.rsplit("_", 1)[-1]))
+    primary = float(m.get(deepest_key, 0.0))
+    tie = float(m.get("fpa_topdown", 0.0))
+    return float(primary + 1e-3 * tie)
+
+
+def parse_run(run_dir: Path) -> RunData:
+    run_path = Path(run_dir)
+
+    cfg: Dict[str, Any] = {}
+    cfg_path = run_path / "config_resolved.yaml"
+    if cfg_path.exists():
+        cfg = load_yaml(cfg_path) or {}
+
+    events: List[Dict[str, Any]] = []
+    log_path = run_path / "run_log.jsonl"
+    if log_path.exists():
+        events = load_jsonl_events(log_path)
+
+    epoch_events = [event for event in events if event.get("event") == "epoch"]
+    for event in epoch_events:
+        event["train_metrics_norm"] = normalize_metrics(event.get("train_metrics", {}))
+        event["val_metrics_norm"] = normalize_metrics(event.get("val_metrics", {}))
+        event["rank_score"] = metric_for_best(event["val_metrics_norm"])
+
+    test_event: Dict[str, Any] = {}
+    test_events = [event for event in events if event.get("event") == "test"]
+    if test_events:
+        test_event = test_events[-1]
+
+    test_metrics = normalize_metrics(test_event.get("test_metrics", {}))
+    test_yaml_path = run_path / "test_metrics.yaml"
+    if test_yaml_path.exists():
+        test_metrics_yaml = load_yaml(test_yaml_path) or {}
+        yaml_metrics = normalize_metrics(test_metrics_yaml.get("test_metrics", {}))
+        if yaml_metrics:
+            test_metrics = {**yaml_metrics, **test_metrics}
+
+    best_epoch_event = None
+    if epoch_events:
+        best_idx = int(np.argmax([event["rank_score"] for event in epoch_events]))
+        best_epoch_event = epoch_events[best_idx]
+
+    model_raw = cfg.get("model", {}).get("name")
+    model_name = canonical_model_name(model_raw)
+    if model_name == "unknown-model":
+        model_name = infer_model_name_from_run_name(run_path.name)
+
+    dataset_raw = cfg.get("dataset", {}).get("name")
+
+    return {
+        "run_dir": run_path,
+        "run_name": run_path.name,
+        "config": cfg,
+        "events": events,
+        "epoch_events": epoch_events,
+        "test_event": test_event,
+        "test_metrics": test_metrics,
+        "best_epoch_event": best_epoch_event,
+        "level_names": list(cfg.get("dataset", {}).get("levels", [])),
+        "dataset_name": canonical_dataset_name(dataset_raw),
+        "dataset_label": dataset_display_name(dataset_raw),
+        "model_name": model_name,
+        "model_label": model_display_name(model_name),
+    }
+
+
+def _resolve_run_dir(path_like: Union[str, Path], output_root: Path) -> Path:
+    path = Path(path_like)
+    if path.is_absolute():
+        return path
+
+    root = Path(output_root)
+    direct_candidate = root / path
+    if direct_candidate.exists():
+        return direct_candidate
+
+    if root.exists():
+        matches = sorted(
+            candidate
+            for candidate in root.rglob(path.name)
+            if candidate.is_dir() and candidate.name == path.name and (candidate / "run_log.jsonl").exists()
+        )
+        if matches:
+            return matches[0]
+
+    return direct_candidate
+
+
+def build_model_dataset_run_specs(
+    model_names: Sequence[str],
+    dataset_names: Sequence[str],
+    *,
+    model_run_names: Optional[Mapping[str, str]] = None,
+    dataset_run_names: Optional[Mapping[str, str]] = None,
+    model_labels: Optional[Mapping[str, str]] = None,
+    dataset_labels: Optional[Mapping[str, str]] = None,
+    run_name_overrides: Optional[Mapping[Tuple[str, str], str]] = None,
+    run_label_overrides: Optional[Mapping[Tuple[str, str], str]] = None,
+    run_color_overrides: Optional[Mapping[Tuple[str, str], str]] = None,
+) -> List[RunSpec]:
+    specs: List[RunSpec] = []
+    model_run_names = dict(model_run_names or {})
+    dataset_run_names = dict(dataset_run_names or {})
+    model_labels = dict(model_labels or {})
+    dataset_labels = dict(dataset_labels or {})
+    run_name_overrides = dict(run_name_overrides or {})
+    run_label_overrides = dict(run_label_overrides or {})
+    run_color_overrides = dict(run_color_overrides or {})
+
+    for dataset_name_raw in dataset_names:
+        dataset_key = str(dataset_name_raw)
+        dataset_token = str(dataset_run_names.get(dataset_key, dataset_key))
+        dataset_name = canonical_dataset_name(dataset_key)
+        dataset_label = dataset_labels.get(dataset_key, dataset_display_name(dataset_name))
+
+        for model_name_raw in model_names:
+            model_key = str(model_name_raw)
+            model_token = str(model_run_names.get(model_key, model_key))
+            model_name = canonical_model_name(model_key)
+            model_label = model_labels.get(model_key, model_labels.get(model_name, model_display_name(model_name)))
+            run_dir = run_name_overrides.get(
+                (model_key, dataset_key),
+                run_name_overrides.get((model_name, dataset_name), f"{model_token}_{dataset_token}"),
+            )
+            run_label = run_label_overrides.get(
+                (model_key, dataset_key),
+                run_label_overrides.get((model_name, dataset_name), model_label),
+            )
+            run_color = run_color_overrides.get(
+                (model_key, dataset_key),
+                run_color_overrides.get((model_name, dataset_name), None),
+            )
+
+            spec = {
+                "run_dir": run_dir,
+                "label": run_label,
+                "model_name": model_name,
+                "dataset_name": dataset_name,
+                "dataset_label": dataset_label,
+            }
+            if run_color is not None:
+                spec["color"] = run_color
+            specs.append(spec)
+
+    return specs
+
+
+def _normalize_manual_run_spec(spec: RunSpec, output_root: Path, manual_order: int) -> Dict[str, Any]:
+    if isinstance(spec, (str, Path)):
+        normalized: Dict[str, Any] = {"run_dir": spec}
+    elif isinstance(spec, MappingABC):
+        normalized = dict(spec)
+    else:
+        raise TypeError(f"Unsupported manual run spec type: {type(spec)!r}")
+
+    if "run_dir" not in normalized:
+        raise KeyError("Manual run specs must define a `run_dir` entry.")
+
+    normalized["run_dir"] = _resolve_run_dir(normalized["run_dir"], output_root)
+    normalized["_manual_order"] = int(manual_order)
+    return normalized
+
+
+def _manual_specs_by_dir(
+    output_root: Path,
+    manual_runs: Optional[Sequence[RunSpec]],
+    manual_run_dirs: Optional[Sequence[Union[str, Path]]],
+) -> Dict[Path, Dict[str, Any]]:
+    specs_by_dir: Dict[Path, Dict[str, Any]] = {}
+    raw_specs: List[RunSpec] = list(manual_runs or [])
+    raw_specs.extend({"run_dir": run_dir} for run_dir in (manual_run_dirs or []))
+
+    for idx, raw_spec in enumerate(raw_specs):
+        spec = _normalize_manual_run_spec(raw_spec, output_root, idx)
+        key = Path(spec["run_dir"]).resolve()
+        if key not in specs_by_dir:
+            specs_by_dir[key] = spec
+
+    return specs_by_dir
+
+
+def _apply_manual_run_spec(run_data: RunData, spec: Mapping[str, Any]) -> None:
+    if "dataset_name" in spec and spec.get("dataset_name") is not None:
+        dataset_name = canonical_dataset_name(str(spec["dataset_name"]))
+        run_data["dataset_name"] = dataset_name
+        dataset_label = spec.get("dataset_label")
+        run_data["dataset_label"] = str(dataset_label) if dataset_label is not None else dataset_display_name(dataset_name)
+    elif "dataset_label" in spec and spec.get("dataset_label") is not None:
+        run_data["dataset_label"] = str(spec["dataset_label"])
+
+    if "model_name" in spec and spec.get("model_name") is not None:
+        model_name = canonical_model_name(str(spec["model_name"]))
+        run_data["model_name"] = model_name
+        model_label = spec.get("model_label")
+        run_data["model_label"] = str(model_label) if model_label is not None else model_display_name(model_name)
+
+    label = spec.get("label", spec.get("model_label"))
+    if label is not None:
+        run_data["model_label"] = str(label)
+
+    if spec.get("color") is not None:
+        run_data["_manual_color"] = str(spec["color"])
+
+    run_data["_manual_order"] = int(spec.get("_manual_order", 999_999))
+
+
+def discover_run_dirs(
+    output_root: Path,
+    manual_run_dirs: Optional[Sequence[Union[str, Path]]] = None,
+    auto_discover: bool = True,
+) -> List[Path]:
+    manual_run_dirs = manual_run_dirs or []
+    out: List[Path] = []
+    seen: set[Path] = set()
+
+    def append_unique(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        out.append(resolved)
+
+    for item in manual_run_dirs:
+        path = _resolve_run_dir(item, output_root)
+        if path.exists() and path.is_dir() and (path / "run_log.jsonl").exists():
+            append_unique(path)
+        else:
+            print(f"Skipping missing/manual-invalid run: {path}")
+
+    if auto_discover:
+        root = Path(output_root)
+        if root.exists():
+            for path in sorted({path.parent for path in root.rglob("run_log.jsonl")}):
+                append_unique(path)
+
+    return out
+
+
+def get_metric_series(
+    epoch_events: Sequence[Mapping[str, Any]], metric_key: str, source: str = "val_metrics_norm"
+) -> Tuple[np.ndarray, np.ndarray]:
+    epochs = [int(event["epoch"]) for event in epoch_events]
+    values = [float(event.get(source, {}).get(metric_key, np.nan)) for event in epoch_events]
+    return np.array(epochs, dtype=np.int32), np.array(values, dtype=np.float64)
+
+
+def get_train_loss_series(epoch_events: Sequence[Mapping[str, Any]], loss_key: str) -> Tuple[np.ndarray, np.ndarray]:
+    epochs = [int(event["epoch"]) for event in epoch_events]
+    values = [float(event.get("train_losses", {}).get(loss_key, np.nan)) for event in epoch_events]
+    return np.array(epochs, dtype=np.int32), np.array(values, dtype=np.float64)
+
+
+def get_level_label(level_idx: int, run_data: Mapping[str, Any]) -> str:
+    names = run_data.get("level_names") or []
+    if level_idx < len(names):
+        return str(names[level_idx])
+    return f"L{level_idx}"
+
+
+def ordered(items: Iterable[str], preferred_order: Sequence[str]) -> List[str]:
+    item_set = set(items)
+    ordered_pref = [item for item in preferred_order if item in item_set]
+    rest = sorted([item for item in item_set if item not in ordered_pref])
+    return ordered_pref + rest
+
+
+def _fmt_pct(value: float) -> str:
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return f"{100.0 * value:.2f}%"
+
+
+def _fmt_delta_pp(value: float) -> str:
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    sign = "+" if value >= 0 else ""
+    return f"{sign}{100.0 * value:.2f} pp"
+
+
+def _fmt_edges(value: float) -> str:
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return f"{value:.3f}"
+
+
+def _fmt_delta_edges(value: float) -> str:
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    sign = "+" if value >= 0 else ""
+    return f"{sign}{value:.3f}"
+
+
+def _metric_goal_is_lower_better(metric_key: str) -> bool:
+    return metric_key.startswith("tice_") or metric_key.startswith("ahd_")
+
+
+def _metric_goal_arrow(metric_key: str) -> str:
+    return "↓" if _metric_goal_is_lower_better(metric_key) else "↑"
+
+
+def _is_distance_metric(metric_key: str) -> bool:
+    return metric_key.startswith("ahd_")
+
+
+def _fmt_value(metric_key: str, value: float) -> str:
+    return _fmt_edges(value) if _is_distance_metric(metric_key) else _fmt_pct(value)
+
+
+def _fmt_delta(metric_key: str, delta_value: float) -> str:
+    return _fmt_delta_edges(delta_value) if _is_distance_metric(metric_key) else _fmt_delta_pp(delta_value)
+
+
+def _merged_comp_cell(metric_key: str, comp_value: float, base_value: float) -> str:
+    comp_txt = _fmt_value(metric_key, comp_value)
+    if not np.isfinite(base_value) or not np.isfinite(comp_value):
+        return comp_txt
+    delta_txt = _fmt_delta(metric_key, comp_value - base_value)
+    return f"{comp_txt} ({delta_txt})"
+
+
+def _best_indices(metric_key: str, values: Sequence[float]) -> set[int]:
+    finite_pairs = [(idx, val) for idx, val in enumerate(values) if np.isfinite(val)]
+    if not finite_pairs:
+        return set()
+
+    if _metric_goal_is_lower_better(metric_key):
+        best_value = min(val for _, val in finite_pairs)
+    else:
+        best_value = max(val for _, val in finite_pairs)
+    return {idx for idx, val in finite_pairs if np.isclose(val, best_value, rtol=1e-9, atol=1e-12)}
+
+
+def _safe_delta(a: float, b: float) -> float:
+    if not np.isfinite(a) or not np.isfinite(b):
+        return float("nan")
+    return float(a - b)
+
+
+def _pct_or_na(value: float) -> str:
+    return _fmt_pct(value)
+
+
+def _edges_or_na(value: float) -> str:
+    return _fmt_edges(value)
+
+
+@dataclass
+class ModelComparisonConfig:
+    output_root: Path = Path("/scratch/g.saggini1/outputs")
+    auto_discover: bool = True
+    manual_runs: List[RunSpec] = field(default_factory=list)
+    manual_run_dirs: List[Union[str, Path]] = field(default_factory=list)
+
+    include_models: List[str] = field(default_factory=list)
+    include_datasets: List[str] = field(default_factory=list)
+    include_run_name_substrings: List[str] = field(default_factory=list)
+    exclude_run_name_substrings: List[str] = field(default_factory=lambda: ["design", "warmup"])
+    require_model_dataset_run_name_format: bool = False
+
+    preferred_dataset_order: List[str] = field(
+        default_factory=lambda: ["cifar-100", "cub-200-2011", "fgvc-aircraft", "inat21-mini"]
+    )
+    preferred_model_order: List[str] = field(
+        default_factory=lambda: ["hcast", "lhdnn", "hrn", "ht_capsnet", "hiercos"]
+    )
+
+    model_colors: Dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_MODEL_COLORS))
+
+
+class ModelComparisonAnalysis:
+    def __init__(
+        self,
+        config: ModelComparisonConfig,
+        candidate_run_dirs: List[Path],
+        parsed_runs: List[RunData],
+        parse_errors: List[Tuple[str, str]],
+        filtered_runs: List[RunData],
+        runs_for_analysis: List[RunData],
+    ) -> None:
+        self.config = config
+        self.candidate_run_dirs = candidate_run_dirs
+        self.parsed_runs = parsed_runs
+        self.parse_errors = parse_errors
+        self.filtered_runs = filtered_runs
+        self.runs_for_analysis = runs_for_analysis
+
+        self.dataset_keys = ordered(
+            [str(run["dataset_name"]) for run in runs_for_analysis],
+            config.preferred_dataset_order,
+        )
+        self.model_keys = ordered(
+            [str(run["model_name"]) for run in runs_for_analysis],
+            config.preferred_model_order,
+        )
+
+        self.runs_by_dataset: Dict[str, List[RunData]] = {dataset: [] for dataset in self.dataset_keys}
+        for run in runs_for_analysis:
+            self.runs_by_dataset[str(run["dataset_name"])].append(run)
+
+        for dataset in self.dataset_keys:
+            self.runs_by_dataset[dataset] = sorted(
+                self.runs_by_dataset[dataset],
+                key=lambda run: (
+                    config.preferred_model_order.index(str(run["model_name"]))
+                    if str(run["model_name"]) in config.preferred_model_order
+                    else 999,
+                    str(run["model_name"]),
+                    int(run.get("_manual_order", 999_999)),
+                    str(run["run_name"]),
+                ),
+            )
+
+        dataset_rank = {name: idx for idx, name in enumerate(self.dataset_keys)}
+        self.runs_by_model: Dict[str, List[RunData]] = {model: [] for model in self.model_keys}
+        for run in runs_for_analysis:
+            self.runs_by_model.setdefault(str(run["model_name"]), []).append(run)
+
+        for model_name, model_runs in list(self.runs_by_model.items()):
+            self.runs_by_model[model_name] = sorted(
+                model_runs,
+                key=lambda run: (
+                    dataset_rank.get(str(run["dataset_name"]), 999),
+                    str(run["dataset_name"]),
+                    int(run.get("_manual_order", 999_999)),
+                    str(run["run_name"]),
+                ),
+            )
+
+    @classmethod
+    def from_config(cls, config: ModelComparisonConfig) -> "ModelComparisonAnalysis":
+        manual_specs = _manual_specs_by_dir(config.output_root, config.manual_runs, config.manual_run_dirs)
+        manual_run_dirs = [Path(spec["run_dir"]) for spec in manual_specs.values()]
+        candidate_run_dirs = discover_run_dirs(config.output_root, manual_run_dirs, config.auto_discover)
+
+        parsed_runs: List[RunData] = []
+        parse_errors: List[Tuple[str, str]] = []
+        for run_dir in candidate_run_dirs:
+            try:
+                run_data = parse_run(run_dir)
+                manual_spec = manual_specs.get(Path(run_data["run_dir"]).resolve())
+                if manual_spec is not None:
+                    _apply_manual_run_spec(run_data, manual_spec)
+                parsed_runs.append(run_data)
+            except Exception as exc:
+                parse_errors.append((str(run_dir), str(exc)))
+
+        include_models_norm = {canonical_model_name(name) for name in config.include_models}
+        include_datasets_norm = {canonical_dataset_name(name) for name in config.include_datasets}
+        include_tokens = [token.lower() for token in config.include_run_name_substrings]
+        exclude_tokens = [token.lower() for token in config.exclude_run_name_substrings]
+
+        filtered_runs: List[RunData] = []
+        for run in parsed_runs:
+            run_name_l = str(run["run_name"]).lower()
+
+            if include_models_norm and str(run["model_name"]) not in include_models_norm:
+                continue
+            if include_datasets_norm and str(run["dataset_name"]) not in include_datasets_norm:
+                continue
+            if config.require_model_dataset_run_name_format and not matches_model_dataset_run_name(run):
+                continue
+            if include_tokens and not any(token in run_name_l for token in include_tokens):
+                continue
+            if exclude_tokens and any(token in run_name_l for token in exclude_tokens):
+                continue
+
+            filtered_runs.append(run)
+
+        runs_for_analysis = list(filtered_runs)
+
+        if not runs_for_analysis:
+            raise ValueError("No runs after filtering. Update configuration and rerun.")
+
+        model_colors = dict(config.model_colors)
+        unknown_models = sorted(
+            {
+                str(run["model_name"])
+                for run in runs_for_analysis
+                if str(run["model_name"]) not in model_colors
+            }
+        )
+        if unknown_models:
+            cmap = plt.get_cmap("tab10")
+            for idx, model_name in enumerate(unknown_models):
+                model_colors[model_name] = cmap(idx % 10)
+
+        for run in runs_for_analysis:
+            model_name = str(run["model_name"])
+            run["color"] = run.get("_manual_color", model_colors[model_name])
+
+        config.model_colors = model_colors
+        return cls(
+            config=config,
+            candidate_run_dirs=candidate_run_dirs,
+            parsed_runs=parsed_runs,
+            parse_errors=parse_errors,
+            filtered_runs=filtered_runs,
+            runs_for_analysis=runs_for_analysis,
+        )
+
+    def print_run_summary(self) -> None:
+        print(f"Candidate run directories: {len(self.candidate_run_dirs)}")
+        print(f"Parsed runs: {len(self.parsed_runs)}")
+        if self.config.require_model_dataset_run_name_format:
+            print("Run-name filter: strict `model_dataset` format only.")
+
+        if self.parse_errors:
+            print("Parse errors:")
+            for run_dir, err in self.parse_errors:
+                print(f"  - {run_dir}: {err}")
+
+        print(f"Filtered runs: {len(self.filtered_runs)}")
+
+        print("\nSelected runs")
+        print("-------------")
+        for dataset_name in self.dataset_keys:
+            print(dataset_display_name(dataset_name))
+            for run in self.runs_by_dataset[dataset_name]:
+                best_event = run.get("best_epoch_event")
+                best_epoch = best_event.get("epoch") if isinstance(best_event, dict) else None
+                best_score = float(best_event.get("rank_score", np.nan)) if isinstance(best_event, dict) else np.nan
+                test_fpa = float(run.get("test_metrics", {}).get("fpa_topdown", np.nan))
+                print(
+                    f"  - {run['model_label']:<12} | run={run['run_name']:<35} "
+                    f"| best_epoch={str(best_epoch):<4} | best_score={best_score:.4f} | "
+                    f"test_FPA_td={_fmt_pct(test_fpa)}"
+                )
+
+    def plot_validation_curves(
+        self,
+        metric_families: Optional[Sequence[Tuple[str, str, bool]]] = None,
+        mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
+    ) -> None:
+        metric_families = metric_families or [
+            ("fpa", "Validation FPA (%)", True),
+            ("weighted_ap", "Validation wAP (%)", True),
+            ("tice", "Validation TICE (%)", True),
+            ("ahd", "Validation AHD (edges)", False),
+        ]
+        mode_specs = mode_specs or [
+            ("independent", "--", "independent", "x"),
+            ("topdown", "-", "top-down", "o"),
+        ]
+
+        for dataset_name in self.dataset_keys:
+            dataset_runs = self.runs_by_dataset[dataset_name]
+            if not dataset_runs:
+                continue
+
+            fig, axes = plt.subplots(len(metric_families), 1, figsize=(10, 5 * len(metric_families)), sharex=True)
+            if len(metric_families) == 1:
+                axes = [axes]
+
+            for ax, (metric_prefix, metric_title, is_percent) in zip(axes, metric_families):
+                for run_data in dataset_runs:
+                    for mode_key, line_style, mode_label, marker in mode_specs:
+                        metric_key = f"{metric_prefix}_{mode_key}"
+                        epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
+                        if np.all(~np.isfinite(values)):
+                            continue
+
+                        plot_values = values * 100.0 if is_percent else values
+                        ax.plot(
+                            epochs,
+                            plot_values,
+                            label=f"{run_data['model_label']} ({mode_label})",
+                            color=run_data["color"],
+                            linestyle=line_style,
+                            linewidth=2.0,
+                        )
+
+                        best_event = run_data.get("best_epoch_event")
+                        if best_event is not None:
+                            best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
+                            if np.isfinite(best_value):
+                                best_plot_value = best_value * 100.0 if is_percent else best_value
+                                ax.scatter(
+                                    [best_event["epoch"]],
+                                    [best_plot_value],
+                                    color=run_data["color"],
+                                    marker=marker,
+                                    s=50,
+                                    zorder=4,
+                                )
+
+                ax.set_title(metric_title)
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Score (%)" if is_percent else "Distance (edges)")
+                ax.grid(True, alpha=0.3)
+                ax.legend(fontsize=9)
+
+            plt.suptitle(
+                f"{dataset_display_name(dataset_name)}: Validation Metrics (Top-Down + Independent)",
+                y=1.03,
+                fontsize=13,
+            )
+            plt.tight_layout()
+            plt.show()
+
+    def plot_training_losses_per_dataset(self, aggregate_loss_keys: Optional[Sequence[str]] = None) -> None:
+        aggregate_loss_keys = list(aggregate_loss_keys or ["total", "level_ce", "gk_loss"])
+
+        for dataset_name in self.dataset_keys:
+            dataset_runs = self.runs_by_dataset[dataset_name]
+            if not dataset_runs:
+                continue
+
+            all_loss_keys = sorted(
+                {
+                    key
+                    for run_data in dataset_runs
+                    for event in run_data["epoch_events"]
+                    for key in event.get("train_losses", {}).keys()
+                }
+            )
+
+            aggregate_present = [key for key in aggregate_loss_keys if key in all_loss_keys]
+            level_loss_ids = sorted(
+                {
+                    int(match.group(1))
+                    for key in all_loss_keys
+                    for match in [_LOSS_LEVEL_PATTERN.match(key)]
+                    if match is not None
+                }
+            )
+
+            metric_specs = [(key, key) for key in aggregate_present]
+
+            base_for_labels = dataset_runs[0]
+            for level_idx in level_loss_ids:
+                level_name = get_level_label(level_idx, base_for_labels)
+                metric_specs.append((f"loss_level_{level_idx}", f"loss_{level_name} (L{level_idx})"))
+
+            if not metric_specs:
+                print(f"No train loss keys found for dataset {dataset_display_name(dataset_name)}")
+                continue
+
+            n_metrics = len(metric_specs)
+            ncols = 2
+            nrows = int(np.ceil(n_metrics / ncols))
+            fig, axes = plt.subplots(nrows, ncols, figsize=(14, 3.6 * nrows), sharex=True)
+            axes = np.array(axes).reshape(-1)
+
+            for ax, (metric_key, metric_title) in zip(axes, metric_specs):
+                for run_data in dataset_runs:
+                    epochs, values = get_train_loss_series(run_data["epoch_events"], metric_key)
+                    if np.all(~np.isfinite(values)):
+                        continue
+                    ax.plot(
+                        epochs,
+                        values,
+                        label=run_data["model_label"],
+                        color=run_data["color"],
+                        linewidth=2.0,
+                    )
+
+                ax.set_title(f"Train {metric_title}")
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Loss")
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+
+            for ax in axes[n_metrics:]:
+                ax.axis("off")
+
+            plt.suptitle(f"{dataset_display_name(dataset_name)}: Training Losses", y=1.02, fontsize=13)
+            plt.tight_layout()
+            plt.show()
+
+    def plot_training_losses_per_model_across_datasets(
+        self,
+        preferred_aggregate: Optional[Sequence[str]] = None,
+    ) -> None:
+        preferred_aggregate = list(preferred_aggregate or ["total", "level_ce", "gk_loss", "margin", "consistency"])
+
+        for model_name in self.model_keys:
+            model_runs = list(self.runs_by_model.get(model_name, []))
+            if not model_runs:
+                continue
+
+            if len(model_runs) < 2:
+                print(
+                    f"Skipping {model_display_name(model_name)}: "
+                    "need at least 2 datasets for cross-dataset loss comparison."
+                )
+                continue
+
+            loss_keys_per_run = []
+            for run_data in model_runs:
+                keys = {
+                    key
+                    for event in run_data["epoch_events"]
+                    for key in event.get("train_losses", {}).keys()
+                }
+                if keys:
+                    loss_keys_per_run.append(keys)
+
+            if not loss_keys_per_run:
+                print(f"No training loss keys found for model {model_display_name(model_name)}")
+                continue
+
+            shared_loss_keys = set.intersection(*loss_keys_per_run)
+            if not shared_loss_keys:
+                print(f"No shared train loss keys across datasets for {model_display_name(model_name)}")
+                continue
+
+            shared_loss_keys = sorted(shared_loss_keys)
+            aggregate_loss_keys = [key for key in preferred_aggregate if key in shared_loss_keys]
+
+            level_loss_ids = sorted(
+                {
+                    int(match.group(1))
+                    for key in shared_loss_keys
+                    for match in [_LOSS_LEVEL_PATTERN.match(key)]
+                    if match is not None
+                }
+            )
+
+            metric_specs = [(key, key) for key in aggregate_loss_keys]
+
+            base_for_labels = model_runs[0]
+            for level_idx in level_loss_ids:
+                level_name = get_level_label(level_idx, base_for_labels)
+                metric_specs.append((f"loss_level_{level_idx}", f"loss_{level_name} (L{level_idx})"))
+
+            used_keys = {key for key, _ in metric_specs}
+            other_shared_keys = [key for key in shared_loss_keys if key not in used_keys]
+            metric_specs.extend((key, key) for key in other_shared_keys)
+
+            if not metric_specs:
+                print(f"No comparable train loss keys for model {model_display_name(model_name)}")
+                continue
+
+            n_metrics = len(metric_specs)
+            ncols = 2
+            nrows = int(np.ceil(n_metrics / ncols))
+            fig, axes = plt.subplots(nrows, ncols, figsize=(14, 3.6 * nrows), sharex=True)
+            axes = np.array(axes).reshape(-1)
+
+            cmap = plt.get_cmap("tab10")
+            dataset_colors = {
+                run_data["dataset_name"]: cmap(idx % 10)
+                for idx, run_data in enumerate(model_runs)
+            }
+
+            for ax, (metric_key, metric_title) in zip(axes, metric_specs):
+                for run_data in model_runs:
+                    epochs, values = get_train_loss_series(run_data["epoch_events"], metric_key)
+                    if np.all(~np.isfinite(values)):
+                        continue
+
+                    ax.plot(
+                        epochs,
+                        values,
+                        label=run_data["dataset_label"],
+                        color=dataset_colors[run_data["dataset_name"]],
+                        linewidth=2.0,
+                    )
+
+                ax.set_title(f"Train {metric_title}")
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Loss")
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+
+            for ax in axes[n_metrics:]:
+                ax.axis("off")
+
+            plt.suptitle(f"{model_display_name(model_name)}: Training Losses Across Datasets", y=1.02, fontsize=13)
+            plt.tight_layout()
+            plt.show()
+
+    def plot_per_run_per_level_training_losses(self) -> None:
+        for dataset_name in self.dataset_keys:
+            dataset_runs = self.runs_by_dataset.get(dataset_name, [])
+            for run_data in dataset_runs:
+                all_loss_keys = sorted(
+                    {
+                        key
+                        for event in run_data["epoch_events"]
+                        for key in event.get("train_losses", {}).keys()
+                    }
+                )
+
+                level_loss_ids = sorted(
+                    {
+                        int(match.group(1))
+                        for key in all_loss_keys
+                        for match in [_LOSS_LEVEL_PATTERN.match(key)]
+                        if match is not None
+                    }
+                )
+
+                if not level_loss_ids:
+                    print(
+                        f"No per-level train losses for {run_data['model_label']} "
+                        f"on {dataset_display_name(dataset_name)}"
+                    )
+                    continue
+
+                fig, ax = plt.subplots(figsize=(10, 4.8))
+                cmap = plt.get_cmap("tab20")
+                plotted = 0
+
+                for idx, level_idx in enumerate(level_loss_ids):
+                    metric_key = f"loss_level_{level_idx}"
+                    epochs, values = get_train_loss_series(run_data["epoch_events"], metric_key)
+                    if np.all(~np.isfinite(values)):
+                        continue
+
+                    level_name = get_level_label(level_idx, run_data)
+                    ax.plot(
+                        epochs,
+                        values,
+                        label=f"{level_name} (L{level_idx})",
+                        color=cmap(idx % 20),
+                        linewidth=2.0,
+                    )
+                    plotted += 1
+
+                if plotted == 0:
+                    plt.close(fig)
+                    print(
+                        f"No finite per-level train losses for {run_data['model_label']} "
+                        f"on {dataset_display_name(dataset_name)}"
+                    )
+                    continue
+
+                ax.set_title(
+                    f"{run_data['model_label']} on {dataset_display_name(dataset_name)}: "
+                    "Per-Level Training Losses"
+                )
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Loss")
+                ax.grid(True, alpha=0.3)
+                ax.legend(ncol=2, fontsize=9)
+                plt.tight_layout()
+                plt.show()
+
+    def plot_per_level_validation_accuracy(
+        self,
+        mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
+    ) -> None:
+        mode_specs = mode_specs or [
+            ("independent", "--", "independent", "x"),
+            ("topdown", "-", "top-down", "o"),
+        ]
+
+        for dataset_name in self.dataset_keys:
+            dataset_runs = self.runs_by_dataset[dataset_name]
+            if not dataset_runs:
+                continue
+
+            all_level_ids = sorted(
+                {
+                    int(key.rsplit("_", 1)[-1])
+                    for run_data in dataset_runs
+                    for event in run_data["epoch_events"]
+                    for key in event.get("val_metrics_norm", {}).keys()
+                    if (
+                        (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
+                        and key.rsplit("_", 1)[-1].isdigit()
+                    )
+                }
+            )
+
+            if not all_level_ids:
+                print(f"No per-level validation accuracy metrics for dataset {dataset_display_name(dataset_name)}")
+                continue
+
+            fig, axes = plt.subplots(len(all_level_ids), 1, figsize=(10, 5 * len(all_level_ids)), sharex=True)
+            if len(all_level_ids) == 1:
+                axes = [axes]
+
+            for ax, level_idx in zip(axes, all_level_ids):
+                level_label = get_level_label(level_idx, dataset_runs[0])
+
+                for run_data in dataset_runs:
+                    for mode_key, line_style, mode_label, marker in mode_specs:
+                        metric_key = f"acc_level_{mode_key}_{level_idx}"
+                        epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
+                        if np.all(~np.isfinite(values)):
+                            continue
+
+                        ax.plot(
+                            epochs,
+                            values * 100.0,
+                            label=f"{run_data['model_label']} ({mode_label})",
+                            color=run_data["color"],
+                            linestyle=line_style,
+                            linewidth=2.0,
+                        )
+
+                        best_event = run_data.get("best_epoch_event")
+                        if best_event is not None:
+                            best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
+                            if np.isfinite(best_value):
+                                ax.scatter(
+                                    [best_event["epoch"]],
+                                    [best_value * 100.0],
+                                    color=run_data["color"],
+                                    marker=marker,
+                                    s=42,
+                                    zorder=4,
+                                )
+
+                ax.set_title(f"Validation Accuracy - {level_label} (L{level_idx})")
+                ax.set_ylabel("Accuracy (%)")
+                ax.grid(True, alpha=0.3)
+                ax.legend(fontsize=9)
+
+            axes[-1].set_xlabel("Epoch")
+            plt.suptitle(f"{dataset_display_name(dataset_name)}: Per-Level Validation Accuracy", y=1.01, fontsize=13)
+            plt.tight_layout()
+            plt.show()
+
+    def show_final_test_tables(self) -> None:
+        metric_rows_base = [
+            ("fpa_independent", "FPA independent"),
+            ("fpa_topdown", "FPA top-down"),
+            ("weighted_ap_independent", "wAP independent"),
+            ("weighted_ap_topdown", "wAP top-down"),
+            ("tice_independent", "TICE independent"),
+            ("tice_topdown", "TICE top-down"),
+            ("ahd_independent", "AHD independent"),
+            ("ahd_topdown", "AHD top-down"),
+        ]
+
+        for dataset_name in self.dataset_keys:
+            dataset_runs = self.runs_by_dataset[dataset_name]
+            if not dataset_runs:
+                continue
+
+            base = dataset_runs[0]
+
+            level_ids_from_test = {
+                int(key.rsplit("_", 1)[-1])
+                for run_data in dataset_runs
+                for key in run_data.get("test_metrics", {}).keys()
+                if (
+                    (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
+                    and key.rsplit("_", 1)[-1].isdigit()
+                )
+            }
+            all_level_ids = sorted(level_ids_from_test)
+            if not all_level_ids:
+                all_level_ids = sorted(
+                    {
+                        int(key.rsplit("_", 1)[-1])
+                        for run_data in dataset_runs
+                        for event in run_data["epoch_events"]
+                        for key in event.get("val_metrics_norm", {}).keys()
+                        if (
+                            (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
+                            and key.rsplit("_", 1)[-1].isdigit()
+                        )
+                    }
+                )
+
+            metric_rows = list(metric_rows_base)
+            for level_idx in all_level_ids:
+                level_label = get_level_label(level_idx, base)
+                metric_rows.append((f"acc_level_independent_{level_idx}", f"Acc independent {level_label} (L{level_idx})"))
+                metric_rows.append((f"acc_level_topdown_{level_idx}", f"Acc top-down {level_label} (L{level_idx})"))
+
+            values_by_metric: Dict[str, List[float]] = {}
+            best_by_metric: Dict[str, set[int]] = {}
+            for metric_key, _ in metric_rows:
+                values = [float(run_data["test_metrics"].get(metric_key, np.nan)) for run_data in dataset_runs]
+                values_by_metric[metric_key] = values
+                best_by_metric[metric_key] = _best_indices(metric_key, values)
+
+            header_labels = ["Metric"] + [str(run_data["model_label"]) for run_data in dataset_runs]
+            table_lines = [
+                f"### Dataset: `{dataset_display_name(dataset_name)}`",
+                f"Baseline run: **{base['model_label']}**",
+                "",
+                "| " + " | ".join(header_labels) + " |",
+                "|---|" + "|".join(["---:"] * (len(header_labels) - 1)) + "|",
+            ]
+
+            for metric_key, metric_name in metric_rows:
+                metric_label = f"{metric_name} {_metric_goal_arrow(metric_key)}"
+                row_cells = [metric_label]
+                values = values_by_metric[metric_key]
+                for run_idx, value in enumerate(values):
+                    if run_idx == 0:
+                        cell = _fmt_value(metric_key, value)
+                    else:
+                        cell = _merged_comp_cell(metric_key, value, values[0])
+                    if run_idx in best_by_metric[metric_key] and cell != "n/a":
+                        cell = f"**{cell}**"
+                    row_cells.append(cell)
+
+                table_lines.append("| " + " | ".join(row_cells) + " |")
+
+            show_markdown("\n".join(table_lines))
+
+    def print_quick_summary(self) -> None:
+        for dataset_name in self.dataset_keys:
+            dataset_runs = self.runs_by_dataset[dataset_name]
+            if not dataset_runs:
+                continue
+
+            print("\n" + dataset_display_name(dataset_name))
+            print("~" * len(dataset_display_name(dataset_name)))
+
+            for run_data in dataset_runs:
+                best = run_data.get("best_epoch_event")
+                if best is None:
+                    print(f"{run_data['model_label']}: no epoch events")
+                    continue
+
+                best_fpa_ind = float(best["val_metrics_norm"].get("fpa_independent", np.nan))
+                best_fpa_td = float(best["val_metrics_norm"].get("fpa_topdown", np.nan))
+                best_wap_ind = float(best["val_metrics_norm"].get("weighted_ap_independent", np.nan))
+                best_wap_td = float(best["val_metrics_norm"].get("weighted_ap_topdown", np.nan))
+                best_tice_ind = float(best["val_metrics_norm"].get("tice_independent", np.nan))
+                best_tice_td = float(best["val_metrics_norm"].get("tice_topdown", np.nan))
+                best_ahd_ind = float(best["val_metrics_norm"].get("ahd_independent", np.nan))
+                best_ahd_td = float(best["val_metrics_norm"].get("ahd_topdown", np.nan))
+
+                print(
+                    f"{run_data['model_label']}: best epoch={best['epoch']}, "
+                    f"val FPA_ind={_pct_or_na(best_fpa_ind)}, val FPA_td={_pct_or_na(best_fpa_td)}, "
+                    f"val wAP_ind={_pct_or_na(best_wap_ind)}, val wAP_td={_pct_or_na(best_wap_td)}, "
+                    f"val TICE_ind={_pct_or_na(best_tice_ind)}, val TICE_td={_pct_or_na(best_tice_td)}, "
+                    f"val AHD_ind={_edges_or_na(best_ahd_ind)}, val AHD_td={_edges_or_na(best_ahd_td)}"
+                )
+
+            if len(dataset_runs) < 2:
+                continue
+
+            base = dataset_runs[0]
+            for comp in dataset_runs[1:]:
+                fpa_ind_delta = _safe_delta(
+                    float(comp["test_metrics"].get("fpa_independent", np.nan)),
+                    float(base["test_metrics"].get("fpa_independent", np.nan)),
+                )
+                fpa_td_delta = _safe_delta(
+                    float(comp["test_metrics"].get("fpa_topdown", np.nan)),
+                    float(base["test_metrics"].get("fpa_topdown", np.nan)),
+                )
+                wap_ind_delta = _safe_delta(
+                    float(comp["test_metrics"].get("weighted_ap_independent", np.nan)),
+                    float(base["test_metrics"].get("weighted_ap_independent", np.nan)),
+                )
+                wap_td_delta = _safe_delta(
+                    float(comp["test_metrics"].get("weighted_ap_topdown", np.nan)),
+                    float(base["test_metrics"].get("weighted_ap_topdown", np.nan)),
+                )
+                tice_ind_delta = _safe_delta(
+                    float(comp["test_metrics"].get("tice_independent", np.nan)),
+                    float(base["test_metrics"].get("tice_independent", np.nan)),
+                )
+                tice_td_delta = _safe_delta(
+                    float(comp["test_metrics"].get("tice_topdown", np.nan)),
+                    float(base["test_metrics"].get("tice_topdown", np.nan)),
+                )
+                ahd_ind_delta = _safe_delta(
+                    float(comp["test_metrics"].get("ahd_independent", np.nan)),
+                    float(base["test_metrics"].get("ahd_independent", np.nan)),
+                )
+                ahd_td_delta = _safe_delta(
+                    float(comp["test_metrics"].get("ahd_topdown", np.nan)),
+                    float(base["test_metrics"].get("ahd_topdown", np.nan)),
+                )
+
+                print(
+                    f"Test delta ({comp['model_label']} - {base['model_label']}): "
+                    f"FPA_ind={_fmt_delta_pp(fpa_ind_delta)}, "
+                    f"FPA_td={_fmt_delta_pp(fpa_td_delta)}, "
+                    f"wAP_ind={_fmt_delta_pp(wap_ind_delta)}, "
+                    f"wAP_td={_fmt_delta_pp(wap_td_delta)}, "
+                    f"TICE_ind={_fmt_delta_pp(tice_ind_delta)}, "
+                    f"TICE_td={_fmt_delta_pp(tice_td_delta)}, "
+                    f"AHD_ind={_fmt_delta_edges(ahd_ind_delta)}, "
+                    f"AHD_td={_fmt_delta_edges(ahd_td_delta)}"
+                )

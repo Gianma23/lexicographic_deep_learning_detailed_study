@@ -157,7 +157,19 @@ def build_transforms(cfg: Any, split: str):
         manual_cfg = transforms_cfg["manual"]
         manual_crop_mode = str(manual_cfg["crop_mode"]).strip().lower()
         manual_crop_padding = int(manual_cfg.get("random_crop_padding", 4))
+        manual_crop_padding_mode = str(manual_cfg.get("random_crop_padding_mode", "constant")).strip().lower()
+        valid_padding_modes = {"constant", "edge", "reflect", "symmetric"}
+        if manual_crop_padding_mode not in valid_padding_modes:
+            raise ValueError(
+                f"Unsupported dataset.transforms.manual.random_crop_padding_mode='{manual_crop_padding_mode}'. "
+                "Expected one of: constant, edge, reflect, symmetric."
+            )
         manual_interpolation = str(manual_cfg.get("interpolation", "bicubic"))
+        manual_resize_before_crop = bool(manual_cfg.get("resize_before_crop", False))
+        manual_resize_before_crop_size = int(manual_cfg.get("resize_before_crop_size", image_size))
+        manual_resize_before_crop_interpolation = str(
+            manual_cfg.get("resize_before_crop_interpolation", manual_interpolation)
+        )
         manual_rrc_scale_raw = manual_cfg.get("random_resized_crop_scale", [0.08, 1.0])
         manual_rrc_ratio_raw = manual_cfg.get("random_resized_crop_ratio", [3.0 / 4.0, 4.0 / 3.0])
         if len(manual_rrc_scale_raw) != 2:
@@ -175,6 +187,12 @@ def build_transforms(cfg: Any, split: str):
     eval_crop_ratio = float(eval_cfg["crop_ratio"])
     if eval_crop_ratio <= 0:
         raise ValueError("dataset.transforms.eval.crop_ratio must be > 0.")
+    eval_resize_size = eval_cfg.get("resize_size", None)
+    if eval_resize_size is not None:
+        eval_resize_size = int(eval_resize_size)
+        if eval_resize_size <= 0:
+            raise ValueError("dataset.transforms.eval.resize_size must be > 0 when provided.")
+    eval_resize_square = bool(eval_cfg.get("resize_square", False))
     eval_interpolation = str(eval_cfg["interpolation"]).strip().lower()
 
     # TRAIN transforms
@@ -213,8 +231,21 @@ def build_transforms(cfg: Any, split: str):
             manual_crop_mode = "random_crop" if image_size <= 32 else "random_resized_crop"
 
         train_ops = []
+        if manual_resize_before_crop:
+            train_ops.append(
+                transforms.Resize(
+                    (manual_resize_before_crop_size, manual_resize_before_crop_size),
+                    interpolation=_interp_mode_from_name(manual_resize_before_crop_interpolation),
+                )
+            )
         if manual_crop_mode == "random_crop":
-            train_ops.append(transforms.RandomCrop(image_size, padding=manual_crop_padding))
+            train_ops.append(
+                transforms.RandomCrop(
+                    image_size,
+                    padding=manual_crop_padding,
+                    padding_mode=manual_crop_padding_mode,
+                )
+            )
         elif manual_crop_mode == "random_resized_crop":
             train_ops.append(
                 transforms.RandomResizedCrop(
@@ -236,23 +267,31 @@ def build_transforms(cfg: Any, split: str):
         return transforms.Compose(train_ops)
 
     # EVAL transforms (val/test)
-    valid_resize_modes = {"auto", "resize_center_crop", "none"}
+    valid_resize_modes = {"auto", "resize_center_crop", "resize", "none"}
     if eval_resize_mode not in valid_resize_modes:
         raise ValueError(
             f"Unsupported dataset.transforms.eval.resize_mode='{eval_resize_mode}'. "
-            "Expected one of: auto, resize_center_crop, none."
+            "Expected one of: auto, resize_center_crop, resize, none."
         )
     if eval_resize_mode == "auto":
         eval_resize_mode = "none" if image_size <= 32 else "resize_center_crop"
 
     eval_ops = []
     if eval_resize_mode == "resize_center_crop":
-        resize_size = int(image_size / eval_crop_ratio)
+        resize_size = int(eval_resize_size) if eval_resize_size is not None else int(image_size / eval_crop_ratio)
+        resize_arg = (resize_size, resize_size) if eval_resize_square else resize_size
         eval_ops.extend(
             [
-                transforms.Resize(resize_size, interpolation=_interp_mode_from_name(eval_interpolation)),
+                transforms.Resize(resize_arg, interpolation=_interp_mode_from_name(eval_interpolation)),
                 transforms.CenterCrop(image_size),
             ]
+        )
+    elif eval_resize_mode == "resize":
+        resize_size = int(eval_resize_size) if eval_resize_size is not None else int(image_size / eval_crop_ratio)
+        eval_ops.append(
+            transforms.Resize(
+                (resize_size, resize_size), interpolation=_interp_mode_from_name(eval_interpolation)
+            )
         )
     eval_ops.extend(
         [
@@ -298,6 +337,7 @@ def build_dataloader(cfg: Any, split: str):
     workers = int(cfg.dataloader.get("num_workers", 4))
     pin_memory = bool(cfg.dataloader.get("pin_memory", True))
     windows_spawn_safe = bool(cfg.dataloader.get("windows_spawn_safe", True))
+    drop_last_train = bool(cfg.dataloader.get("drop_last_train", True))
 
     # On Windows, CUDA + worker spawning can hit WinError 1455 when each
     # subprocess imports torch CUDA DLLs (e.g., cublas64_12.dll).
@@ -320,7 +360,7 @@ def build_dataloader(cfg: Any, split: str):
         num_workers=workers,
         pin_memory=pin_memory,
         collate_fn=_collate_fn,
-        drop_last=split == "train",
+        drop_last=bool(split == "train" and drop_last_train),
         generator=generator,
         worker_init_fn=_seed_worker,
     )

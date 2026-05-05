@@ -4,6 +4,13 @@ import numpy as np
 import torch
 
 
+def _model_name(cfg: Any) -> str:
+    model_cfg = getattr(cfg, "model", None)
+    if model_cfg is None or not hasattr(model_cfg, "get"):
+        return ""
+    return str(model_cfg.get("name", "")).strip().lower()
+
+
 def _transforms_cfg(cfg: Any) -> Any:
     dataset_cfg = getattr(cfg, "dataset", {}) or {}
     transforms_cfg = dataset_cfg.get("transforms", {}) if hasattr(dataset_cfg, "get") else {}
@@ -281,6 +288,8 @@ def build_mixup_fn(cfg: Any, num_classes_per_level: Optional[List[int]] = None) 
         or cutmix_alpha(cfg) > 0.0
         or cutmix_minmax(cfg) is not None
     )
+    if mixup_active and _model_name(cfg) == "hiercos":
+        raise ValueError("Hier-COS does not support mixup/cutmix. Set dataset.transforms.mixup/cutmix to 0.")
     if not mixup_active:
         return None
     if not num_classes_per_level:

@@ -45,6 +45,15 @@ These presets configure the PyTorch HT-CapsNet port and its routing/loss paramet
 - `configs/hrn/hrn_aircraft.yaml`
 
 The HRN family supports exactly three hierarchy levels.
+The CUB-200 and Aircraft presets mirror upstream HRN preprocessing and optimization: ImageNet-pretrained ResNet-50, 448 crops after 550x550 resize, `[0.5, 0.5, 0.5]` normalization, cosine LR, and a 0.1x LR group for the ResNet trunk. The CIFAR-100 preset is a local extrapolation because upstream HRN does not include CIFAR-100.
+
+### Hier-COS presets
+
+- `configs/hiercos/hiercos_cifar100.yaml`
+- `configs/hiercos/hiercos_cub200.yaml`
+- `configs/hiercos/hiercos_aircraft.yaml`
+
+These presets add the Hier-COS/HAF++ feature-space settings and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). Upstream uses `feature_space: hier-cos` with HAFrame WideResNet from scratch for CIFAR-100, and `feature_space: haf++` with an ImageNet-pretrained ResNet-50 for Aircraft; CUB follows the Aircraft preset.
 
 ### Templates
 
@@ -65,7 +74,7 @@ The HRN family supports exactly three hierarchy levels.
 
 ## Models
 
-- `models/__init__.py`: Unified `build_model` and `compute_loss` dispatcher. Supported model ids are `hcast`, `lhdnn`, `ht_capsnet`, and `hrn`.
+- `models/__init__.py`: Unified `build_model` and `compute_loss` dispatcher. Supported model ids are `hcast`, `lhdnn`, `ht_capsnet`, `hrn`, and `hiercos`.
 
 ### H-CAST
 
@@ -105,8 +114,15 @@ These files are the closest local equivalents of the upstream CAST internals and
 
 - `models/hrn/__init__.py`: Public HRN exports.
 - `models/hrn/factory.py`: Enforces the 3-level constraint and builds `HRNModel`.
-- `models/hrn/model.py`: ResNet-50 HRN implementation with hierarchical branches and residual fusion.
-- `models/hrn/losses.py`: HRN combinatorial tree loss and fine-level cross-entropy objective.
+- `models/hrn/model.py`: ResNet-50 HRN implementation with upstream branch blocks, residual fusion, and low-LR trunk parameter groups.
+- `models/hrn/losses.py`: HRN combinatorial tree loss and fine-level cross-entropy objective, including upstream-style leaf-only CE handling.
+
+### Hier-COS
+
+- `models/hiercos/__init__.py`: Public Hier-COS exports.
+- `models/hiercos/factory.py`: Builds `HierCosModel` from config and taxonomy metadata.
+- `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces, upstream-style fixed random orthonormal frame for `feature_space: hier-cos`, and learnable HAF++ classifier mode for `feature_space: haf++`.
+- `models/hiercos/losses.py`: Hier-COS KL + level regularization objective, plus upstream Aircraft-style HAF++ leaf cross-entropy mode.
 
 ## Training
 

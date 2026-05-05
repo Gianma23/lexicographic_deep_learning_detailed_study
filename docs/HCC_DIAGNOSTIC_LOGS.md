@@ -12,7 +12,7 @@ This document explains the HCC-specific diagnostic metrics written by the traini
 ## Scope and conventions
 
 - `pre`: `softmax(logits)` before HCC projection/blending.
-- `post`: final scores used by metrics (`effective_probs_per_level` when HCC is active, else `pre`).
+- `post`: final probabilities used by probability diagnostics (`softmax(effective_logits_per_level)` for logit-space HCC, else `pre`).
 - `ind`: independent decoding (argmax per level).
 - `td`: top-down decoding (hierarchy-enforced decoding).
 - Level naming:
@@ -29,7 +29,7 @@ Notes:
 ### 1) HCC schedule state
 
 - `proj_constraint_alpha`
-  - Meaning: blend coefficient between raw probabilities and projected probabilities.
+  - Meaning: blend coefficient between raw logits and projected logits for logit-space HCC.
   - Typical range: `[0, 1]`.
   - Interpretation:
     - `0`: no projection effect.
@@ -45,31 +45,43 @@ Notes:
 
 These come from the hierarchical affine projector, using:
 
-- `r12 = M12 * p2 - p1`
-- `r23 = M23 * p3 - p2`
+- `r12 = M12 * z2 - z1`
+- `r23 = M23 * z3 - z2`
 - Residual vector is `[r12, r23]` concatenated.
 
-- `proj_residual_before_l1`
+- `proj_logit_residual_before_l1`
   - Definition: `mean(abs(residual_before))`.
-  - Interpretation: average constraint violation before correction.
+  - Interpretation: average logit-space constraint violation before correction.
 
-- `proj_residual_after_l1`
+- `proj_logit_residual_after_l1`
   - Definition: `mean(abs(residual_after))`.
-  - Interpretation: average constraint violation after correction.
+  - Interpretation: average logit-space constraint violation after correction.
 
-- `proj_residual_reduction`
-  - Definition: `proj_residual_before_l1 - proj_residual_after_l1`.
+- `proj_logit_residual_reduction`
+  - Definition: `proj_logit_residual_before_l1 - proj_logit_residual_after_l1`.
   - Interpretation:
     - Positive: projector reduced violation.
     - Near zero: little/no change.
     - Negative: correction worsened residuals (unexpected, worth checking).
 
-### 3) Fine-level distribution shift (`L2`)
+### 3) Fine-level logit shift (`L2`)
+
+- `proj_logit_delta_l1_level_2`
+  - Definition: `mean(sum(abs(fine_post_logits - fine_pre_logits)))`.
+  - Interpretation: overall magnitude of the fine-level logit rewrite caused by HCC.
+
+- `proj_gt_logit_delta_level_2`
+  - Definition: `mean(fine_post_logits[gt_fine] - fine_pre_logits[gt_fine])`.
+  - Interpretation:
+    - Positive: GT fine class logit increased after projection.
+    - Negative: GT fine class logit decreased after projection.
+
+### 4) Fine-level probability shift (`L2`)
 
 - `proj_delta_l1_level_2`
   - Definition: `mean(sum(abs(fine_post - fine_pre)))`.
   - Range: `[0, 2]` for probability vectors.
-  - Interpretation: overall magnitude of fine-level redistribution caused by HCC.
+  - Interpretation: post-softmax fine-level redistribution caused by HCC.
 
 - `proj_flip_rate_level_2`
   - Definition: fraction of samples where `argmax(fine_pre) != argmax(fine_post)`.
@@ -82,7 +94,7 @@ These come from the hierarchical affine projector, using:
     - Positive: GT fine class gained probability after projection.
     - Negative: GT fine class lost probability.
 
-### 4) Fine accuracy conditioned on correct parent (`L1`)
+### 5) Fine accuracy conditioned on correct parent (`L1`)
 
 The condition mask is `parent_pred == parent_target`.
 
@@ -118,7 +130,7 @@ Reading tip:
   - Low support + high conditional accuracy: parent prediction is the main bottleneck.
   - Low support + low conditional accuracy: both parent and fine discrimination are weak.
 
-### 5) GT parent mass and sibling ranking (`L2`)
+### 6) GT parent mass and sibling ranking (`L2`)
 
 - `gt_parent_mass_pre_l2`
   - Definition: mean probability mass assigned (pre) to all fine classes under the GT middle parent.
@@ -143,7 +155,7 @@ Reading tip:
 
 - Healthy hard-switch behavior:
   - `proj_constraint_alpha` rises to `1`, `proj_temperature` drops to hard regime.
-  - `proj_residual_after_l1` stays clearly below `proj_residual_before_l1`.
+  - `proj_logit_residual_after_l1` stays clearly below `proj_logit_residual_before_l1`.
   - Fine metrics do not collapse (limited `flip_rate`, stable conditional accuracies).
 
 - Typical over-constraining pattern (observed in hard cases):

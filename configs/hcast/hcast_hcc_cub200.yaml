@@ -17,7 +17,7 @@ model:
     # for grid mode
     patch_size: 8
   loss:
-    globalkl: false
+    globalkl: true
     gk_weight: 0.5
     level_weighting:
       mode: static
@@ -28,11 +28,8 @@ hcc:
   enabled: true
   temperature: 10
   eps: 1e-12
-  stabilize_simplex: true
-  use_conditional_prob: false
-  conditional_prob_levels: [2]
   alpha_schedule: step
-  alpha_start_epoch: 0
+  alpha_start_epoch: 80
   alpha_ramp_epochs: 0
   alpha_tanh_beta: 3.0
   alpha_tanh_center: 0.5
@@ -94,7 +91,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hcast_hcc_cub200_step_0epoch_nokl
+  output_dir: /scratch/g.saggini1/outputs/hcast_hcc_cub200_step_80epoch
   smoothing: 0.1
 
 optim:

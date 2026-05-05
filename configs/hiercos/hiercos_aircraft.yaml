@@ -1,20 +1,21 @@
 model:
-  name: hrn
-  backbone: resnet50
+  name: hiercos
+  variant: haframe_resnet50
+  feature_space: haf++
+  pool: average
+  # Upstream FGVC-Aircraft ResNet-50 backbone starts from ImageNet weights.
   pretrained: true
-  branch_hidden_dim: 1024
-  embedding_dim: 512
-  dropout: 0.0
-  trunk_lr_scale: 0.1
+  alpha: 0.1
+  backbone_lr_scale: 0.1
 
 dataset:
-  name: cub-200-2011
-  root: /scratch/g.saggini1/datasets/CUB_200_2011
+  name: fgvc-aircraft
+  root: /scratch/g.saggini1/datasets/fgvc-aircraft-2013b
   hierarchy_depth: 3
-  image_size: 448
-  mean: [0.5, 0.5, 0.5]
-  std: [0.5, 0.5, 0.5]
-  levels: [order, family, species]
+  image_size: 224
+  mean: [0.4880712, 0.5191783, 0.54383063]
+  std: [0.21482512, 0.20683703, 0.23937796]
+  levels: [manufacturer, family, variant]
   val_split_ratio: 0.2
   split_seed: null
   transforms:
@@ -22,25 +23,20 @@ dataset:
     normalization: torchvision
     manual:
       crop_mode: random_crop
-      random_crop_padding: 8
-      random_crop_padding_mode: constant
+      random_crop_padding: 4
       resize_before_crop: true
-      resize_before_crop_size: 550
-      resize_before_crop_interpolation: bilinear
+      resize_before_crop_size: 224
       interpolation: bilinear
       random_horizontal_flip_prob: 0.5
     eval:
-      resize_mode: resize_center_crop
-      resize_size: 550
-      resize_square: true
-      # Upstream HRN uses Resize((550, 550)) followed by CenterCrop(448).
-      crop_ratio: 0.8145454545
+      resize_mode: resize
+      crop_ratio: 1.0
       interpolation: bilinear
     mixup: 0.0
     cutmix: 0.0
     cutmix_minmax: null
     mixup_prob: 0.0
-    mixup_switch_prob: 0.5
+    mixup_switch_prob: 0.0
     mixup_mode: batch
 
   annotations:
@@ -49,8 +45,9 @@ dataset:
     test: test.json
 
 dataloader:
-  batch_size: 8
+  batch_size: 64
   num_workers: 8
+  pin_memory: true
   windows_spawn_safe: true
 
 train:
@@ -59,17 +56,18 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hrn_cub200
+  output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft
   smoothing: 0.0
 
 optim:
   name: sgd
-  lr: 0.002
+  lr: 0.1
   weight_decay: 0.0005
   momentum: 0.9
 
 scheduler:
-  name: cosine
+  name: hiercos_cosine
+  base_lr: 0.1
 
 runtime:
   deterministic: true

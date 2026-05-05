@@ -1,4 +1,5 @@
 import inspect
+import math
 import os
 import random
 from pathlib import Path
@@ -163,6 +164,7 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
     lr = float(cfg.optim.lr)
     wd = float(cfg.optim.get("weight_decay", 0.0))
     momentum = float(cfg.optim.get("momentum", 0.0))
+    nesterov = bool(cfg.optim.get("nesterov", False))
     raw_opt_eps = cfg.optim.get("opt_eps", None)
     opt_eps = None if raw_opt_eps is None else float(raw_opt_eps)
 
@@ -194,7 +196,31 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
             kwargs["betas"] = opt_betas
         return torch.optim.AdamW(model.parameters(), **kwargs)
     if name == "sgd":
-        return torch.optim.SGD(model.parameters(), lr=lr, weight_decay=wd, momentum=momentum)
+        model_cfg = _section_to_dict(getattr(cfg, "model", None))
+        model_name = str(model_cfg.get("name", "")).strip().lower()
+        if model_name in {"hiercos", "hrn"} and hasattr(model, "parameter_groups"):
+            if model_name == "hrn":
+                lr_scale = float(model_cfg.get("trunk_lr_scale", 0.1))
+                param_groups = model.parameter_groups(base_lr=lr, trunk_lr_scale=lr_scale)
+            else:
+                lr_scale = float(model_cfg.get("backbone_lr_scale", 0.1))
+                param_groups = model.parameter_groups(base_lr=lr, backbone_lr_scale=lr_scale)
+            if not param_groups:
+                raise ValueError(f"{model_name} optimizer parameter_groups() returned no trainable parameters.")
+            return torch.optim.SGD(
+                param_groups,
+                lr=lr,
+                weight_decay=wd,
+                momentum=momentum,
+                nesterov=nesterov,
+            )
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            weight_decay=wd,
+            momentum=momentum,
+            nesterov=nesterov,
+        )
 
     raise ValueError(f"Unsupported optimizer '{name}'")
 
@@ -205,6 +231,22 @@ def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
     name = str(sched_cfg.get("name", "none")).lower()
     if name == "none":
         return None
+    if name == "hiercos_cosine":
+        base_lr = float(sched_cfg.get("base_lr", cfg.optim.get("lr", 0.1)))
+        return HierCosCosineScheduler(
+            optimizer=optimizer,
+            num_epochs=int(cfg.train.epochs),
+            base_lr=base_lr,
+        )
+    model_cfg = _section_to_dict(getattr(cfg, "model", None))
+    model_name = str(model_cfg.get("name", "")).strip().lower()
+    if model_name == "hrn" and name == "cosine":
+        base_lr = float(sched_cfg.get("base_lr", cfg.optim.get("lr", 0.002)))
+        return HierCosCosineScheduler(
+            optimizer=optimizer,
+            num_epochs=int(cfg.train.epochs),
+            base_lr=base_lr,
+        )
 
     if timm_create_scheduler_v2 is None:
         raise RuntimeError("timm scheduler is required but timm.scheduler.create_scheduler_v2 is unavailable")
@@ -225,6 +267,58 @@ def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
         **filtered,
     )
     return scheduler
+
+
+class HierCosCosineScheduler:
+    """Upstream cosine schedule with per-group LR scaling."""
+
+    def __init__(self, optimizer: torch.optim.Optimizer, num_epochs: int, base_lr: float = 0.1):
+        self.optimizer = optimizer
+        self.num_epochs = max(int(num_epochs), 1)
+        self.base_lr = float(base_lr)
+        self.group_scales = self._infer_group_scales()
+        self.last_t = 0.0
+
+    def _infer_group_scales(self):
+        if abs(self.base_lr) <= 1e-12:
+            return [1.0 for _ in self.optimizer.param_groups]
+        return [float(group.get("lr", self.base_lr)) / self.base_lr for group in self.optimizer.param_groups]
+
+    def _lr_at(self, t: float) -> float:
+        return float((self.base_lr / 2.0) * (math.cos(math.pi * (float(t) / float(self.num_epochs))) + 1.0))
+
+    def step(self, epoch: Optional[float] = None, _metric: Optional[float] = None):
+        if epoch is None:
+            t = float(self.last_t + 1.0)
+        else:
+            t = float(epoch)
+        self.last_t = t
+        scheduled_lr = self._lr_at(t)
+        for group, scale in zip(self.optimizer.param_groups, self.group_scales):
+            group["lr"] = float(scheduled_lr * scale)
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "num_epochs": int(self.num_epochs),
+            "base_lr": float(self.base_lr),
+            "group_scales": [float(scale) for scale in self.group_scales],
+            "last_t": float(self.last_t),
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        if not isinstance(state_dict, dict):
+            return
+        self.num_epochs = max(int(state_dict.get("num_epochs", self.num_epochs)), 1)
+        self.base_lr = float(state_dict.get("base_lr", self.base_lr))
+
+        saved_scales = state_dict.get("group_scales", None)
+        if isinstance(saved_scales, (list, tuple)) and len(saved_scales) == len(self.optimizer.param_groups):
+            self.group_scales = [float(scale) for scale in saved_scales]
+        else:
+            self.group_scales = self._infer_group_scales()
+
+        self.last_t = float(state_dict.get("last_t", 0.0))
+        self.step(self.last_t)
 
 
 def save_checkpoint(

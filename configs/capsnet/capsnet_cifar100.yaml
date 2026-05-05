@@ -71,7 +71,7 @@ train:
   seed: 42
   device: cuda
   amp: true
-  resume: ""
+  resume: /scratch/g.saggini1/outputs/capsnet_cifar100/latest.pt
   output_dir: /scratch/g.saggini1/outputs/capsnet_cifar100
   smoothing: 0.0
 

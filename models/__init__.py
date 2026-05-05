@@ -21,7 +21,11 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         from .hrn.factory import build_model as build_hrn
 
         return build_hrn(cfg, num_classes_per_level, taxonomy)
-    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'lhdnn', 'ht_capsnet', 'hrn']")
+    if name == "hiercos":
+        from .hiercos.factory import build_model as build_hiercos
+
+        return build_hiercos(cfg, num_classes_per_level, taxonomy)
+    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'lhdnn', 'ht_capsnet', 'hrn', 'hiercos']")
 
 
 def compute_loss(
@@ -51,7 +55,11 @@ def compute_loss(
         from .hrn.losses import compute_loss as loss_hrn
 
         return loss_hrn(output, targets, cfg, taxonomy, return_aux=return_aux)
-    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'lhdnn', 'ht_capsnet', 'hrn']")
+    if name == "hiercos":
+        from .hiercos.losses import compute_loss as loss_hiercos
+
+        return loss_hiercos(output, targets, cfg, taxonomy, return_aux=return_aux)
+    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'lhdnn', 'ht_capsnet', 'hrn', 'hiercos']")
 
 
 __all__ = ["build_model", "compute_loss"]

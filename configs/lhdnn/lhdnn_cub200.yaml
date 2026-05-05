@@ -69,6 +69,7 @@ optim:
   lr: 0.001
   weight_decay: 0.0005
   momentum: 0.9
+  nesterov: true
 
 scheduler:
   # Extrapolation for CUB: same two-stage style used in paper-reported CIFAR runs.

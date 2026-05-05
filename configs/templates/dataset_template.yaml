@@ -33,14 +33,20 @@ dataset:
 
     manual:                          # Active only when use_timm=false (train split)
       crop_mode: auto                # auto | random_crop | random_resized_crop | none
+      resize_before_crop: false      # If true, apply a fixed Resize() before crop op
+      resize_before_crop_size: 224   # Square side used by pre-crop Resize()
+      resize_before_crop_interpolation: bicubic # Interpolation used by pre-crop Resize()
       random_crop_padding: 4         # Padding used by random_crop
+      random_crop_padding_mode: constant # Padding mode for random_crop: constant | edge | reflect | symmetric
       random_resized_crop_scale: [0.08, 1.0] # Scale range for random_resized_crop
       random_resized_crop_ratio: [0.75, 1.3333333333] # Aspect ratio range for random_resized_crop
       interpolation: bicubic         # Interpolation for random_resized_crop
       random_horizontal_flip_prob: 0.5 # Horizontal flip probability
 
     eval:                            # Active for val/test regardless of use_timm
-      resize_mode: auto              # auto | resize_center_crop | none
+      resize_mode: auto              # auto | resize_center_crop | resize | none
+      resize_size: null              # Optional explicit eval resize side; otherwise image_size / crop_ratio
+      resize_square: false           # If true with resize_center_crop, Resize((resize_size, resize_size))
       crop_ratio: 0.875              # Resize-to-crop ratio used when resize_center_crop is active
       interpolation: bicubic         # Interpolation used by eval resize
 

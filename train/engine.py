@@ -157,8 +157,10 @@ def train_one_epoch(
             level_losses_for_lex = list(level_losses[:3])
             lex_grad_scale = 1.0
             if scaler is not None and use_amp:
+                # GradScaler.step requires scale() to run in the iteration even
+                # when custom gradients are assigned manually.
+                scaler.scale(torch.ones((), device=device))
                 lex_grad_scale = float(scaler.get_scale())
-                level_losses_for_lex = [scaler.scale(level_loss) for level_loss in level_losses_for_lex]
 
             lex_state, lex_metrics = _prepare_lexicographic_update(
                 trainable_named_params=trainable_named_params,

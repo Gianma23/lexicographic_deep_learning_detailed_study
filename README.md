@@ -1,11 +1,12 @@
 # Hierarchical Image Classification
 
-Unified PyTorch training code for four hierarchical image classifiers:
+Unified PyTorch training code for five hierarchical image classifiers:
 
 - `hcast`
 - `lhdnn`
 - `ht_capsnet`
 - `hrn`
+- `hiercos`
 
 The main user-facing entrypoint is `python -m train.train`. It handles config loading, training, validation, checkpointing, and final test evaluation from `best.pt`.
 
@@ -79,6 +80,12 @@ HRN:
 - `configs/hrn/hrn_cub200.yaml`
 - `configs/hrn/hrn_aircraft.yaml`
 
+Hier-COS:
+
+- `configs/hiercos/hiercos_cifar100.yaml`
+- `configs/hiercos/hiercos_cub200.yaml`
+- `configs/hiercos/hiercos_aircraft.yaml`
+
 Reusable templates:
 
 - `configs/templates/dataset_template.yaml`
@@ -150,7 +157,14 @@ Optional normalized JSON annotations are also supported for all datasets:
 - `lhdnn` requires at least 2 levels and always requires taxonomy.
 - `ht_capsnet` requires at least 2 levels. The builder also enforces `train.seed` and `runtime.deterministic: true`.
 - `hrn` supports exactly 3 levels.
+- `hrn` follows upstream HRN for CUB-200 and Aircraft: ImageNet-pretrained ResNet-50, 1024-d branch bottlenecks, 512-d classifiers, 448 crops from 550x550 resized images, `[0.5, 0.5, 0.5]` normalization, and SGD parameter groups with the ResNet trunk at 0.1x LR.
 - `hrn` parity loss does not support mixup/cutmix soft targets, so the shipped HRN presets keep them disabled.
+- `hrn_cifar100` is a local extrapolation because the upstream HRN repo does not include CIFAR-100; it keeps this repo CIFAR hierarchy.
+- `hiercos` requires taxonomy (`taxonomy.parent_of`) and at least 2 levels.
+- `hiercos` does not support mixup/cutmix soft targets. Keep `dataset.transforms.mixup/cutmix: 0.0`.
+- `hiercos` follows upstream feature-space/backbone choices: CIFAR-100 uses `feature_space: hier-cos` with `haframe_wide_resnet` from scratch, while Aircraft uses `feature_space: haf++` with an ImageNet-pretrained ResNet-50. The CUB preset is a local extrapolation and follows Aircraft.
+- `hiercos_cifar100` keeps this repo CIFAR hierarchy (3-level), not the paper 5-level CIFAR protocol.
+- `hiercos_cub200` is a pragmatic extrapolation preset (paper does not report CUB experiments).
 
 If no explicit taxonomy file is provided by an adapter, the dataset base class tries to infer `taxonomy["parent_of"]` from the labels.
 

@@ -79,7 +79,7 @@ class HRNModel(nn.Module):
         branch_hidden_dim: int = 1024,
         embedding_dim: int = 512,
         dropout: float = 0.0,
-        trunk_grad_scale: float = 0.1,
+        trunk_lr_scale: float = 0.1,
     ):
         super().__init__()
         self.num_classes_per_level = [int(n) for n in num_classes_per_level]
@@ -95,7 +95,7 @@ class HRNModel(nn.Module):
         self.pooling = nn.AdaptiveAvgPool2d(1)
         self.relu = nn.ReLU()
         self.num_ftrs = int(trunk.fc.in_features)
-        self.trunk_grad_scale = float(trunk_grad_scale)
+        self.trunk_lr_scale = float(trunk_lr_scale)
 
         self.conv_block1 = nn.Sequential(
             BasicConv(self.num_ftrs, int(branch_hidden_dim), kernel_size=1, stride=1, padding=0, relu=True),
@@ -119,8 +119,6 @@ class HRNModel(nn.Module):
         self.classifier_3 = nn.Linear(int(embedding_dim), self.num_classes_per_level[2])
         self.classifier_3_1 = nn.Linear(int(embedding_dim), self.num_classes_per_level[2])
 
-        self._register_trunk_gradient_scaling()
-
     def _build_fc_block(self, branch_hidden_dim: int, embedding_dim: int, dropout: float) -> nn.Module:
         layers: List[nn.Module] = [
             nn.BatchNorm1d(self.num_ftrs),
@@ -133,17 +131,38 @@ class HRNModel(nn.Module):
         layers.append(nn.Linear(branch_hidden_dim, embedding_dim))
         return nn.Sequential(*layers)
 
-    def _register_trunk_gradient_scaling(self) -> None:
-        scale = float(self.trunk_grad_scale)
-        if scale == 1.0:
-            return
+    def parameter_groups(
+        self,
+        base_lr: float,
+        backbone_lr_scale: Optional[float] = None,
+        trunk_lr_scale: Optional[float] = None,
+    ):
+        scale = self.trunk_lr_scale
+        if trunk_lr_scale is not None:
+            scale = float(trunk_lr_scale)
+        elif backbone_lr_scale is not None:
+            scale = float(backbone_lr_scale)
         if scale <= 0.0:
-            raise ValueError(f"HRN trunk_grad_scale must be > 0, got {scale}.")
+            raise ValueError(f"HRN trunk_lr_scale must be > 0, got {scale}.")
 
-        for param in self.features.parameters():
-            if not param.requires_grad:
-                continue
-            param.register_hook(lambda grad, s=scale: grad.mul(s))
+        head_modules = [
+            self.classifier_1,
+            self.classifier_2,
+            self.classifier_3,
+            self.classifier_3_1,
+            self.fc1,
+            self.fc2,
+            self.fc3,
+            self.conv_block1,
+            self.conv_block2,
+            self.conv_block3,
+        ]
+        groups = [
+            {"params": module.parameters(), "lr": float(base_lr)}
+            for module in head_modules
+        ]
+        groups.append({"params": self.features.parameters(), "lr": float(base_lr) * float(scale)})
+        return groups
 
     def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Dict[str, Any]:
         _ = targets

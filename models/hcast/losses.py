@@ -22,100 +22,6 @@ def _normalize_rows(probs: torch.Tensor, eps: float = _EPS) -> torch.Tensor:
     return probs / probs.sum(dim=1, keepdim=True).clamp_min(eps)
 
 
-def _resolve_hcc_cfg(cfg: Any) -> Dict[str, Any]:
-    """Read HCC config with backward-compatible fallback locations."""
-    hcc_cfg = _section_to_dict(getattr(cfg, "hcc", None))
-    if not hcc_cfg and hasattr(cfg, "get"):
-        hcc_cfg = _section_to_dict(cfg.get("hcc", None))
-    if not hcc_cfg:
-        model_cfg = _section_to_dict(getattr(cfg, "model", None))
-        hcc_cfg = _section_to_dict(model_cfg.get("hcc", None))
-    return hcc_cfg
-
-
-def _resolve_hcc_eps(cfg: Any, default: float = _EPS) -> float:
-    """Read the HCC numerical epsilon from config, falling back to a safe default."""
-    hcc_cfg = _resolve_hcc_cfg(cfg)
-
-    raw_eps = hcc_cfg.get("eps", default) if hcc_cfg else default
-    eps = float(raw_eps) if raw_eps is not None else float(default)
-    return eps if eps > 0.0 else float(default)
-
-
-def _resolve_hcc_use_conditional_prob(cfg: Any, default: bool = False) -> bool:
-    """Read whether HCC probability-path losses should be parent-conditioned."""
-    hcc_cfg = _resolve_hcc_cfg(cfg)
-    if not hcc_cfg:
-        return bool(default)
-
-    raw_value = hcc_cfg.get("use_conditional_prob", default)
-    if isinstance(raw_value, bool):
-        return raw_value
-    if isinstance(raw_value, str):
-        normalized = raw_value.strip().lower()
-        if normalized in {"1", "true", "yes", "y", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "n", "off"}:
-            return False
-    return bool(raw_value)
-
-
-def _resolve_hcc_conditioned_levels(cfg: Any, default: Tuple[int, ...] = (1, 2)) -> Tuple[int, ...]:
-    """Read which hierarchy levels should use conditional log-probabilities."""
-    hcc_cfg = _resolve_hcc_cfg(cfg)
-    if not hcc_cfg:
-        return tuple(default)
-
-    raw_levels = hcc_cfg.get("conditional_prob_levels", None)
-    if raw_levels is None:
-        return tuple(default)
-
-    parsed_levels: List[int] = []
-    if isinstance(raw_levels, bool):
-        raise ValueError("hcc.conditional_prob_levels must not be a boolean.")
-    if isinstance(raw_levels, (int, float)):
-        parsed_levels = [int(raw_levels)]
-    elif isinstance(raw_levels, str):
-        normalized = raw_levels.strip().lower()
-        if normalized in {"", "none", "null"}:
-            return tuple()
-        cleaned = normalized
-        for ch in "[]()":
-            cleaned = cleaned.replace(ch, " ")
-        tokens = [token for token in cleaned.replace(",", " ").split() if token]
-        try:
-            parsed_levels = [int(token) for token in tokens]
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "hcc.conditional_prob_levels string must contain integer level ids, "
-                "for example '1', '2', or '1,2'."
-            ) from exc
-    elif hasattr(raw_levels, "items"):
-        raise ValueError("hcc.conditional_prob_levels must not be a mapping/object.")
-    elif hasattr(raw_levels, "__iter__"):
-        try:
-            parsed_levels = [int(level) for level in raw_levels]
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "hcc.conditional_prob_levels iterable must contain integer level ids."
-            ) from exc
-    else:
-        raise ValueError(
-            "hcc.conditional_prob_levels must be int, iterable of ints, or comma-separated string."
-        )
-
-    deduped: List[int] = []
-    seen = set()
-    for level in parsed_levels:
-        if level <= 0:
-            continue
-        if level in seen:
-            continue
-        deduped.append(level)
-        seen.add(level)
-    return tuple(deduped)
-
-
 def _label_smoothing_from_cfg(cfg: Any) -> float:
     """Extract label smoothing from the training config and clamp it to [0, 1]."""
     train_cfg = _section_to_dict(getattr(cfg, "train", None))
@@ -171,24 +77,6 @@ def _soft_cross_entropy_from_log_probs(log_probs: torch.Tensor, target_probs: to
     probs = target_probs.to(device=log_probs.device, dtype=log_probs.dtype)
     probs = _normalize_rows(probs)
     return -(probs * log_probs).sum(dim=-1).mean()
-
-
-def _label_smoothed_target_probs(
-    target: torch.Tensor,
-    num_classes: int,
-    smoothing: float,
-    dtype: torch.dtype,
-) -> torch.Tensor:
-    """Build a label-smoothed target distribution from hard labels."""
-    off_value = smoothing / max(float(num_classes), 1.0)
-    on_value = 1.0 - smoothing + off_value
-    out = torch.full(
-        (target.size(0), num_classes),
-        fill_value=off_value,
-        dtype=dtype,
-        device=target.device,
-    )
-    return out.scatter_(1, target.unsqueeze(1), on_value)
 
 
 def _dynamic_level_weights(
@@ -257,18 +145,11 @@ def _level_losses_from_scores(
     hard_targets: Optional[torch.Tensor],
     target_probs_per_level: Optional[List[torch.Tensor]],
     smoothing: float,
-    scores_are_log_probs: bool,
 ) -> List[torch.Tensor]:
-    """Compute one loss value per hierarchy level from logits or log-probabilities."""
+    """Compute one loss value per hierarchy level from logits."""
     if target_probs_per_level is not None:
-        # Soft-target path used for MixUp/CutMix. If the caller already passed
-        # log-probabilities we reuse them directly; otherwise we derive
-        # log-softmax from logits first.
-        log_probs_per_level = (
-            scores_per_level
-            if scores_are_log_probs
-            else [F.log_softmax(scores, dim=-1) for scores in scores_per_level]
-        )
+        # Soft-target path used for MixUp/CutMix.
+        log_probs_per_level = [F.log_softmax(scores, dim=-1) for scores in scores_per_level]
         return [
             _soft_cross_entropy_from_log_probs(log_probs, target_probs_per_level[level])
             for level, log_probs in enumerate(log_probs_per_level)
@@ -277,54 +158,27 @@ def _level_losses_from_scores(
     if hard_targets is None:
         raise TypeError("Expected hard targets tensor of shape [B, L].")
 
-    if not scores_are_log_probs:
-        # Standard H-CAST path: raw logits go straight into cross_entropy.
-        return [
-            F.cross_entropy(scores, hard_targets[:, level], label_smoothing=smoothing)
-            for level, scores in enumerate(scores_per_level)
-        ]
-
-    if smoothing <= 0.0:
-        # Probability path: the caller already converted probabilities into
-        # log-probabilities, so the matching hard-label loss is NLL.
-        return [
-            F.nll_loss(log_probs, hard_targets[:, level])
-            for level, log_probs in enumerate(scores_per_level)
-        ]
-
-    # Same probability path as above, but label smoothing requires building
-    # smoothed target distributions and taking explicit soft cross-entropy.
+    # Raw or HCC-projected logits go straight into cross_entropy.
     return [
-        _soft_cross_entropy_from_log_probs(
-            log_probs,
-            _label_smoothed_target_probs(
-                hard_targets[:, level],
-                num_classes=log_probs.size(-1),
-                smoothing=smoothing,
-                dtype=log_probs.dtype,
-            ),
-        )
-        for level, log_probs in enumerate(scores_per_level)
+        F.cross_entropy(scores, hard_targets[:, level], label_smoothing=smoothing)
+        for level, scores in enumerate(scores_per_level)
     ]
 
 
-def _resolve_score_source(output: Dict[str, Any]) -> Tuple[List[torch.Tensor], List[torch.Tensor], bool]:
-    """Choose whether losses should read from raw logits or HCC effective probabilities."""
+def _resolve_score_source(output: Dict[str, Any]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    """Choose raw logits or HCC effective logits as the loss score source."""
     logits_per_level = output["logits_per_level"]
     if not isinstance(logits_per_level, list) or not logits_per_level:
         raise ValueError("H-CAST output must contain non-empty `logits_per_level`.")
 
-    effective_probs = output.get("effective_probs_per_level")
-    if effective_probs is None:
-        # Before HCC activates, or when HCC is disabled, downstream loss stays
-        # on the original logits exactly like baseline H-CAST.
-        return logits_per_level, logits_per_level, False
-    if not isinstance(effective_probs, list) or len(effective_probs) != len(logits_per_level):
-        raise ValueError("`effective_probs_per_level` must be None or a list aligned with `logits_per_level`.")
-    # Once HCC emits final probabilities, the loss switches to those values
-    # rather than the raw logits. The caller must then treat them as
-    # probabilities, not as logits.
-    return logits_per_level, effective_probs, True
+    effective_logits = output.get("effective_logits_per_level")
+    if effective_logits is not None:
+        if not isinstance(effective_logits, list) or len(effective_logits) != len(logits_per_level):
+            raise ValueError("`effective_logits_per_level` must be None or a list aligned with `logits_per_level`.")
+        return logits_per_level, effective_logits
+
+    # Before HCC activates, or when HCC is disabled, downstream loss stays on raw logits.
+    return logits_per_level, logits_per_level
 
 
 def _resolve_level_weights(
@@ -347,88 +201,13 @@ def _resolve_level_weights(
 
     gamma = float(level_weight_cfg.get("gamma", 0.0))
     eps = max(float(level_weight_cfg.get("eps", _EPS)), _EPS)
-    # Dynamic weights are computed from the same score source used by the loss,
-    # so when HCC is active they react to constrained probabilities, not raw
-    # logits.
+    # Dynamic weights are computed from the same logit source used by the loss.
     return _dynamic_level_weights(
         scores_per_level=score_source_per_level,
         hard_targets=hard_targets,
         gamma=gamma,
         eps=eps,
     )
-
-
-def _parent_index_for_level(
-    taxonomy: Optional[Dict[str, Any]],
-    level: int,
-    num_children: int,
-    num_parents: int,
-    device: torch.device,
-) -> Optional[torch.Tensor]:
-    """Build child->parent indices for transition (level-1 -> level)."""
-    if not isinstance(taxonomy, dict):
-        return None
-
-    parent_of = taxonomy.get("parent_of")
-    if not isinstance(parent_of, dict):
-        return None
-
-    raw_mapping = parent_of.get(level, parent_of.get(str(level)))
-    if not isinstance(raw_mapping, dict):
-        return None
-
-    parent_index = [-1 for _ in range(num_children)]
-    for child_raw, parent_raw in raw_mapping.items():
-        try:
-            child = int(child_raw)
-            parent = int(parent_raw)
-        except (TypeError, ValueError):
-            return None
-        if child < 0 or child >= num_children:
-            return None
-        if parent < 0 or parent >= num_parents:
-            return None
-        parent_index[child] = parent
-
-    if any(parent < 0 for parent in parent_index):
-        return None
-    return torch.tensor(parent_index, dtype=torch.long, device=device)
-
-
-def _condition_selected_levels_log_probs(
-    probs_per_level: List[torch.Tensor],
-    base_log_probs_per_level: List[torch.Tensor],
-    taxonomy: Optional[Dict[str, Any]],
-    eps: float,
-    conditioned_levels: Tuple[int, ...] = (1, 2),
-) -> List[torch.Tensor]:
-    """Convert selected levels from marginal log p(child) to log p(child|parent)."""
-    conditioned = list(base_log_probs_per_level)
-    num_levels = len(probs_per_level)
-
-    for level in conditioned_levels:
-        if level <= 0 or level >= num_levels:
-            continue
-
-        child_probs = probs_per_level[level]
-        parent_probs = probs_per_level[level - 1]
-        parent_index = _parent_index_for_level(
-            taxonomy=taxonomy,
-            level=level,
-            num_children=int(child_probs.size(1)),
-            num_parents=int(parent_probs.size(1)),
-            device=child_probs.device,
-        )
-        if parent_index is None:
-            raise ValueError(
-                f"Conditioned loss for level {level} requires taxonomy['parent_of'][{level}] "
-                "with a complete child->parent mapping."
-            )
-
-        parent_mass_for_child = parent_probs[:, parent_index].clamp_min(eps)
-        conditioned[level] = conditioned[level] - torch.log(parent_mass_for_child)
-
-    return conditioned
 
 
 def compute_loss(
@@ -443,9 +222,9 @@ def compute_loss(
 ]:
     loss_cfg = _section_to_dict(getattr(cfg.model, "loss", {}))
 
-    # - if effective_probs_per_level is absent, training uses raw logits
-    # - if effective_probs_per_level is present, training uses HCC outputs
-    logits_per_level, score_source_per_level, use_probability_scores = _resolve_score_source(output)
+    # If effective_logits_per_level is present, training uses HCC logits;
+    # otherwise training uses raw logits.
+    logits_per_level, score_source_per_level = _resolve_score_source(output)
     target_probs_per_level = _soft_targets_from_input(score_source_per_level, targets)
     hard_targets = _hard_targets_from_input(targets, num_levels=len(logits_per_level))
 
@@ -455,43 +234,14 @@ def compute_loss(
         hard_targets = hard_targets.to(device=score_source_per_level[0].device, dtype=torch.long)
 
     smoothing = _label_smoothing_from_cfg(cfg)
-    if use_probability_scores:
-        eps = _resolve_hcc_eps(cfg, default=_EPS)
-        use_conditional_prob = _resolve_hcc_use_conditional_prob(cfg, default=False)
-        # effective_probs_per_level are already normalized probabilities, so we
-        # convert them into log-probabilities for NLL / soft cross-entropy.
-        # Passing them into cross_entropy directly would be wrong because that
-        # function expects logits and would apply log_softmax again.
-        base_log_probs_per_level = [torch.log(probs.clamp_min(eps)) for probs in score_source_per_level]
-        if use_conditional_prob:
-            conditioned_levels = _resolve_hcc_conditioned_levels(cfg, default=(1, 2))
-            # Optional conditioned loss path:
-            # log p(child|parent) = log p(child) - log p(parent).
-            loss_scores_per_level = _condition_selected_levels_log_probs(
-                probs_per_level=score_source_per_level,
-                base_log_probs_per_level=base_log_probs_per_level,
-                taxonomy=_taxonomy,
-                eps=eps,
-                conditioned_levels=conditioned_levels,
-            )
-        else:
-            # Default behavior: keep marginal log-probabilities per level.
-            loss_scores_per_level = base_log_probs_per_level
-        gk_scores_per_level = base_log_probs_per_level
-        scores_are_log_probs = True
-    else:
-        # Baseline path: keep raw logits and let PyTorch handle log-softmax
-        # internally inside cross_entropy.
-        loss_scores_per_level = logits_per_level
-        gk_scores_per_level = logits_per_level
-        scores_are_log_probs = False
+    loss_scores_per_level = score_source_per_level
+    gk_scores_per_level = score_source_per_level
 
     level_losses = _level_losses_from_scores(
         scores_per_level=loss_scores_per_level,
         hard_targets=hard_targets,
         target_probs_per_level=target_probs_per_level,
         smoothing=smoothing,
-        scores_are_log_probs=scores_are_log_probs,
     )
 
     level_weights = _resolve_level_weights(
@@ -511,8 +261,6 @@ def compute_loss(
 
     if bool(loss_cfg.get("globalkl", False)):
         global_kl_weight = float(loss_cfg.get("gk_weight", 1.0))
-        # Keep global KL on the unconditioned score path. Conditioning is
-        # applied only to level-1/2 task losses above.
         gk_loss = _global_kl_loss(
             scores_per_level=gk_scores_per_level,
             hard_targets=hard_targets,

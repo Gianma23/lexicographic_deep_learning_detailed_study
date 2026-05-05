@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Mapping, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 def _as_int_list(name: str, values: Any, expected_len: int, max_parent: int) -> List[int]:
@@ -99,14 +98,13 @@ def _build_mapping_matrix(num_parents: int, parent_of_child: List[int]) -> torch
 
 
 class HierarchicalAffineProjector(nn.Module):
-    """Affine-output projector enforcing p1=M12@p2 and p2=M23@p3 for 3-level hierarchies."""
+    """Affine-output projector enforcing z1=M12@z2 and z2=M23@z3 for 3-level hierarchies."""
 
     def __init__(
         self,
         num_classes_per_level: List[int],
         taxonomy: Dict[str, Any],
         eps: float = 1e-12,
-        stabilize_simplex: bool = True,
     ):
         super().__init__()
         classes = [int(x) for x in num_classes_per_level]
@@ -124,7 +122,6 @@ class HierarchicalAffineProjector(nn.Module):
 
         self.num_classes_per_level = classes
         self.eps = float(eps)
-        self.stabilize_simplex = bool(stabilize_simplex)
         self.register_buffer("m12", m12, persistent=False)
         self.register_buffer("m23", m23, persistent=False)
         self.register_buffer(
@@ -138,120 +135,81 @@ class HierarchicalAffineProjector(nn.Module):
             persistent=False,
         )
 
-    def _mass_renormalize(
-        self,
-        child_scores: torch.Tensor,
-        parent_mass: torch.Tensor,
-        parent_of_child: torch.Tensor,
-    ) -> torch.Tensor:
-        """Map unconstrained child scores to positive probabilities that sum to parent mass."""
-        bsz, _ = child_scores.shape
-        num_parents = int(parent_mass.size(-1))
-        idx = parent_of_child.to(device=child_scores.device)
-        idx_batch = idx.unsqueeze(0).expand(bsz, -1)
-
-        # Softplus keeps gradients alive even when affine projection makes values negative.
-        child_pos = F.softplus(child_scores).clamp_min(self.eps)
-
-        child_parent_mass = parent_mass[:, idx]
-        mass_per_parent = torch.zeros(
-            (bsz, num_parents),
-            dtype=child_scores.dtype,
-            device=child_scores.device,
-        ).scatter_add_(1, idx_batch, child_pos)
-        child_parent_denom = mass_per_parent[:, idx].clamp_min(self.eps)
-        return child_pos * (child_parent_mass / child_parent_denom)
-
     @staticmethod
     def _constraint_residual(
-        child_probs: torch.Tensor,
-        parent_probs: torch.Tensor,
+        child_scores: torch.Tensor,
+        parent_scores: torch.Tensor,
         mapping: torch.Tensor,
     ) -> torch.Tensor:
-        return child_probs @ mapping.transpose(0, 1).contiguous() - parent_probs
+        return child_scores @ mapping.transpose(0, 1).contiguous() - parent_scores
 
     def forward(
         self,
-        probs_per_level: List[torch.Tensor],
+        logits_per_level: List[torch.Tensor],
     ) -> Dict[str, Any]:
-        if len(probs_per_level) != 3:
-            raise ValueError(f"Expected 3 probability tensors in coarse->fine order, got {len(probs_per_level)}.")
+        if len(logits_per_level) != 3:
+            raise ValueError(f"Expected 3 logit tensors in coarse->fine order, got {len(logits_per_level)}.")
 
-        p1, p2, p3 = probs_per_level
-        if p1.ndim != 2 or p2.ndim != 2 or p3.ndim != 2:
-            raise ValueError("Each probability tensor must be rank-2 [batch, classes].")
-        if p1.shape[0] != p2.shape[0] or p2.shape[0] != p3.shape[0]:
-            raise ValueError("All probability tensors must have the same batch size.")
+        z1, z2, z3 = logits_per_level
+        if z1.ndim != 2 or z2.ndim != 2 or z3.ndim != 2:
+            raise ValueError("Each logit tensor must be rank-2 [batch, classes].")
+        if z1.shape[0] != z2.shape[0] or z2.shape[0] != z3.shape[0]:
+            raise ValueError("All logit tensors must have the same batch size.")
 
         expected = self.num_classes_per_level
-        current = [p1.shape[1], p2.shape[1], p3.shape[1]]
+        current = [z1.shape[1], z2.shape[1], z3.shape[1]]
         if current != expected:
-            raise ValueError(f"Probability shapes {current} do not match expected hierarchy classes {expected}.")
+            raise ValueError(f"Logit shapes {current} do not match expected hierarchy classes {expected}.")
 
-        compute_dtype = torch.float32 if p2.dtype in {torch.float16, torch.bfloat16} else p2.dtype
+        compute_dtype = torch.float32 if z2.dtype in {torch.float16, torch.bfloat16} else z2.dtype
         autocast_off = nullcontext()
-        if p2.device.type in {"cpu", "cuda", "xpu", "mps"}:
-            autocast_off = torch.autocast(device_type=p2.device.type, enabled=False)
+        if z2.device.type in {"cpu", "cuda", "xpu", "mps"}:
+            autocast_off = torch.autocast(device_type=z2.device.type, enabled=False)
 
         with autocast_off:
-            p1_work = p1.to(dtype=compute_dtype)
-            p2_work = p2.to(dtype=compute_dtype)
-            p3_work = p3.to(dtype=compute_dtype)
+            z1_work = z1.to(dtype=compute_dtype)
+            z2_work = z2.to(dtype=compute_dtype)
+            z3_work = z3.to(dtype=compute_dtype)
             # Stage-wise detached anchors:
-            # - p1 is treated as fixed when projecting p2.
-            # - p2_hat is treated as fixed when projecting p3.
-            p1_anchor = p1_work.detach()
-            m12 = self.m12.to(device=p2.device, dtype=compute_dtype)
-            m23 = self.m23.to(device=p2.device, dtype=compute_dtype)
+            # - z1 is treated as fixed when projecting z2.
+            # - z2_hat is treated as fixed when projecting z3.
+            z1_anchor = z1_work.detach()
+            m12 = self.m12.to(device=z2.device, dtype=compute_dtype)
+            m23 = self.m23.to(device=z2.device, dtype=compute_dtype)
 
-            # residual before projection for [M12 p2 - p1, M23 p3 - p2]
-            residual_12_before = self._constraint_residual(p2_work, p1_anchor, m12)
-            residual_23_before = self._constraint_residual(p3_work, p2_work, m23)
+            # residual before projection for [M12 z2 - z1, M23 z3 - z2]
+            residual_12_before = self._constraint_residual(z2_work, z1_anchor, m12)
+            residual_23_before = self._constraint_residual(z3_work, z2_work, m23)
             residual_before = torch.cat([residual_12_before, residual_23_before], dim=1)
 
             gram_12 = m12 @ m12.transpose(0, 1).contiguous()
-            eye_12 = torch.eye(gram_12.shape[0], dtype=compute_dtype, device=p2.device)
+            eye_12 = torch.eye(gram_12.shape[0], dtype=compute_dtype, device=z2.device)
             coeff_12 = torch.linalg.solve(
                 gram_12 + self.eps * eye_12,
                 residual_12_before.transpose(0, 1).contiguous(),
             ).transpose(0, 1).contiguous()
-            p2_hat = p2_work - coeff_12 @ m12
+            z2_hat = z2_work - coeff_12 @ m12
 
-            p2_anchor = p2_hat.detach()
-            residual_23_stage = self._constraint_residual(p3_work, p2_anchor, m23)
+            z2_anchor = z2_hat.detach()
+            residual_23_stage = self._constraint_residual(z3_work, z2_anchor, m23)
             gram_23 = m23 @ m23.transpose(0, 1).contiguous()
-            eye_23 = torch.eye(gram_23.shape[0], dtype=compute_dtype, device=p2.device)
+            eye_23 = torch.eye(gram_23.shape[0], dtype=compute_dtype, device=z2.device)
             coeff_23 = torch.linalg.solve(
                 gram_23 + self.eps * eye_23,
                 residual_23_stage.transpose(0, 1).contiguous(),
             ).transpose(0, 1).contiguous()
-            p3_hat = p3_work - coeff_23 @ m23
+            z3_hat = z3_work - coeff_23 @ m23
 
-            p1_hat = p1_work
-            if self.stabilize_simplex:
-                # p1 is not projected in HCC; keep it unchanged and only
-                # re-normalize children to match parent masses.
-                p2_hat = self._mass_renormalize(
-                    child_scores=p2_hat,
-                    parent_mass=p1_anchor,
-                    parent_of_child=self.parent_of_middle,
-                )
-                p2_anchor = p2_hat.detach()
-                p3_hat = self._mass_renormalize(
-                    child_scores=p3_hat,
-                    parent_mass=p2_anchor,
-                    parent_of_child=self.parent_of_fine,
-                )
-
-            residual_12_after = self._constraint_residual(p2_hat, p1_hat, m12)
-            residual_23_after = self._constraint_residual(p3_hat, p2_hat, m23)
+            z1_hat = z1_work
+            residual_12_after = self._constraint_residual(z2_hat, z1_hat, m12)
+            residual_23_after = self._constraint_residual(z3_hat, z2_hat, m23)
             residual_after = torch.cat([residual_12_after, residual_23_after], dim=1)
 
         return {
-            "projected_probs_per_level": [
-                p1_hat.to(dtype=p1.dtype),
-                p2_hat.to(dtype=p2.dtype),
-                p3_hat.to(dtype=p3.dtype),
+            "projected_logits_per_level": [
+                z1_hat.to(dtype=z1.dtype),
+                z2_hat.to(dtype=z2.dtype),
+                z3_hat.to(dtype=z3.dtype),
             ],
             "residual_before": residual_before,
             "residual_after": residual_after,

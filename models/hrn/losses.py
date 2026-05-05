@@ -143,7 +143,7 @@ def _hierarchical_loss(tree_scores_per_level: List[torch.Tensor], observed_globa
     z = joint.sum(dim=0).clamp_min(1e-12)  # [B]
     eligible = state_space[:, observed_global.long()] > 0  # [S, B]
     marginal = (joint * eligible.to(dtype=joint.dtype)).sum(dim=0).clamp_min(1e-12)
-    return (-torch.log(marginal / z)).mean()
+    return (-torch.log(marginal / z)).to(dtype=torch.float64).mean()
 
 
 def compute_loss(
@@ -184,7 +184,7 @@ def compute_loss(
         num_classes_per_level=num_classes_per_level,
         parent_of=parent_of,
         device=tree_scores_per_level[0].device,
-        dtype=torch.float64,
+        dtype=torch.float32,
     )
     if state_space is None:
         raise ValueError("HRN combinatorial loss requires a complete 3-level taxonomy (`parent_of` maps for levels 1 and 2).")
@@ -195,7 +195,7 @@ def compute_loss(
     leaf_mask = observed_level == 2
     if bool(leaf_mask.any()):
         ce_loss = F.cross_entropy(
-            species_ce_logits[leaf_mask].to(dtype=torch.float32),
+            species_ce_logits[leaf_mask].to(dtype=torch.float64),
             hard_targets[leaf_mask, 2].long(),
         )
     else:

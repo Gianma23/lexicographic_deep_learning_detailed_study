@@ -240,6 +240,30 @@ def _sum_grad_tuples(
     return tuple(summed)
 
 
+def _compose_mid_projected_grads(
+    mid_grads: Sequence[Optional[torch.Tensor]],
+    mid_projected_t2: Sequence[Optional[torch.Tensor]],
+    mid_projected_t1: Sequence[Optional[torch.Tensor]],
+    t2_mask: Sequence[bool],
+    t1_mask: Sequence[bool],
+) -> Tuple[Optional[torch.Tensor], ...]:
+    composed: List[Optional[torch.Tensor]] = []
+    for mid_grad, mid_t2, mid_t1, is_t2, is_t1 in zip(
+        mid_grads,
+        mid_projected_t2,
+        mid_projected_t1,
+        t2_mask,
+        t1_mask,
+    ):
+        if is_t2:
+            composed.append(mid_t2)
+        elif is_t1:
+            composed.append(mid_t1)
+        else:
+            composed.append(mid_grad)
+    return tuple(composed)
+
+
 def _scale_grad_tuple(
     grads: Sequence[Optional[torch.Tensor]],
     factor: float,
@@ -255,6 +279,14 @@ def _scale_grad_tuple(
         else:
             scaled.append(grad * factor_f)
     return tuple(scaled)
+
+
+def _scale_grad_pack(
+    grad_pack: Mapping[str, Sequence[Optional[torch.Tensor]]],
+    factor: float,
+) -> Dict[str, Tuple[Optional[torch.Tensor], ...]]:
+    factor_f = float(factor)
+    return {str(key): _scale_grad_tuple(grads, factor_f) for key, grads in grad_pack.items()}
 
 
 def _trunk_grad_norm_metrics(
@@ -350,31 +382,37 @@ def _build_lexicographic_grads(
 ) -> Tuple[Dict[str, Tuple[Optional[torch.Tensor], ...]], Dict[str, float]]:
     t1_mask = list(trunk_masks.get("t1", []))
     t2_mask = list(trunk_masks.get("t2", []))
-    coarse_mid_mask = _merge_masks(t1_mask, t2_mask)
 
-    mid_projected, _mid_coeff, mid_applied = _project_onto_reference(
+    mid_projected_t2, _mid_coeff_t2, mid_applied_t2 = _project_onto_reference(
         target_grads=mid_grads,
         reference_grads=coarse_grads,
-        include_mask=coarse_mid_mask,
+        include_mask=t2_mask,
         eps=eps,
     )
 
-    mid_basis_t1, _fine_mid_basis_coeff, fine_mid_basis_applied = _project_onto_reference(
-        target_grads=mid_projected,
+    mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
+        target_grads=mid_grads,
         reference_grads=coarse_grads,
         include_mask=t1_mask,
         eps=eps,
     )
 
-    fine_after_coarse, _fine_coeff_coarse, fine_applied_coarse = _project_onto_reference(
+    mid_projected = _compose_mid_projected_grads(
+        mid_grads=mid_grads,
+        mid_projected_t2=mid_projected_t2,
+        mid_projected_t1=mid_projected_t1,
+        t2_mask=t2_mask,
+        t1_mask=t1_mask,
+    )
+
+    higher_t1 = _sum_grad_tuples(
+        coarse_grads,
+        mid_projected_t1,
+        (None,) * len(coarse_grads),
+    )
+    fine_projected, _fine_coeff_higher, fine_applied_higher = _project_onto_reference(
         target_grads=fine_grads,
-        reference_grads=coarse_grads,
-        include_mask=t1_mask,
-        eps=eps,
-    )
-    fine_projected, _fine_coeff_mid_basis, fine_applied_mid_basis = _project_onto_reference(
-        target_grads=fine_after_coarse,
-        reference_grads=mid_basis_t1,
+        reference_grads=higher_t1,
         include_mask=t1_mask,
         eps=eps,
     )
@@ -390,48 +428,46 @@ def _build_lexicographic_grads(
     if not include_metrics:
         return grad_pack, {}
 
+    t2t1_mask = _merge_masks(t2_mask, t1_mask)
     metrics: Dict[str, float] = {
-        "post_projection_applied_t2t1_mid_coarse": 1.0 if mid_applied else 0.0,
-        "post_projection_applied_t1_mid_proj_coarse": 1.0 if fine_mid_basis_applied else 0.0,
-        "post_projection_applied_t1_fine_coarse": 1.0 if fine_applied_coarse else 0.0,
-        "post_projection_applied_t1_fine_mid_proj": 1.0 if fine_applied_mid_basis else 0.0,
+        "post_projection_applied_t2_mid_coarse": 1.0 if mid_applied_t2 else 0.0,
+        "post_projection_applied_t1_mid_coarse": 1.0 if mid_applied_t1 else 0.0,
+        "post_projection_applied_t1_fine_higher": 1.0 if fine_applied_higher else 0.0,
     }
-    all_params_mask = [True] * len(coarse_grads)
-
-    metrics["cos_mid_coarse"] = _grad_cosine_from_autograd_grads(
-        mid_grads,
-        coarse_grads,
-        all_params_mask,
-        eps=eps,
-    )
-    metrics["post_cos_mid_coarse"] = _grad_cosine_from_autograd_grads(
+    metrics["post_cos_t2_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
         mid_projected,
         coarse_grads,
-        all_params_mask,
+        t2_mask,
         eps=eps,
     )
-    metrics["cos_fine_coarse"] = _grad_cosine_from_autograd_grads(
-        fine_grads,
+    metrics["post_cos_t1_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
+        mid_projected,
         coarse_grads,
-        all_params_mask,
+        t1_mask,
         eps=eps,
     )
-    metrics["post_cos_fine_coarse"] = _grad_cosine_from_autograd_grads(
+    metrics["post_cos_t2t1_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
+        mid_projected,
+        coarse_grads,
+        t2t1_mask,
+        eps=eps,
+    )
+    metrics["post_cos_t1_fine_proj_higher"] = _grad_cosine_from_autograd_grads(
+        fine_projected,
+        higher_t1,
+        t1_mask,
+        eps=eps,
+    )
+    metrics["post_cos_t1_fine_proj_coarse"] = _grad_cosine_from_autograd_grads(
         fine_projected,
         coarse_grads,
-        all_params_mask,
+        t1_mask,
         eps=eps,
     )
-    metrics["cos_fine_mid"] = _grad_cosine_from_autograd_grads(
-        fine_grads,
-        mid_grads,
-        all_params_mask,
-        eps=eps,
-    )
-    metrics["post_cos_fine_mid"] = _grad_cosine_from_autograd_grads(
+    metrics["post_cos_t1_fine_proj_mid_proj"] = _grad_cosine_from_autograd_grads(
         fine_projected,
         mid_projected,
-        all_params_mask,
+        t1_mask,
         eps=eps,
     )
 
@@ -445,6 +481,13 @@ def _prepare_lexicographic_update(
     include_metrics: bool = True,
     grad_scale: float = 1.0,
 ) -> Tuple[Optional[Dict[str, Any]], Dict[str, float]]:
+    """Build lexicographic grads in unscaled units, optionally scaling returned grads.
+
+    When AMP is active the caller passes the current GradScaler scale as
+    ``grad_scale``. Projection coefficients and metrics stay in unscaled units,
+    while returned gradients are multiplied by ``grad_scale`` so
+    ``GradScaler.step`` can unscale and check them normally.
+    """
     level_grad_map = _compute_level_grad_map(
         trainable_named_params=trainable_named_params,
         level_losses=level_losses,
@@ -473,17 +516,10 @@ def _prepare_lexicographic_update(
 
     metrics: Dict[str, float] = {}
     if include_metrics:
-        safe_scale = float(grad_scale) if float(grad_scale) > 0.0 else 1.0
-        unscale = 1.0 / safe_scale
-
-        coarse_for_log = _scale_grad_tuple(coarse_grads, unscale)
-        mid_for_log = _scale_grad_tuple(mid_grads, unscale)
-        fine_for_log = _scale_grad_tuple(fine_grads, unscale)
-
         projected_for_log, lex_metrics = _build_lexicographic_grads(
-            coarse_grads=coarse_for_log,
-            mid_grads=mid_for_log,
-            fine_grads=fine_for_log,
+            coarse_grads=coarse_grads,
+            mid_grads=mid_grads,
+            fine_grads=fine_grads,
             trunk_masks=trunk_masks,
             eps=eps,
             include_metrics=True,
@@ -500,10 +536,13 @@ def _prepare_lexicographic_update(
         )
         metrics.update(post_metrics)
 
+    safe_scale = float(grad_scale) if float(grad_scale) > 0.0 else 1.0
+    projected_grads_for_step = _scale_grad_pack(projected_grads, safe_scale)
+
     state: Dict[str, Any] = {
         "trunk_masks": trunk_masks,
         "level_grad_map": level_grad_map,
-        "projected_grads": projected_grads,
+        "projected_grads": projected_grads_for_step,
     }
     return state, metrics
 
@@ -537,23 +576,45 @@ def _prepare_trunk_grad_metrics(
         mask_views=mask_views,
     )
 
-    all_params_mask = [True] * len(coarse_grads)
-    metrics["cos_mid_coarse"] = _grad_cosine_from_autograd_grads(
+    metrics["cos_t2_mid_coarse"] = _grad_cosine_from_autograd_grads(
         mid_grads,
         coarse_grads,
-        all_params_mask,
+        mask_views["t2"],
         eps=_GRAD_EPS,
     )
-    metrics["cos_fine_coarse"] = _grad_cosine_from_autograd_grads(
+    metrics["cos_t1_mid_coarse"] = _grad_cosine_from_autograd_grads(
+        mid_grads,
+        coarse_grads,
+        mask_views["t1"],
+        eps=_GRAD_EPS,
+    )
+    metrics["cos_t2t1_mid_coarse"] = _grad_cosine_from_autograd_grads(
+        mid_grads,
+        coarse_grads,
+        mask_views["t2t1"],
+        eps=_GRAD_EPS,
+    )
+    raw_higher_t1 = _sum_grad_tuples(
+        coarse_grads,
+        mid_grads,
+        (None,) * len(coarse_grads),
+    )
+    metrics["cos_t1_fine_higher"] = _grad_cosine_from_autograd_grads(
+        fine_grads,
+        raw_higher_t1,
+        mask_views["t1"],
+        eps=_GRAD_EPS,
+    )
+    metrics["cos_t1_fine_coarse"] = _grad_cosine_from_autograd_grads(
         fine_grads,
         coarse_grads,
-        all_params_mask,
+        mask_views["t1"],
         eps=_GRAD_EPS,
     )
-    metrics["cos_fine_mid"] = _grad_cosine_from_autograd_grads(
+    metrics["cos_t1_fine_mid"] = _grad_cosine_from_autograd_grads(
         fine_grads,
         mid_grads,
-        all_params_mask,
+        mask_views["t1"],
         eps=_GRAD_EPS,
     )
 

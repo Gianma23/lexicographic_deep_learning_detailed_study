@@ -44,9 +44,6 @@ hcc:
   # temperature is REQUIRED when enabled=true
   temperature: 20.0                # Base projection temperature (> 0 when enabled)
   eps: 1.0e-12                     # Numerical stability epsilon (auto-clamped to > 0)
-  stabilize_simplex: true          # Stabilize simplex operations in projector
-  use_conditional_prob: false      # If true, use log p(child|parent) for level-1/2 HCC probability-path losses
-  conditional_prob_levels: [1, 2]  # Levels to condition: [1], [2], or [1, 2] (ignored when use_conditional_prob=false)
   alpha_schedule: exp              # exp | tanh | linear | step
   alpha_start_epoch: 0             # Epoch index where constraint blending starts
   alpha_ramp_epochs: 0             # Ramp length; <=0 means "until train end"
