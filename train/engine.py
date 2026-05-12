@@ -40,6 +40,14 @@ def _section_to_dict(section: Any) -> Dict[str, Any]:
     return {}
 
 
+def _parse_nonnegative_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (OverflowError, TypeError, ValueError):
+        parsed = int(default)
+    return max(parsed, 0)
+
+
 def _resolve_lexicographic_cfg(cfg: Any) -> Dict[str, Any]:
     train_cfg = _section_to_dict(getattr(cfg, "train", None))
     raw_lex_cfg = _section_to_dict(train_cfg.get("lexicographic", None))
@@ -48,7 +56,21 @@ def _resolve_lexicographic_cfg(cfg: Any) -> Dict[str, Any]:
     if eps <= 0.0:
         eps = 1e-12
     log_metrics = bool(raw_lex_cfg.get("log_metrics", True))
-    return {"enabled": enabled, "eps": eps, "log_metrics": log_metrics}
+    start_epoch = _parse_nonnegative_int(raw_lex_cfg.get("start_epoch", 0))
+    return {
+        "enabled": enabled,
+        "eps": eps,
+        "log_metrics": log_metrics,
+        "start_epoch": start_epoch,
+    }
+
+
+def _lexicographic_projection_active(lex_cfg: Dict[str, Any], epoch: int) -> bool:
+    if not bool(lex_cfg.get("enabled", False)):
+        return False
+    current_epoch = _parse_nonnegative_int(epoch)
+    start_epoch = _parse_nonnegative_int(lex_cfg.get("start_epoch", 0))
+    return current_epoch >= start_epoch
 
 
 def _validate_lexicographic_enabled(cfg: Any, level_losses: List[torch.Tensor]) -> None:
@@ -106,6 +128,7 @@ def train_one_epoch(
     start_param_snapshot = _capture_trainable_param_snapshot(trainable_params)
     resolved_trunk_masks: Optional[Dict[str, List[bool]]] = None
     lex_cfg = _resolve_lexicographic_cfg(cfg)
+    lex_projection_active = _lexicographic_projection_active(lex_cfg, epoch)
     lex_validated = False
 
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
@@ -153,7 +176,7 @@ def train_one_epoch(
             _validate_lexicographic_enabled(cfg, level_losses)
             lex_validated = True
 
-        if lex_cfg["enabled"]:
+        if lex_projection_active:
             level_losses_for_lex = list(level_losses[:3])
             lex_grad_scale = 1.0
             if scaler is not None and use_amp:

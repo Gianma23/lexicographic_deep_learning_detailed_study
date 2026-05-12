@@ -24,6 +24,7 @@ np.set_printoptions(precision=4, suppress=True)
 
 RunSpec = Union[str, Path, Mapping[str, Any]]
 RunData = MutableMapping[str, Any]
+BEST_SELECTION_MODES = ("topdown", "independent")
 
 _ACC_LEVEL_PATTERN = re.compile(r"^acc_level_(\d+)$")
 _ACC_LEVEL_TOPDOWN_PATTERN = re.compile(r"^acc_level_topdown_(\d+)$")
@@ -292,38 +293,251 @@ def load_yaml(path: Path) -> Dict[str, Any]:
         return yaml.safe_load(handle)
 
 
-def metric_for_best(metrics: Mapping[str, float]) -> float:
+def _coerce_float(value: Any) -> Optional[float]:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if np.isfinite(out) else None
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_best_metrics(raw: Any) -> Dict[str, float]:
+    if not isinstance(raw, MappingABC):
+        return {}
+
+    out: Dict[str, float] = {}
+    for mode in BEST_SELECTION_MODES:
+        value = _coerce_float(raw.get(mode))
+        if value is not None:
+            out[mode] = value
+    return out
+
+
+def _normalize_single_test_result(section: Mapping[str, Any]) -> Dict[str, Any]:
+    metadata_keys = {"best_checkpoint", "best_epoch", "best_metric", "test_metrics"}
+    test_metrics = normalize_metrics(section.get("test_metrics", {}))
+    if not test_metrics:
+        metric_like = {key: value for key, value in section.items() if key not in metadata_keys}
+        test_metrics = normalize_metrics(metric_like)
+
+    best_epoch = _coerce_int(section.get("best_epoch"))
+    best_metric = _coerce_float(section.get("best_metric"))
+    return {
+        "best_checkpoint": str(section.get("best_checkpoint", "")),
+        "best_epoch": best_epoch,
+        "best_metric": best_metric,
+        "test_metrics": test_metrics,
+    }
+
+
+def _normalize_test_results(raw: Any) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(raw, MappingABC):
+        return {}
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for mode in BEST_SELECTION_MODES:
+        section = raw.get(mode)
+        if not isinstance(section, MappingABC):
+            continue
+        results[mode] = _normalize_single_test_result(section)
+    if results:
+        return results
+
+    legacy_result = _normalize_single_test_result(raw)
+    if (
+        legacy_result["test_metrics"]
+        or legacy_result["best_checkpoint"]
+        or legacy_result["best_metric"] is not None
+    ):
+        results["topdown"] = legacy_result
+    return results
+
+
+def metric_for_best(metrics: Mapping[str, float], mode: str = "topdown") -> float:
     m = normalize_metrics(metrics)
 
-    has_fpa = "fpa_topdown" in m
-    has_tice = "tice_topdown" in m
-    has_wap = "weighted_ap_topdown" in m
+    if mode not in BEST_SELECTION_MODES:
+        raise ValueError(f"Unknown selection mode '{mode}'. Expected one of {BEST_SELECTION_MODES}.")
+
+    fpa_key = f"fpa_{mode}"
+    tice_key = f"tice_{mode}"
+    wap_key = f"weighted_ap_{mode}"
+    has_fpa = fpa_key in m
+    has_tice = tice_key in m
+    has_wap = wap_key in m
 
     if has_fpa or has_tice or has_wap:
-        fpa = float(m.get("fpa_topdown", 0.0))
-        neg_tice = -float(m.get("tice_topdown", 1.0))
-        wap = float(m.get("weighted_ap_topdown", 0.0))
+        fpa = float(m.get(fpa_key, 0.0))
+        neg_tice = -float(m.get(tice_key, 1.0))
+        wap = float(m.get(wap_key, 0.0))
         return float(fpa + 1e-3 * neg_tice + 1e-6 * wap)
 
-    topdown_keys = [
+    prefix = f"acc_level_{mode}_"
+    mode_keys = [
         key
         for key in m
-        if key.startswith("acc_level_topdown_") and key.rsplit("_", 1)[-1].isdigit()
+        if key.startswith(prefix) and key.rsplit("_", 1)[-1].isdigit()
     ]
-    independent_keys = [
-        key
-        for key in m
-        if key.startswith("acc_level_independent_") and key.rsplit("_", 1)[-1].isdigit()
-    ]
-    deepest = topdown_keys or independent_keys
 
-    if not deepest:
-        return float(m.get("fpa_topdown", 0.0))
+    if not mode_keys:
+        return float(m.get(fpa_key, 0.0))
 
-    deepest_key = max(deepest, key=lambda key: int(key.rsplit("_", 1)[-1]))
+    deepest_key = max(mode_keys, key=lambda key: int(key.rsplit("_", 1)[-1]))
     primary = float(m.get(deepest_key, 0.0))
-    tie = float(m.get("fpa_topdown", 0.0))
+    tie = float(m.get(fpa_key, 0.0))
     return float(primary + 1e-3 * tie)
+
+
+def _find_epoch_event(epoch_events: Sequence[Mapping[str, Any]], epoch: Optional[int]) -> Optional[Mapping[str, Any]]:
+    if epoch is None:
+        return None
+    for event in epoch_events:
+        if _coerce_int(event.get("epoch")) == epoch:
+            return event
+    return None
+
+
+def _event_score(event: Mapping[str, Any], mode: str) -> float:
+    best_metrics = event.get("best_metrics_norm", {})
+    if isinstance(best_metrics, MappingABC):
+        value = _coerce_float(best_metrics.get(mode))
+        if value is not None:
+            return value
+
+    rank_scores = event.get("rank_scores", {})
+    if isinstance(rank_scores, MappingABC):
+        value = _coerce_float(rank_scores.get(mode))
+        if value is not None:
+            return value
+
+    return float(event.get("rank_score", np.nan))
+
+
+def _best_epoch_events_by_mode(
+    epoch_events: Sequence[MutableMapping[str, Any]],
+    test_results: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, Optional[Mapping[str, Any]]]:
+    out: Dict[str, Optional[Mapping[str, Any]]] = {}
+    for mode in BEST_SELECTION_MODES:
+        result = test_results.get(mode, {})
+        best_event = _find_epoch_event(epoch_events, _coerce_int(result.get("best_epoch")))
+        if best_event is not None:
+            out[mode] = best_event
+            continue
+
+        final_best = _coerce_float(result.get("best_metric"))
+        if final_best is None:
+            for event in reversed(epoch_events):
+                best_metrics = event.get("best_metrics_norm", {})
+                if not isinstance(best_metrics, MappingABC):
+                    continue
+                final_best = _coerce_float(best_metrics.get(mode))
+                if final_best is not None:
+                    break
+
+        if final_best is not None:
+            for event in epoch_events:
+                best_metrics = event.get("best_metrics_norm", {})
+                if not isinstance(best_metrics, MappingABC):
+                    continue
+                event_best = _coerce_float(best_metrics.get(mode))
+                if event_best is not None and np.isclose(event_best, final_best, rtol=1e-9, atol=1e-12):
+                    best_event = event
+                    break
+            if best_event is not None:
+                out[mode] = best_event
+                continue
+
+        finite_pairs = [
+            (idx, _coerce_float(event.get("rank_scores", {}).get(mode)))
+            for idx, event in enumerate(epoch_events)
+            if isinstance(event.get("rank_scores", {}), MappingABC)
+        ]
+        finite_pairs = [(idx, value) for idx, value in finite_pairs if value is not None]
+        if finite_pairs:
+            best_idx = max(finite_pairs, key=lambda item: item[1])[0]
+            out[mode] = epoch_events[best_idx]
+        else:
+            out[mode] = None
+    return out
+
+
+def _final_best_metrics(
+    epoch_events: Sequence[Mapping[str, Any]],
+    test_results: Mapping[str, Mapping[str, Any]],
+    best_epoch_events: Mapping[str, Optional[Mapping[str, Any]]],
+) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for mode in BEST_SELECTION_MODES:
+        result = test_results.get(mode, {})
+        value = _coerce_float(result.get("best_metric"))
+        if value is None:
+            for event in reversed(epoch_events):
+                best_metrics = event.get("best_metrics_norm", {})
+                if not isinstance(best_metrics, MappingABC):
+                    continue
+                value = _coerce_float(best_metrics.get(mode))
+                if value is not None:
+                    break
+        if value is None:
+            event = best_epoch_events.get(mode)
+            if event is not None:
+                value = _coerce_float(event.get("rank_scores", {}).get(mode))
+        if value is not None:
+            out[mode] = value
+    return out
+
+
+def _mode_from_metric_key(metric_key: str) -> str:
+    key = str(metric_key)
+    if "_independent" in key or key.startswith("acc_level_independent_"):
+        return "independent"
+    return "topdown"
+
+
+def _iter_test_metric_maps(run_data: Mapping[str, Any]) -> Iterable[Mapping[str, float]]:
+    test_results = run_data.get("test_results", {})
+    if isinstance(test_results, MappingABC):
+        for mode in BEST_SELECTION_MODES:
+            section = test_results.get(mode)
+            if isinstance(section, MappingABC) and isinstance(section.get("test_metrics"), MappingABC):
+                yield section["test_metrics"]
+    test_metrics = run_data.get("test_metrics", {})
+    if isinstance(test_metrics, MappingABC):
+        yield test_metrics
+
+
+def _test_metrics_for_mode(run_data: Mapping[str, Any], mode: str) -> Mapping[str, float]:
+    test_results = run_data.get("test_results", {})
+    if isinstance(test_results, MappingABC):
+        section = test_results.get(mode)
+        if isinstance(section, MappingABC) and isinstance(section.get("test_metrics"), MappingABC):
+            metrics = section["test_metrics"]
+            if metrics:
+                return metrics
+
+        section = test_results.get("topdown")
+        if isinstance(section, MappingABC) and isinstance(section.get("test_metrics"), MappingABC):
+            metrics = section["test_metrics"]
+            if metrics:
+                return metrics
+
+    test_metrics = run_data.get("test_metrics", {})
+    if isinstance(test_metrics, MappingABC):
+        return test_metrics
+    return {}
+
+
+def _test_metric_value(run_data: Mapping[str, Any], metric_key: str) -> float:
+    metrics = _test_metrics_for_mode(run_data, _mode_from_metric_key(metric_key))
+    return float(metrics.get(metric_key, np.nan))
 
 
 def parse_run(run_dir: Path) -> RunData:
@@ -343,25 +557,36 @@ def parse_run(run_dir: Path) -> RunData:
     for event in epoch_events:
         event["train_metrics_norm"] = normalize_metrics(event.get("train_metrics", {}))
         event["val_metrics_norm"] = normalize_metrics(event.get("val_metrics", {}))
-        event["rank_score"] = metric_for_best(event["val_metrics_norm"])
+        event["rank_scores"] = {
+            mode: metric_for_best(event["val_metrics_norm"], mode=mode)
+            for mode in BEST_SELECTION_MODES
+        }
+        event["rank_score"] = event["rank_scores"]["topdown"]
+        event["best_metrics_norm"] = _normalize_best_metrics(event.get("best_metrics", {}))
+        if not event["best_metrics_norm"]:
+            legacy_best_metric = _coerce_float(event.get("best_metric"))
+            if legacy_best_metric is not None:
+                event["best_metrics_norm"] = {"topdown": legacy_best_metric}
 
     test_event: Dict[str, Any] = {}
     test_events = [event for event in events if event.get("event") == "test"]
     if test_events:
         test_event = test_events[-1]
 
-    test_metrics = normalize_metrics(test_event.get("test_metrics", {}))
+    test_results = _normalize_test_results(test_event.get("test_results", {}))
+    if not test_results:
+        test_results = _normalize_test_results(test_event)
     test_yaml_path = run_path / "test_metrics.yaml"
     if test_yaml_path.exists():
         test_metrics_yaml = load_yaml(test_yaml_path) or {}
-        yaml_metrics = normalize_metrics(test_metrics_yaml.get("test_metrics", {}))
-        if yaml_metrics:
-            test_metrics = {**yaml_metrics, **test_metrics}
+        yaml_test_results = _normalize_test_results(test_metrics_yaml)
+        if yaml_test_results:
+            test_results = {**test_results, **yaml_test_results}
+    test_metrics = dict(test_results.get("topdown", {}).get("test_metrics", {}))
 
-    best_epoch_event = None
-    if epoch_events:
-        best_idx = int(np.argmax([event["rank_score"] for event in epoch_events]))
-        best_epoch_event = epoch_events[best_idx]
+    best_epoch_events = _best_epoch_events_by_mode(epoch_events, test_results)
+    best_epoch_event = best_epoch_events.get("topdown")
+    best_metrics = _final_best_metrics(epoch_events, test_results, best_epoch_events)
 
     model_raw = cfg.get("model", {}).get("name")
     model_name = canonical_model_name(model_raw)
@@ -378,6 +603,9 @@ def parse_run(run_dir: Path) -> RunData:
         "epoch_events": epoch_events,
         "test_event": test_event,
         "test_metrics": test_metrics,
+        "test_results": test_results,
+        "best_metrics": best_metrics,
+        "best_epoch_events": best_epoch_events,
         "best_epoch_event": best_epoch_event,
         "level_names": list(cfg.get("dataset", {}).get("levels", [])),
         "dataset_name": canonical_dataset_name(dataset_raw),
@@ -613,6 +841,21 @@ def _fmt_delta_edges(value: float) -> str:
     return f"{sign}{value:.3f}"
 
 
+def _fmt_score(value: Any) -> str:
+    score = _coerce_float(value)
+    if score is None:
+        return "n/a"
+    return f"{score:.4f}"
+
+
+def _fmt_epoch_score(event: Optional[Mapping[str, Any]], score: Any) -> str:
+    if event is None:
+        return f"n/a/{_fmt_score(score)}"
+    epoch = _coerce_int(event.get("epoch"))
+    epoch_text = str(epoch) if epoch is not None else "n/a"
+    return f"{epoch_text}/{_fmt_score(score)}"
+
+
 def _metric_goal_is_lower_better(metric_key: str) -> bool:
     return metric_key.startswith("tice_") or metric_key.startswith("ahd_")
 
@@ -641,16 +884,26 @@ def _merged_comp_cell(metric_key: str, comp_value: float, base_value: float) -> 
     return f"{comp_txt} ({delta_txt})"
 
 
-def _best_indices(metric_key: str, values: Sequence[float]) -> set[int]:
+def _best_and_second_best_indices(metric_key: str, values: Sequence[float]) -> Tuple[set[int], set[int]]:
     finite_pairs = [(idx, val) for idx, val in enumerate(values) if np.isfinite(val)]
     if not finite_pairs:
-        return set()
+        return set(), set()
 
-    if _metric_goal_is_lower_better(metric_key):
-        best_value = min(val for _, val in finite_pairs)
-    else:
-        best_value = max(val for _, val in finite_pairs)
-    return {idx for idx, val in finite_pairs if np.isclose(val, best_value, rtol=1e-9, atol=1e-12)}
+    lower_is_better = _metric_goal_is_lower_better(metric_key)
+    sorted_pairs = sorted(finite_pairs, key=lambda item: item[1], reverse=not lower_is_better)
+
+    grouped_indices: List[List[int]] = []
+    grouped_values: List[float] = []
+    for idx, value in sorted_pairs:
+        if grouped_values and np.isclose(value, grouped_values[-1], rtol=1e-9, atol=1e-12):
+            grouped_indices[-1].append(idx)
+        else:
+            grouped_values.append(value)
+            grouped_indices.append([idx])
+
+    best_indices = set(grouped_indices[0]) if grouped_indices else set()
+    second_best_indices = set(grouped_indices[1]) if len(grouped_indices) > 1 else set()
+    return best_indices, second_best_indices
 
 
 def _safe_delta(a: float, b: float) -> float:
@@ -839,14 +1092,28 @@ class ModelComparisonAnalysis:
         for dataset_name in self.dataset_keys:
             print(dataset_display_name(dataset_name))
             for run in self.runs_by_dataset[dataset_name]:
-                best_event = run.get("best_epoch_event")
-                best_epoch = best_event.get("epoch") if isinstance(best_event, dict) else None
-                best_score = float(best_event.get("rank_score", np.nan)) if isinstance(best_event, dict) else np.nan
-                test_fpa = float(run.get("test_metrics", {}).get("fpa_topdown", np.nan))
+                best_events = run.get("best_epoch_events", {})
+                best_metrics = run.get("best_metrics", {})
+                topdown_event = best_events.get("topdown") if isinstance(best_events, MappingABC) else None
+                independent_event = best_events.get("independent") if isinstance(best_events, MappingABC) else None
+                topdown_score = (
+                    best_metrics.get("topdown")
+                    if isinstance(best_metrics, MappingABC) and "topdown" in best_metrics
+                    else _event_score(topdown_event, "topdown") if topdown_event is not None else None
+                )
+                independent_score = (
+                    best_metrics.get("independent")
+                    if isinstance(best_metrics, MappingABC) and "independent" in best_metrics
+                    else _event_score(independent_event, "independent") if independent_event is not None else None
+                )
+                test_fpa_topdown = float(_test_metrics_for_mode(run, "topdown").get("fpa_topdown", np.nan))
+                test_fpa_independent = float(_test_metrics_for_mode(run, "independent").get("fpa_independent", np.nan))
                 print(
                     f"  - {run['model_label']:<12} | run={run['run_name']:<35} "
-                    f"| best_epoch={str(best_epoch):<4} | best_score={best_score:.4f} | "
-                    f"test_FPA_td={_fmt_pct(test_fpa)}"
+                    f"| best_td={_fmt_epoch_score(topdown_event, topdown_score):<12} | "
+                    f"best_ind={_fmt_epoch_score(independent_event, independent_score):<12} | "
+                    f"test_FPA_td={_fmt_pct(test_fpa_topdown)} | "
+                    f"test_FPA_ind={_fmt_pct(test_fpa_independent)}"
                 )
 
     def plot_validation_curves(
@@ -892,7 +1159,12 @@ class ModelComparisonAnalysis:
                             linewidth=2.0,
                         )
 
-                        best_event = run_data.get("best_epoch_event")
+                        best_events = run_data.get("best_epoch_events", {})
+                        best_event = (
+                            best_events.get(mode_key)
+                            if isinstance(best_events, MappingABC)
+                            else run_data.get("best_epoch_event")
+                        )
                         if best_event is not None:
                             best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
                             if np.isfinite(best_value):
@@ -1214,7 +1486,12 @@ class ModelComparisonAnalysis:
                             linewidth=2.0,
                         )
 
-                        best_event = run_data.get("best_epoch_event")
+                        best_events = run_data.get("best_epoch_events", {})
+                        best_event = (
+                            best_events.get(mode_key)
+                            if isinstance(best_events, MappingABC)
+                            else run_data.get("best_epoch_event")
+                        )
                         if best_event is not None:
                             best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
                             if np.isfinite(best_value):
@@ -1259,7 +1536,8 @@ class ModelComparisonAnalysis:
             level_ids_from_test = {
                 int(key.rsplit("_", 1)[-1])
                 for run_data in dataset_runs
-                for key in run_data.get("test_metrics", {}).keys()
+                for metric_map in _iter_test_metric_maps(run_data)
+                for key in metric_map.keys()
                 if (
                     (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                     and key.rsplit("_", 1)[-1].isdigit()
@@ -1288,10 +1566,13 @@ class ModelComparisonAnalysis:
 
             values_by_metric: Dict[str, List[float]] = {}
             best_by_metric: Dict[str, set[int]] = {}
+            second_best_by_metric: Dict[str, set[int]] = {}
             for metric_key, _ in metric_rows:
-                values = [float(run_data["test_metrics"].get(metric_key, np.nan)) for run_data in dataset_runs]
+                values = [_test_metric_value(run_data, metric_key) for run_data in dataset_runs]
                 values_by_metric[metric_key] = values
-                best_by_metric[metric_key] = _best_indices(metric_key, values)
+                best_indices, second_best_indices = _best_and_second_best_indices(metric_key, values)
+                best_by_metric[metric_key] = best_indices
+                second_best_by_metric[metric_key] = second_best_indices
 
             header_labels = ["Metric"] + [str(run_data["model_label"]) for run_data in dataset_runs]
             table_lines = [
@@ -1313,6 +1594,8 @@ class ModelComparisonAnalysis:
                         cell = _merged_comp_cell(metric_key, value, values[0])
                     if run_idx in best_by_metric[metric_key] and cell != "n/a":
                         cell = f"**{cell}**"
+                    elif run_idx in second_best_by_metric[metric_key] and cell != "n/a":
+                        cell = f"<u>{cell}</u>"
                     row_cells.append(cell)
 
                 table_lines.append("| " + " | ".join(row_cells) + " |")
@@ -1329,22 +1612,38 @@ class ModelComparisonAnalysis:
             print("~" * len(dataset_display_name(dataset_name)))
 
             for run_data in dataset_runs:
-                best = run_data.get("best_epoch_event")
-                if best is None:
+                best_events = run_data.get("best_epoch_events", {})
+                best_topdown = (
+                    best_events.get("topdown")
+                    if isinstance(best_events, MappingABC)
+                    else run_data.get("best_epoch_event")
+                )
+                best_independent = (
+                    best_events.get("independent")
+                    if isinstance(best_events, MappingABC)
+                    else None
+                )
+                if best_topdown is None and best_independent is None:
                     print(f"{run_data['model_label']}: no epoch events")
                     continue
 
-                best_fpa_ind = float(best["val_metrics_norm"].get("fpa_independent", np.nan))
-                best_fpa_td = float(best["val_metrics_norm"].get("fpa_topdown", np.nan))
-                best_wap_ind = float(best["val_metrics_norm"].get("weighted_ap_independent", np.nan))
-                best_wap_td = float(best["val_metrics_norm"].get("weighted_ap_topdown", np.nan))
-                best_tice_ind = float(best["val_metrics_norm"].get("tice_independent", np.nan))
-                best_tice_td = float(best["val_metrics_norm"].get("tice_topdown", np.nan))
-                best_ahd_ind = float(best["val_metrics_norm"].get("ahd_independent", np.nan))
-                best_ahd_td = float(best["val_metrics_norm"].get("ahd_topdown", np.nan))
+                topdown_metrics = best_topdown.get("val_metrics_norm", {}) if best_topdown is not None else {}
+                independent_metrics = (
+                    best_independent.get("val_metrics_norm", {}) if best_independent is not None else topdown_metrics
+                )
+                best_fpa_ind = float(independent_metrics.get("fpa_independent", np.nan))
+                best_fpa_td = float(topdown_metrics.get("fpa_topdown", np.nan))
+                best_wap_ind = float(independent_metrics.get("weighted_ap_independent", np.nan))
+                best_wap_td = float(topdown_metrics.get("weighted_ap_topdown", np.nan))
+                best_tice_ind = float(independent_metrics.get("tice_independent", np.nan))
+                best_tice_td = float(topdown_metrics.get("tice_topdown", np.nan))
+                best_ahd_ind = float(independent_metrics.get("ahd_independent", np.nan))
+                best_ahd_td = float(topdown_metrics.get("ahd_topdown", np.nan))
 
                 print(
-                    f"{run_data['model_label']}: best epoch={best['epoch']}, "
+                    f"{run_data['model_label']}: "
+                    f"best_td={_fmt_epoch_score(best_topdown, _event_score(best_topdown, 'topdown') if best_topdown else None)}, "
+                    f"best_ind={_fmt_epoch_score(best_independent, _event_score(best_independent, 'independent') if best_independent else None)}, "
                     f"val FPA_ind={_pct_or_na(best_fpa_ind)}, val FPA_td={_pct_or_na(best_fpa_td)}, "
                     f"val wAP_ind={_pct_or_na(best_wap_ind)}, val wAP_td={_pct_or_na(best_wap_td)}, "
                     f"val TICE_ind={_pct_or_na(best_tice_ind)}, val TICE_td={_pct_or_na(best_tice_td)}, "
@@ -1357,36 +1656,36 @@ class ModelComparisonAnalysis:
             base = dataset_runs[0]
             for comp in dataset_runs[1:]:
                 fpa_ind_delta = _safe_delta(
-                    float(comp["test_metrics"].get("fpa_independent", np.nan)),
-                    float(base["test_metrics"].get("fpa_independent", np.nan)),
+                    float(_test_metrics_for_mode(comp, "independent").get("fpa_independent", np.nan)),
+                    float(_test_metrics_for_mode(base, "independent").get("fpa_independent", np.nan)),
                 )
                 fpa_td_delta = _safe_delta(
-                    float(comp["test_metrics"].get("fpa_topdown", np.nan)),
-                    float(base["test_metrics"].get("fpa_topdown", np.nan)),
+                    float(_test_metrics_for_mode(comp, "topdown").get("fpa_topdown", np.nan)),
+                    float(_test_metrics_for_mode(base, "topdown").get("fpa_topdown", np.nan)),
                 )
                 wap_ind_delta = _safe_delta(
-                    float(comp["test_metrics"].get("weighted_ap_independent", np.nan)),
-                    float(base["test_metrics"].get("weighted_ap_independent", np.nan)),
+                    float(_test_metrics_for_mode(comp, "independent").get("weighted_ap_independent", np.nan)),
+                    float(_test_metrics_for_mode(base, "independent").get("weighted_ap_independent", np.nan)),
                 )
                 wap_td_delta = _safe_delta(
-                    float(comp["test_metrics"].get("weighted_ap_topdown", np.nan)),
-                    float(base["test_metrics"].get("weighted_ap_topdown", np.nan)),
+                    float(_test_metrics_for_mode(comp, "topdown").get("weighted_ap_topdown", np.nan)),
+                    float(_test_metrics_for_mode(base, "topdown").get("weighted_ap_topdown", np.nan)),
                 )
                 tice_ind_delta = _safe_delta(
-                    float(comp["test_metrics"].get("tice_independent", np.nan)),
-                    float(base["test_metrics"].get("tice_independent", np.nan)),
+                    float(_test_metrics_for_mode(comp, "independent").get("tice_independent", np.nan)),
+                    float(_test_metrics_for_mode(base, "independent").get("tice_independent", np.nan)),
                 )
                 tice_td_delta = _safe_delta(
-                    float(comp["test_metrics"].get("tice_topdown", np.nan)),
-                    float(base["test_metrics"].get("tice_topdown", np.nan)),
+                    float(_test_metrics_for_mode(comp, "topdown").get("tice_topdown", np.nan)),
+                    float(_test_metrics_for_mode(base, "topdown").get("tice_topdown", np.nan)),
                 )
                 ahd_ind_delta = _safe_delta(
-                    float(comp["test_metrics"].get("ahd_independent", np.nan)),
-                    float(base["test_metrics"].get("ahd_independent", np.nan)),
+                    float(_test_metrics_for_mode(comp, "independent").get("ahd_independent", np.nan)),
+                    float(_test_metrics_for_mode(base, "independent").get("ahd_independent", np.nan)),
                 )
                 ahd_td_delta = _safe_delta(
-                    float(comp["test_metrics"].get("ahd_topdown", np.nan)),
-                    float(base["test_metrics"].get("ahd_topdown", np.nan)),
+                    float(_test_metrics_for_mode(comp, "topdown").get("ahd_topdown", np.nan)),
+                    float(_test_metrics_for_mode(base, "topdown").get("ahd_topdown", np.nan)),
                 )
 
                 print(

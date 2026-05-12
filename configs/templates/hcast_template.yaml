@@ -55,5 +55,6 @@ hcc:
 train:
   lexicographic:
     enabled: false                 # true enables coarse->mid->fine projected gradient composition
+    start_epoch: 0                 # Internal zero-based epoch index where projected gradients start
     eps: 1.0e-12                   # Numerical epsilon for projection denominators
     log_metrics: true              # Emit lexicographic projection diagnostics in train_metrics

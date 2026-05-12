@@ -85,6 +85,7 @@ train:
   smoothing: 0.1
   lexicographic:
     enabled: true
+    start_epoch: 0
     eps: 1.0e-12
     log_metrics: true
 

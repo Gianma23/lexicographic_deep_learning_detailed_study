@@ -3,7 +3,7 @@ import math
 import os
 import random
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 from urllib.parse import urlparse
 
 import numpy as np
@@ -13,6 +13,9 @@ try:
     from timm.scheduler import create_scheduler_v2 as timm_create_scheduler_v2
 except Exception:  # pragma: no cover
     timm_create_scheduler_v2 = None
+
+
+BEST_SELECTION_MODES = ("topdown", "independent")
 
 
 def seed_everything(seed: int, deterministic: bool = True):
@@ -328,7 +331,7 @@ def save_checkpoint(
     scheduler,
     scaler,
     epoch: int,
-    best_metric: float,
+    best_metrics: Mapping[str, float],
     cfg_resolved: Dict[str, Any],
 ):
     """Persist training state so runs can be resumed exactly."""
@@ -339,10 +342,18 @@ def save_checkpoint(
         "scheduler_state": scheduler.state_dict() if scheduler is not None else None,
         "scaler_state": scaler.state_dict() if scaler is not None else None,
         "epoch": epoch,
-        "best_metric": best_metric,
+        "best_metrics": normalize_best_metrics(best_metrics),
         "cfg_resolved": cfg_resolved,
     }
     torch.save(payload, path)
+
+
+def initial_best_metrics() -> Dict[str, float]:
+    return {mode: float("-inf") for mode in BEST_SELECTION_MODES}
+
+
+def normalize_best_metrics(best_metrics: Mapping[str, Any]) -> Dict[str, float]:
+    return {mode: float(best_metrics[mode]) for mode in BEST_SELECTION_MODES}
 
 
 def resume_if_available(
@@ -351,15 +362,17 @@ def resume_if_available(
     optimizer: torch.optim.Optimizer,
     scheduler,
     scaler,
-) -> Tuple[int, float]:
-    """Load checkpoint state if present and return (start_epoch, best_metric)."""
+) -> Tuple[int, Dict[str, float]]:
+    """Load checkpoint state if present and return (start_epoch, best_metrics)."""
     if not resume_path:
-        return 0, float("-inf")
+        return 0, initial_best_metrics()
 
     if not os.path.exists(resume_path):
-        return 0, float("-inf")
+        return 0, initial_best_metrics()
 
     ckpt = torch.load(resume_path, map_location="cpu")
+    best_metrics = normalize_best_metrics(ckpt["best_metrics"])
+
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
 
@@ -371,44 +384,46 @@ def resume_if_available(
 
     # Resume from the next epoch after the one saved in the checkpoint.
     start_epoch = int(ckpt.get("epoch", 0)) + 1
-    best_metric = float(ckpt.get("best_metric", float("-inf")))
-    return start_epoch, best_metric
+    return start_epoch, best_metrics
 
 
-def metric_for_best(eval_metrics: Dict[str, float]) -> float:
+def metric_for_best(eval_metrics: Mapping[str, float], mode: str) -> float:
     """Select the checkpoint ranking score from validation metrics.
 
     Lexicographic order:
-    1) FPA top-down (higher is better)
-    2) TICE top-down (lower is better)
-    3) wAP top-down (higher is better)
+    1) FPA for the selected mode (higher is better)
+    2) TICE for the selected mode (lower is better)
+    3) wAP for the selected mode (higher is better)
     Falls back to deepest available level accuracy when H-CAST metrics are absent.
     """
-    has_fpa = "fpa_topdown" in eval_metrics
-    has_tice = "tice_topdown" in eval_metrics
-    has_wap = "weighted_ap_topdown" in eval_metrics
+    if mode not in BEST_SELECTION_MODES:
+        raise ValueError(f"Unknown selection mode '{mode}'. Expected one of {BEST_SELECTION_MODES}.")
+
+    fpa_key = f"fpa_{mode}"
+    tice_key = f"tice_{mode}"
+    wap_key = f"weighted_ap_{mode}"
+    has_fpa = fpa_key in eval_metrics
+    has_tice = tice_key in eval_metrics
+    has_wap = wap_key in eval_metrics
 
     if has_fpa or has_tice or has_wap:
-        fpa = float(eval_metrics.get("fpa_topdown", 0.0))
+        fpa = float(eval_metrics.get(fpa_key, 0.0))
         # TICE is inconsistency rate, so lower is better: encode as -TICE.
-        neg_tice = -float(eval_metrics.get("tice_topdown", 1.0))
-        wap = float(eval_metrics.get("weighted_ap_topdown", 0.0))
+        neg_tice = -float(eval_metrics.get(tice_key, 1.0))
+        wap = float(eval_metrics.get(wap_key, 0.0))
         # Base-10 lexicographic packing for bounded metrics in [0, 1].
         return float(fpa + 1e-3 * neg_tice + 1e-6 * wap)
 
-    deepest_topdown = [
-        k for k in eval_metrics if k.startswith("acc_level_topdown_") and k[len("acc_level_topdown_") :].isdigit()
-    ]
-    deepest_independent = [
+    prefix = f"acc_level_{mode}_"
+    deepest = [
         k
         for k in eval_metrics
-        if k.startswith("acc_level_independent_") and k[len("acc_level_independent_") :].isdigit()
+        if k.startswith(prefix) and k[len(prefix) :].isdigit()
     ]
-    deepest = deepest_topdown or deepest_independent
     if not deepest:
-        return float(eval_metrics.get("fpa_topdown", 0.0))
+        return float(eval_metrics.get(fpa_key, 0.0))
     deepest_key = max(deepest, key=lambda key: int(key.rsplit("_", 1)[-1]))
     primary = float(eval_metrics.get(deepest_key, 0.0))
-    tie = float(eval_metrics.get("fpa_topdown", 0.0))
+    tie = float(eval_metrics.get(fpa_key, 0.0))
     # Tiny path-accuracy term stabilizes ordering when primary scores are tied.
     return float(primary + 1e-3 * tie)

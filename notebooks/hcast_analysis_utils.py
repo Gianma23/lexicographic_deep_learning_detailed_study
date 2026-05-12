@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
@@ -23,6 +24,7 @@ plt.style.use("seaborn-v0_8-whitegrid")
 
 RunSpec = Union[str, Path, Mapping[str, Any]]
 RunData = MutableMapping[str, Any]
+BEST_SELECTION_MODES = ("topdown", "independent")
 
 def resolve_project_root() -> Path:
     cwd = Path.cwd().resolve()
@@ -80,37 +82,142 @@ def load_yaml(path: Union[str, Path]) -> Dict[str, Any]:
         return yaml.safe_load(handle)
 
 
-def metric_for_best(metrics: Mapping[str, float]) -> float:
+def _normalize_test_results(raw: Any) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(raw, MappingABC):
+        return {}
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for mode in BEST_SELECTION_MODES:
+        section = raw.get(mode)
+        if not isinstance(section, MappingABC):
+            continue
+        results[mode] = {
+            "best_checkpoint": section.get("best_checkpoint", ""),
+            "best_epoch": section.get("best_epoch", None),
+            "best_metric": section.get("best_metric", None),
+            "test_metrics": normalize_metrics(section.get("test_metrics", {})),
+        }
+    if results:
+        return results
+
+    # Legacy format: a single best checkpoint/test-metrics payload at root level.
+    metadata_keys = {"best_checkpoint", "best_epoch", "best_metric", "test_metrics"}
+    legacy_metrics = normalize_metrics(raw.get("test_metrics", {}))
+    if not legacy_metrics:
+        metric_like = {key: value for key, value in raw.items() if key not in metadata_keys}
+        legacy_metrics = normalize_metrics(metric_like)
+    if not legacy_metrics and not any(key in raw for key in ("best_checkpoint", "best_epoch", "best_metric")):
+        return {}
+    results["topdown"] = {
+        "best_checkpoint": raw.get("best_checkpoint", ""),
+        "best_epoch": raw.get("best_epoch", None),
+        "best_metric": raw.get("best_metric", None),
+        "test_metrics": legacy_metrics,
+    }
+    return results
+
+
+def metric_for_best(metrics: Mapping[str, float], mode: str = "topdown") -> float:
     m = normalize_metrics(metrics)
 
-    has_fpa = "fpa_topdown" in m
-    has_tice = "tice_topdown" in m
-    has_wap = "weighted_ap_topdown" in m
+    if mode not in BEST_SELECTION_MODES:
+        raise ValueError(f"Unknown selection mode '{mode}'. Expected one of {BEST_SELECTION_MODES}.")
+
+    fpa_key = f"fpa_{mode}"
+    tice_key = f"tice_{mode}"
+    wap_key = f"weighted_ap_{mode}"
+    has_fpa = fpa_key in m
+    has_tice = tice_key in m
+    has_wap = wap_key in m
 
     if has_fpa or has_tice or has_wap:
-        fpa = float(m.get("fpa_topdown", 0.0))
-        neg_tice = -float(m.get("tice_topdown", 1.0))
-        wap = float(m.get("weighted_ap_topdown", 0.0))
+        fpa = float(m.get(fpa_key, 0.0))
+        neg_tice = -float(m.get(tice_key, 1.0))
+        wap = float(m.get(wap_key, 0.0))
         return float(fpa + 1e-3 * neg_tice + 1e-6 * wap)
 
-    deepest_topdown = [
+    prefix = f"acc_level_{mode}_"
+    deepest = [
         key
         for key in m
-        if key.startswith("acc_level_topdown_") and key[len("acc_level_topdown_") :].isdigit()
+        if key.startswith(prefix) and key[len(prefix) :].isdigit()
     ]
-    deepest_independent = [
-        key
-        for key in m
-        if key.startswith("acc_level_independent_") and key[len("acc_level_independent_") :].isdigit()
-    ]
-    deepest = deepest_topdown or deepest_independent
     if not deepest:
-        return float(m.get("fpa_topdown", 0.0))
+        return float(m.get(fpa_key, 0.0))
 
     deepest_key = max(deepest, key=lambda key: int(key.rsplit("_", 1)[-1]))
     primary = float(m.get(deepest_key, 0.0))
-    tie = float(m.get("fpa_topdown", 0.0))
+    tie = float(m.get(fpa_key, 0.0))
     return float(primary + 1e-3 * tie)
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _find_epoch_event(epoch_events: Sequence[Mapping[str, Any]], epoch: Optional[int]) -> Optional[Mapping[str, Any]]:
+    if epoch is None:
+        return None
+    for event in epoch_events:
+        if int(event.get("epoch", -1)) == epoch:
+            return event
+    return None
+
+
+def _best_epoch_events_by_mode(
+    epoch_events: Sequence[Mapping[str, Any]],
+    test_results: Mapping[str, Mapping[str, Any]],
+) -> Dict[str, Optional[Mapping[str, Any]]]:
+    out: Dict[str, Optional[Mapping[str, Any]]] = {}
+    for mode in BEST_SELECTION_MODES:
+        result = test_results.get(mode, {}) if isinstance(test_results, MappingABC) else {}
+        if (
+            mode != "topdown"
+            and isinstance(test_results, MappingABC)
+            and (
+                not isinstance(result, MappingABC)
+                or (
+                    result.get("best_epoch") is None
+                    and not normalize_metrics(result.get("test_metrics", {}))
+                )
+            )
+        ):
+            result = test_results.get("topdown", {})
+        best_event = _find_epoch_event(epoch_events, _coerce_int(result.get("best_epoch")))
+        if best_event is None and epoch_events:
+            best_event = max(
+                epoch_events,
+                key=lambda event: float(event.get("rank_scores", {}).get(mode, float("-inf"))),
+            )
+        out[mode] = best_event
+    return out
+
+
+def _test_metrics_for_mode(run_data: Mapping[str, Any], mode: str) -> Mapping[str, float]:
+    test_results = run_data.get("test_results", {})
+    if isinstance(test_results, MappingABC):
+        section = test_results.get(mode)
+        if isinstance(section, MappingABC) and isinstance(section.get("test_metrics"), MappingABC):
+            metrics = section["test_metrics"]
+            if metrics:
+                return metrics
+        section = test_results.get("topdown")
+        if isinstance(section, MappingABC) and isinstance(section.get("test_metrics"), MappingABC):
+            metrics = section["test_metrics"]
+            if metrics:
+                return metrics
+    return {}
+
+
+def _mode_from_metric_key(metric_key: str) -> str:
+    if "_independent" in metric_key or metric_key.startswith("acc_level_independent_"):
+        return "independent"
+    return "topdown"
 
 
 def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
@@ -121,18 +228,18 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
     for event in epoch_events:
         event["train_metrics_norm"] = normalize_metrics(event.get("train_metrics", {}))
         event["val_metrics_norm"] = normalize_metrics(event.get("val_metrics", {}))
-        event["rank_score"] = metric_for_best(event["val_metrics_norm"])
+        event["rank_scores"] = {mode: metric_for_best(event["val_metrics_norm"], mode=mode) for mode in BEST_SELECTION_MODES}
+        event["rank_score"] = float(event["rank_scores"]["topdown"])
 
+    # Test metrics are sourced from test_metrics.yaml only.
     test_events = [event for event in events if event.get("event") == "test"]
     test_event = test_events[-1] if test_events else {}
-    test_metrics = normalize_metrics(test_event.get("test_metrics", {}))
-
-    test_metrics_yaml: Dict[str, Any] = {}
     test_yaml_path = run_path / "test_metrics.yaml"
-    if test_yaml_path.exists():
-        test_metrics_yaml = load_yaml(test_yaml_path) or {}
-        if not test_metrics:
-            test_metrics = normalize_metrics(test_metrics_yaml.get("test_metrics", {}))
+    test_metrics_yaml: Dict[str, Any] = load_yaml(test_yaml_path) if test_yaml_path.exists() else {}
+    test_results = _normalize_test_results(test_metrics_yaml)
+    test_metrics = dict(test_results.get("topdown", {}).get("test_metrics", {}))
+    if not test_metrics and "independent" in test_results:
+        test_metrics = dict(test_results["independent"]["test_metrics"])
 
     level_names: List[str] = []
     cfg_path = run_path / "config_resolved.yaml"
@@ -140,10 +247,8 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         cfg = load_yaml(cfg_path) or {}
         level_names = list(cfg.get("dataset", {}).get("levels", []))
 
-    best_epoch_event = None
-    if epoch_events:
-        best_idx = int(np.argmax([event["rank_score"] for event in epoch_events]))
-        best_epoch_event = epoch_events[best_idx]
+    best_epoch_events = _best_epoch_events_by_mode(epoch_events, test_results)
+    best_epoch_event = best_epoch_events.get("topdown")
 
     return {
         "run_dir": run_path,
@@ -151,8 +256,10 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         "epoch_events": epoch_events,
         "test_event": test_event,
         "test_metrics": test_metrics,
+        "test_results": test_results,
         "test_metrics_yaml": test_metrics_yaml,
         "level_names": level_names,
+        "best_epoch_events": best_epoch_events,
         "best_epoch_event": best_epoch_event,
     }
 
@@ -511,15 +618,26 @@ def _merged_comp_cell(metric_key: str, comp_value: float, base_value: float) -> 
     return f"{comp_txt} ({delta_txt})"
 
 
-def _best_indices(metric_key: str, values: Sequence[float]) -> set[int]:
+def _best_and_second_best_indices(metric_key: str, values: Sequence[float]) -> Tuple[set[int], set[int]]:
     finite_pairs = [(idx, val) for idx, val in enumerate(values) if np.isfinite(val)]
     if not finite_pairs:
-        return set()
+        return set(), set()
 
-    best_value = min(val for _, val in finite_pairs) if _metric_goal_is_lower_better(metric_key) else max(
-        val for _, val in finite_pairs
-    )
-    return {idx for idx, val in finite_pairs if np.isclose(val, best_value, rtol=1e-9, atol=1e-12)}
+    lower_is_better = _metric_goal_is_lower_better(metric_key)
+    sorted_pairs = sorted(finite_pairs, key=lambda item: item[1], reverse=not lower_is_better)
+
+    grouped_indices: List[List[int]] = []
+    grouped_values: List[float] = []
+    for idx, value in sorted_pairs:
+        if grouped_values and np.isclose(value, grouped_values[-1], rtol=1e-9, atol=1e-12):
+            grouped_indices[-1].append(idx)
+        else:
+            grouped_values.append(value)
+            grouped_indices.append([idx])
+
+    best_indices = set(grouped_indices[0]) if grouped_indices else set()
+    second_best_indices = set(grouped_indices[1]) if len(grouped_indices) > 1 else set()
+    return best_indices, second_best_indices
 
 
 @dataclass
@@ -691,8 +809,11 @@ class HCastAnalysis:
         for dataset_key in self.dataset_keys:
             for run_data in self.run_data_by_dataset[dataset_key]:
                 epoch_count = len(run_data["epoch_events"])
-                best_epoch = run_data["best_epoch_event"]["epoch"] if run_data["best_epoch_event"] else None
-                best_score = run_data["best_epoch_event"]["rank_score"] if run_data["best_epoch_event"] else None
+                best_events = run_data.get("best_epoch_events", {})
+                best_td = best_events.get("topdown") if isinstance(best_events, MappingABC) else run_data.get("best_epoch_event")
+                best_ind = best_events.get("independent") if isinstance(best_events, MappingABC) else run_data.get("best_epoch_event")
+                best_td_epoch = best_td["epoch"] if best_td is not None else None
+                best_ind_epoch = best_ind["epoch"] if best_ind is not None else None
                 temperature = run_data.get("temperature", None)
                 projection_mode = run_data.get("hcc_projection_mode", None)
                 strength_max = run_data.get("hcc_constraint_strength_max", None)
@@ -708,8 +829,9 @@ class HCastAnalysis:
                 baseline_txt = ", baseline" if is_baseline else ""
 
                 print(
-                    f"[{dataset_name}] {run_data['label']}: epochs={epoch_count}, best_epoch={best_epoch}, "
-                    f"best_score={best_score}{temp_txt}{mode_txt}{strength_txt}{baseline_txt}"
+                    f"[{dataset_name}] {run_data['label']}: epochs={epoch_count}, "
+                    f"best_td_epoch={best_td_epoch}, best_ind_epoch={best_ind_epoch}"
+                    f"{temp_txt}{mode_txt}{strength_txt}{baseline_txt}"
                 )
 
     def plot_validation_curves(
@@ -752,7 +874,12 @@ class HCastAnalysis:
                             linewidth=2.0,
                         )
 
-                        best_event = run_data["best_epoch_event"]
+                        best_events = run_data.get("best_epoch_events", {})
+                        best_event = (
+                            best_events.get(mode_key)
+                            if isinstance(best_events, MappingABC)
+                            else run_data.get("best_epoch_event")
+                        )
                         if best_event is not None:
                             best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
                             if np.isfinite(best_value):
@@ -827,7 +954,12 @@ class HCastAnalysis:
                         linewidth=2.0,
                     )
 
-                    best_event = run_data["best_epoch_event"]
+                    best_events = run_data.get("best_epoch_events", {})
+                    best_event = (
+                        best_events.get("topdown")
+                        if isinstance(best_events, MappingABC)
+                        else run_data.get("best_epoch_event")
+                    )
                     if best_event is not None:
                         best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
                         if np.isfinite(best_value):
@@ -1570,7 +1702,12 @@ class HCastAnalysis:
                             linewidth=2.0,
                         )
 
-                        best_event = run_data["best_epoch_event"]
+                        best_events = run_data.get("best_epoch_events", {})
+                        best_event = (
+                            best_events.get(mode_key)
+                            if isinstance(best_events, MappingABC)
+                            else run_data.get("best_epoch_event")
+                        )
                         if best_event is not None:
                             best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
                             if np.isfinite(best_value):
@@ -1605,7 +1742,8 @@ class HCastAnalysis:
             level_ids_from_test = {
                 int(key.rsplit("_", 1)[-1])
                 for run_data in dataset_runs
-                for key in run_data.get("test_metrics", {}).keys()
+                for mode in BEST_SELECTION_MODES
+                for key in _test_metrics_for_mode(run_data, mode).keys()
                 if (
                     (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                     and key.rsplit("_", 1)[-1].isdigit()
@@ -1644,10 +1782,17 @@ class HCastAnalysis:
 
             values_by_metric = {}
             best_by_metric = {}
+            second_best_by_metric = {}
             for metric_key, _ in metric_rows:
-                metric_values = [float(run_data["test_metrics"].get(metric_key, np.nan)) for run_data in dataset_runs]
+                mode = _mode_from_metric_key(metric_key)
+                metric_values = [
+                    float(_test_metrics_for_mode(run_data, mode).get(metric_key, np.nan))
+                    for run_data in dataset_runs
+                ]
                 values_by_metric[metric_key] = metric_values
-                best_by_metric[metric_key] = _best_indices(metric_key, metric_values)
+                best_indices, second_best_indices = _best_and_second_best_indices(metric_key, metric_values)
+                best_by_metric[metric_key] = best_indices
+                second_best_by_metric[metric_key] = second_best_indices
 
             header_labels = ["Metric"] + [run_data["label"] for run_data in dataset_runs]
             table_lines = [
@@ -1666,6 +1811,8 @@ class HCastAnalysis:
                     cell = _fmt_value(metric_key, value) if run_idx == 0 else _merged_comp_cell(metric_key, value, values[0])
                     if run_idx in best_by_metric[metric_key] and cell != "n/a":
                         cell = f"**{cell}**"
+                    elif run_idx in second_best_by_metric[metric_key] and cell != "n/a":
+                        cell = f"<u>{cell}</u>"
                     row_cells.append(cell)
                 table_lines.append("| " + " | ".join(row_cells) + " |")
 

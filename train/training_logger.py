@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 import yaml
 
+from .utils import BEST_SELECTION_MODES
 
 LOSS_KEYS_HINT_FIELD = "__loss_keys__"
 
@@ -72,17 +73,18 @@ class TrainingLogger:
         self,
         epoch: int,
         lr: float,
-        best_metric: float,
+        best_metrics: Mapping[str, Any],
         train_outputs: Mapping[str, Any],
         val_metrics: Mapping[str, Any],
     ) -> Dict[str, Any]:
         train_losses, train_metrics = _split_train_outputs(train_outputs)
         val_metrics_float = _as_float_dict(val_metrics)
+        best_metrics_float = _as_float_dict(best_metrics)
         event = {
             "event": "epoch",
             "epoch": int(epoch),
             "lr": float(lr),
-            "best_metric": float(best_metric),
+            "best_metrics": best_metrics_float,
             "train_losses": train_losses,
             "train_metrics": train_metrics,
             "val_metrics": val_metrics_float,
@@ -90,14 +92,19 @@ class TrainingLogger:
         self._append_event(event)
         return event
 
-    def log_test(self, best_checkpoint: str, best_metric: float, test_metrics: Mapping[str, Any]) -> Dict[str, Any]:
-        payload = {
-            "best_checkpoint": str(best_checkpoint),
-            "best_metric": float(best_metric),
-            "test_metrics": _as_float_dict(test_metrics),
-        }
+    def log_test(self, results_by_mode: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        for mode in BEST_SELECTION_MODES:
+            result = results_by_mode[mode]
+            payload[mode] = {
+                "best_checkpoint": str(result.get("best_checkpoint", "")),
+                "best_epoch": int(result.get("best_epoch", -1)),
+                "best_metric": float(result.get("best_metric", float("nan"))),
+                "test_metrics": _as_float_dict(result.get("test_metrics", {})),
+            }
+
         self._save_yaml(self.test_metrics_path, payload)
-        event = {"event": "test", **payload}
+        event = {"event": "test", "test_results": payload}
         self._append_event(event)
         print(f"[LOGGER] saved test metrics: {self.test_metrics_path}")
         return payload

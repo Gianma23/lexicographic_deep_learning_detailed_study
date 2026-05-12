@@ -10,6 +10,7 @@ from .config_loader import load_config
 from .engine import evaluate, train_one_epoch
 from .eval import pretty_metrics
 from .utils import (
+    BEST_SELECTION_MODES,
     build_optimizer,
     build_scheduler,
     load_finetune_checkpoint,
@@ -101,10 +102,10 @@ def main():
     out_dir = Path(str(cfg.train.output_dir))
     out_dir.mkdir(parents=True, exist_ok=True)
     latest_ckpt = out_dir / "latest.pt"
-    best_ckpt = out_dir / "best.pt"
+    best_ckpts = {mode: out_dir / f"best_{mode}.pt" for mode in BEST_SELECTION_MODES}
 
     level_names = [str(name) for name in cfg.dataset.get("levels", [])]
-    start_epoch, best_metric = resume_if_available(str(cfg.train.get("resume", "")), model, optimizer, scheduler, scaler)
+    start_epoch, best_metrics = resume_if_available(str(cfg.train.get("resume", "")), model, optimizer, scheduler, scaler)
     logger = TrainingLogger(
         output_dir=out_dir,
         start_epoch=start_epoch,
@@ -140,21 +141,26 @@ def main():
         )
         val_metrics = evaluate(model, val_loader, device, cfg, epoch=epoch, taxonomy=taxonomy)
 
-        score = metric_for_best(val_metrics)
+        scores = {mode: metric_for_best(val_metrics, mode=mode) for mode in BEST_SELECTION_MODES}
         if scheduler is not None:
-            scheduler.step(epoch + 1, score)
+            scheduler.step(epoch + 1, scores["topdown"])
 
-        if score > best_metric:
-            best_metric = score
-            # Keep the best checkpoint according to validation metric
+        improved_modes = []
+        for mode, score in scores.items():
+            if score > best_metrics[mode]:
+                best_metrics[mode] = score
+                improved_modes.append(mode)
+
+        # Keep the best checkpoint for each validation-ranking mode.
+        for mode in improved_modes:
             save_checkpoint(
-                str(best_ckpt),
+                str(best_ckpts[mode]),
                 model,
                 optimizer,
                 scheduler,
                 scaler,
                 epoch,
-                best_metric,
+                best_metrics,
                 cfg_resolved,
             )
 
@@ -166,14 +172,14 @@ def main():
             scheduler,
             scaler,
             epoch,
-            best_metric,
+            best_metrics,
             cfg_resolved,
         )
 
         logger.log_epoch(
             epoch=epoch + 1,
             lr=float(optimizer.param_groups[0]["lr"]) if optimizer.param_groups else float("nan"),
-            best_metric=best_metric,
+            best_metrics=best_metrics,
             train_outputs=train_outputs,
             val_metrics=val_metrics,
         )
@@ -183,23 +189,33 @@ def main():
         print(f"{epoch_tag} val   | {pretty_metrics(val_metrics, level_names=level_names)}")
         print("")
 
-    # Evaluate the best validation checkpoint on the test set.
-    if not best_ckpt.exists():
-        raise RuntimeError(
-            f"Best checkpoint not found at {best_ckpt}. "
-            "Training likely ran zero epochs; check train.resume and train.stop_epoch."
-        )
-    checkpoint = torch.load(best_ckpt, map_location=device)
-    model.load_state_dict(checkpoint["model_state"])
-    checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))
-    print(f"[test] loaded best checkpoint from: {best_ckpt}")
-    test_metrics = evaluate(model, test_loader, device, cfg, epoch=checkpoint_epoch, taxonomy=taxonomy)
-    print(f"[test] {pretty_metrics(test_metrics, level_names=level_names)}")
-    logger.log_test(
-        best_checkpoint=str(best_ckpt),
-        best_metric=best_metric,
-        test_metrics=test_metrics,
-    )
+    # Evaluate each best validation checkpoint on the test set.
+    test_results = {}
+    for mode in BEST_SELECTION_MODES:
+        best_ckpt = best_ckpts[mode]
+        if not best_ckpt.exists():
+            raise RuntimeError(
+                f"Best {mode} checkpoint not found at {best_ckpt}. "
+                "Training likely ran zero epochs; check train.resume and train.stop_epoch."
+            )
+
+        checkpoint = torch.load(best_ckpt, map_location=device)
+        model.load_state_dict(checkpoint["model_state"])
+        checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))
+        checkpoint_best_metrics = checkpoint["best_metrics"]
+        best_metric = float(checkpoint_best_metrics[mode])
+
+        print(f"[test:{mode}] loaded best checkpoint from: {best_ckpt} (epoch {checkpoint_epoch + 1})")
+        test_metrics = evaluate(model, test_loader, device, cfg, epoch=checkpoint_epoch, taxonomy=taxonomy)
+        print(f"[test:{mode}] {pretty_metrics(test_metrics, level_names=level_names)}")
+        test_results[mode] = {
+            "best_checkpoint": str(best_ckpt),
+            "best_epoch": checkpoint_epoch + 1,
+            "best_metric": best_metric,
+            "test_metrics": test_metrics,
+        }
+
+    logger.log_test(test_results)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ Unified PyTorch training code for five hierarchical image classifiers:
 - `hrn`
 - `hiercos`
 
-The main user-facing entrypoint is `python -m train.train`. It handles config loading, training, validation, checkpointing, and final test evaluation from `best.pt`.
+The main user-facing entrypoint is `python -m train.train`. It handles config loading, training, validation, checkpointing, and final test evaluation from separate top-down and independent best checkpoints.
 
 ## What Is In Scope
 
@@ -116,6 +116,7 @@ Common fields worth checking first:
 Lexicographic upper-bound mode (H-CAST only, 3-level):
 
 - `train.lexicographic.enabled`: enables gradient-space lexicographic updates
+- `train.lexicographic.start_epoch`: internal zero-based epoch index where projected gradients start
 - `train.lexicographic.eps`: projection denominator epsilon
 - `train.lexicographic.log_metrics`: logs projection diagnostics under `train_metrics`
 - Requires `model.name: hcast`, exactly 3 level losses, and `model.loss.globalkl: false`
@@ -173,16 +174,25 @@ If no explicit taxonomy file is provided by an adapter, the dataset base class t
 Each run writes to `train.output_dir`:
 
 - `latest.pt`
-- `best.pt`
+- `best_topdown.pt`
+- `best_independent.pt`
 - `config_resolved.yaml`
 - `run_log.jsonl`
 - `test_metrics.yaml`
 
-`best.pt` is selected from validation metrics using:
+`best_topdown.pt` is selected from validation metrics using:
 
 1. `fpa_topdown` higher is better
 2. `tice_topdown` lower is better
 3. `weighted_ap_topdown` higher is better
+
+`best_independent.pt` uses the same ranking with independent metric keys:
+
+1. `fpa_independent` higher is better
+2. `tice_independent` lower is better
+3. `weighted_ap_independent` higher is better
+
+Final test evaluation runs once from each best checkpoint. `test_metrics.yaml` stores separate `topdown` and `independent` sections, each with `best_checkpoint`, `best_epoch`, `best_metric`, and `test_metrics`.
 
 Standard logged metric keys:
 

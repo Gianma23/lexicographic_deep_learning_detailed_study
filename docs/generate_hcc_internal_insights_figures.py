@@ -634,7 +634,7 @@ def write_summary_text(
     lines.append("")
     lines.append("Notes:")
     lines.append("  - Hard HCC is off through epoch 100 and turns on at epoch 101.")
-    lines.append("  - Use val logs for switch analysis. test_metrics.yaml stores the best checkpoint, which can predate the switch.")
+    lines.append("  - Use val logs for switch analysis. test_metrics.yaml stores validation-best checkpoint metrics, which can predate the switch.")
     lines.append("")
     for dataset_key in ["cifar100", "cub200", "aircraft"]:
         label = RUNS[dataset_key]["label"]

@@ -127,7 +127,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 ## Training
 
 - `train/__init__.py`: Package marker for training utilities.
-- `train/train.py`: Main CLI entrypoint. Loads config, builds loaders/model/optimizer/scheduler, trains, saves checkpoints, and evaluates the best checkpoint on the test split.
+- `train/train.py`: Main CLI entrypoint. Loads config, builds loaders/model/optimizer/scheduler, trains, saves top-down and independent best checkpoints, and evaluates both on the test split.
 - `train/config_loader.py`: YAML config loader with optional OmegaConf support and dotlist override handling.
 - `train/engine.py`: `train_one_epoch` and `evaluate` loops.
 - `train/eval.py`: Batch metric assembly and console metric formatting.
@@ -155,7 +155,8 @@ These files are the closest local equivalents of the upstream CAST internals and
 Runtime outputs are not tracked in the repository tree. Each training run writes to its configured `train.output_dir`, typically producing:
 
 - `latest.pt`
-- `best.pt`
+- `best_topdown.pt`
+- `best_independent.pt`
 - `config_resolved.yaml`
 - `run_log.jsonl`
 - `test_metrics.yaml`
