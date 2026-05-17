@@ -105,6 +105,28 @@ def _replace_timm_normalization(transform, replacement_ops):
     return transform
 
 
+class _CropBottomPixels:
+    """Crop a fixed number of pixels from the image bottom edge."""
+
+    def __init__(self, pixels: int):
+        self.pixels = int(pixels)
+
+    def __call__(self, image):
+        if self.pixels <= 0:
+            return image
+        if not hasattr(image, "size"):
+            return image
+        width, height = image.size
+        if self.pixels >= int(height):
+            raise ValueError(
+                "dataset.transforms.manual.crop_bottom_pixels is too large for the input image height."
+            )
+        return image.crop((0, 0, int(width), int(height) - self.pixels))
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return f"{self.__class__.__name__}(pixels={self.pixels})"
+
+
 def build_transforms(cfg: Any, split: str):
     dataset_cfg = cfg.dataset
     transforms_cfg = dataset_cfg["transforms"]
@@ -142,6 +164,11 @@ def build_transforms(cfg: Any, split: str):
     # - transforms.eval.* controls val/test resize+crop behavior.
     # -------------------------------------------------------------------------
     use_timm = bool(transforms_cfg["use_timm"])
+    manual_cfg = transforms_cfg.get("manual", {})
+    manual_crop_bottom_pixels = int(manual_cfg.get("crop_bottom_pixels", 0))
+    if manual_crop_bottom_pixels < 0:
+        raise ValueError("dataset.transforms.manual.crop_bottom_pixels must be >= 0.")
+    crop_bottom_op = _CropBottomPixels(manual_crop_bottom_pixels)
 
     if use_timm:
         timm_cfg = transforms_cfg["timm"]
@@ -154,7 +181,6 @@ def build_transforms(cfg: Any, split: str):
         recount = int(random_erase_cfg["count"])
         timm_small_image_crop_padding = int(timm_cfg.get("small_image_random_crop_padding", 4))
     else:
-        manual_cfg = transforms_cfg["manual"]
         manual_crop_mode = str(manual_cfg["crop_mode"]).strip().lower()
         manual_crop_padding = int(manual_cfg.get("random_crop_padding", 4))
         manual_crop_padding_mode = str(manual_cfg.get("random_crop_padding_mode", "constant")).strip().lower()
@@ -219,6 +245,8 @@ def build_transforms(cfg: Any, split: str):
                 transform.transforms[0] = transforms.RandomCrop(image_size, padding=timm_small_image_crop_padding)
             if normalization_mode != "torchvision":
                 transform = _replace_timm_normalization(transform, normalization_ops)
+            if manual_crop_bottom_pixels > 0:
+                return transforms.Compose([crop_bottom_op, transform])
             return transform
 
         valid_crop_modes = {"auto", "random_crop", "random_resized_crop", "none"}
@@ -231,6 +259,8 @@ def build_transforms(cfg: Any, split: str):
             manual_crop_mode = "random_crop" if image_size <= 32 else "random_resized_crop"
 
         train_ops = []
+        if manual_crop_bottom_pixels > 0:
+            train_ops.append(crop_bottom_op)
         if manual_resize_before_crop:
             train_ops.append(
                 transforms.Resize(
@@ -277,6 +307,8 @@ def build_transforms(cfg: Any, split: str):
         eval_resize_mode = "none" if image_size <= 32 else "resize_center_crop"
 
     eval_ops = []
+    if manual_crop_bottom_pixels > 0:
+        eval_ops.append(crop_bottom_op)
     if eval_resize_mode == "resize_center_crop":
         resize_size = int(eval_resize_size) if eval_resize_size is not None else int(image_size / eval_crop_ratio)
         resize_arg = (resize_size, resize_size) if eval_resize_square else resize_size
@@ -338,6 +370,7 @@ def build_dataloader(cfg: Any, split: str):
     pin_memory = bool(cfg.dataloader.get("pin_memory", True))
     windows_spawn_safe = bool(cfg.dataloader.get("windows_spawn_safe", True))
     drop_last_train = bool(cfg.dataloader.get("drop_last_train", True))
+    drop_last_eval = bool(cfg.dataloader.get("drop_last_eval", False))
 
     # On Windows, CUDA + worker spawning can hit WinError 1455 when each
     # subprocess imports torch CUDA DLLs (e.g., cublas64_12.dll).
@@ -360,7 +393,7 @@ def build_dataloader(cfg: Any, split: str):
         num_workers=workers,
         pin_memory=pin_memory,
         collate_fn=_collate_fn,
-        drop_last=bool(split == "train" and drop_last_train),
+        drop_last=bool(drop_last_train if split == "train" else drop_last_eval),
         generator=generator,
         worker_init_fn=_seed_worker,
     )

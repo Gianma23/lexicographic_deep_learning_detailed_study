@@ -17,7 +17,7 @@ model:
     # for grid mode
     patch_size: 8
   loss:
-    globalkl: false
+    globalkl: true
     gk_weight: 0.5
     
 dataset:
@@ -76,7 +76,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hcast_cifar100_nokl
+  output_dir: /scratch/g.saggini1/outputs/hcast_cifar100
   smoothing: 0.1
 
 optim:

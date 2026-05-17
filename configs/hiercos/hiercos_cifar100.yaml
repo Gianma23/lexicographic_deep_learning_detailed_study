@@ -3,8 +3,6 @@ model:
   variant: haframe_wide_resnet
   feature_space: hier-cos
   alpha: 0.05
-  # Upstream CIFAR-100 Hier-COS uses HAFrame WideResNet from scratch; no
-  # backbone pretrained weights are loaded for this variant.
   pretrained: false
   backbone_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
@@ -21,6 +19,7 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
   download: true
+  # Intentional clean-protocol choice: keep repo val split workflow (not upstream 50/class).
   val_split_ratio: 0.2
   split_seed: null
   transforms:
@@ -31,9 +30,10 @@ dataset:
       random_crop_padding: 4
       random_crop_padding_mode: reflect
       random_horizontal_flip_prob: 0.5
+      crop_bottom_pixels: 0
     eval:
-      resize_mode: auto
-      crop_ratio: 0.875
+      resize_mode: none
+      crop_ratio: 1.0
       interpolation: bicubic
     mixup: 0.0
     cutmix: 0.0
@@ -52,6 +52,8 @@ dataloader:
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
+  drop_last_train: true
+  drop_last_eval: true
 
 train:
   epochs: 100
@@ -59,7 +61,7 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100
+  output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100_parity
   smoothing: 0.0
 
 optim:

@@ -14,6 +14,7 @@ from .utils import (
     build_optimizer,
     build_scheduler,
     load_finetune_checkpoint,
+    load_trusted_checkpoint,
     metric_for_best,
     resume_if_available,
     save_checkpoint,
@@ -87,6 +88,11 @@ def main():
     train_loader, num_classes_per_level, taxonomy = build_dataloader(cfg, split="train")
     val_loader, _, _ = build_dataloader(cfg, split="val")
     test_loader, _, _ = build_dataloader(cfg, split="test")
+    loaders_by_split = {
+        "train": train_loader,
+        "val": val_loader,
+        "test": test_loader,
+    }
     _print_loader_sizes(train_loader, val_loader, test_loader)
 
     model = build_model(cfg, num_classes_per_level, taxonomy)
@@ -105,7 +111,15 @@ def main():
     best_ckpts = {mode: out_dir / f"best_{mode}.pt" for mode in BEST_SELECTION_MODES}
 
     level_names = [str(name) for name in cfg.dataset.get("levels", [])]
-    start_epoch, best_metrics = resume_if_available(str(cfg.train.get("resume", "")), model, optimizer, scheduler, scaler)
+    start_epoch, best_metrics, resume_info = resume_if_available(
+        str(cfg.train.get("resume", "")),
+        model,
+        optimizer,
+        scheduler,
+        scaler,
+        cfg_resolved=cfg_resolved,
+        loaders=loaders_by_split,
+    )
     logger = TrainingLogger(
         output_dir=out_dir,
         start_epoch=start_epoch,
@@ -115,6 +129,18 @@ def main():
     resolved_cfg_path = logger.save_resolved_config(cfg_resolved)
     print(f"[LOGGER] saved resolved config: {resolved_cfg_path}")
     print(f"[LOGGER] logging run events to: {logger.run_log_path}")
+    if str(cfg.train.get("resume", "")).strip():
+        logger.log_resume(resume_info)
+        print(
+            "[resume] "
+            f"path={resume_info.get('resume_path', '')} "
+            f"found={bool(resume_info.get('checkpoint_found', False))} "
+            f"start_epoch={int(resume_info.get('start_epoch', 0))} "
+            f"config_ok={bool(resume_info.get('config_check_passed', False))} "
+            f"rng_restored={bool(resume_info.get('rng_state_restored', False))} "
+            f"loader_rng_restored={bool(resume_info.get('loader_rng_state_restored', False))} "
+            f"full_replay={bool(resume_info.get('full_reproducibility_restored', False))}"
+        )
 
     epochs = int(cfg.train.epochs)
     stop_epoch = int(cfg.train.get("stop_epoch", epochs))
@@ -162,6 +188,7 @@ def main():
                 epoch,
                 best_metrics,
                 cfg_resolved,
+                loaders=loaders_by_split,
             )
 
         # Always refresh latest checkpoint for resumable training
@@ -174,6 +201,7 @@ def main():
             epoch,
             best_metrics,
             cfg_resolved,
+            loaders=loaders_by_split,
         )
 
         logger.log_epoch(
@@ -199,7 +227,7 @@ def main():
                 "Training likely ran zero epochs; check train.resume and train.stop_epoch."
             )
 
-        checkpoint = torch.load(best_ckpt, map_location=device)
+        checkpoint = load_trusted_checkpoint(best_ckpt, map_location=device)
         model.load_state_dict(checkpoint["model_state"])
         checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))
         checkpoint_best_metrics = checkpoint["best_metrics"]

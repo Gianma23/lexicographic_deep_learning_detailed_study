@@ -33,6 +33,7 @@ dataset:
 
     manual:                          # Active only when use_timm=false (train split)
       crop_mode: auto                # auto | random_crop | random_resized_crop | none
+      crop_bottom_pixels: 0          # Optional: crop fixed pixels from image bottom before train/eval resize/crop
       resize_before_crop: false      # If true, apply a fixed Resize() before crop op
       resize_before_crop_size: 224   # Square side used by pre-crop Resize()
       resize_before_crop_interpolation: bicubic # Interpolation used by pre-crop Resize()

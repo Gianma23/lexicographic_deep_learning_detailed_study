@@ -1794,6 +1794,44 @@ class HCastAnalysis:
                 best_by_metric[metric_key] = best_indices
                 second_best_by_metric[metric_key] = second_best_indices
 
+            best_epoch_cells: List[str] = []
+            for run_data in dataset_runs:
+                test_results = run_data.get("test_results", {})
+                td_epoch = None
+                ind_epoch = None
+                if isinstance(test_results, MappingABC):
+                    td_section = test_results.get("topdown")
+                    if isinstance(td_section, MappingABC):
+                        td_epoch = _coerce_int(td_section.get("best_epoch"))
+                    ind_section = test_results.get("independent")
+                    if isinstance(ind_section, MappingABC):
+                        ind_epoch = _coerce_int(ind_section.get("best_epoch"))
+
+                best_events = run_data.get("best_epoch_events", {})
+                if td_epoch is None:
+                    td_event = (
+                        best_events.get("topdown")
+                        if isinstance(best_events, MappingABC)
+                        else run_data.get("best_epoch_event")
+                    )
+                    td_epoch = _coerce_int(td_event.get("epoch")) if isinstance(td_event, MappingABC) else None
+                if ind_epoch is None:
+                    ind_event = (
+                        best_events.get("independent")
+                        if isinstance(best_events, MappingABC)
+                        else run_data.get("best_epoch_event")
+                    )
+                    ind_epoch = _coerce_int(ind_event.get("epoch")) if isinstance(ind_event, MappingABC) else None
+                if ind_epoch is None:
+                    ind_epoch = td_epoch
+
+                if td_epoch is None and ind_epoch is None:
+                    best_epoch_cells.append("n/a")
+                else:
+                    td_text = str(td_epoch) if td_epoch is not None else "n/a"
+                    ind_text = str(ind_epoch) if ind_epoch is not None else "n/a"
+                    best_epoch_cells.append(f"{td_text}/{ind_text}")
+
             header_labels = ["Metric"] + [run_data["label"] for run_data in dataset_runs]
             table_lines = [
                 f"### Dataset: `{dataset_key}`",
@@ -1801,6 +1839,7 @@ class HCastAnalysis:
                 "",
                 "| " + " | ".join(header_labels) + " |",
                 "|---|" + "|".join(["---:"] * (len(header_labels) - 1)) + "|",
+                "| Best epoch (TD/Ind) | " + " | ".join(best_epoch_cells) + " |",
             ]
 
             for metric_key, metric_name in metric_rows:

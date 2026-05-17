@@ -1,4 +1,4 @@
-﻿model:
+model:
   name: hrn
   backbone: resnet50
   pretrained: true
@@ -16,6 +16,7 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
   download: true
+  # Local extrapolation: HRN upstream does not provide CIFAR-100 experiments.
   val_split_ratio: 0.2
   split_seed: null
   transforms:
@@ -24,16 +25,18 @@ dataset:
     manual:
       crop_mode: random_crop
       random_crop_padding: 4
+      random_crop_padding_mode: reflect
       random_horizontal_flip_prob: 0.5
+      crop_bottom_pixels: 0
     eval:
-      resize_mode: auto
-      crop_ratio: 0.875
+      resize_mode: none
+      crop_ratio: 1.0
       interpolation: bicubic
     mixup: 0.0
     cutmix: 0.0
     cutmix_minmax: null
     mixup_prob: 0.0
-    mixup_switch_prob: 0.5
+    mixup_switch_prob: 0.0
     mixup_mode: batch
 
   annotations:
@@ -43,17 +46,20 @@ dataset:
 
 dataloader:
   batch_size: 8
-  num_workers: 8
+  num_workers: 4
+  pin_memory: true
   windows_spawn_safe: true
+  drop_last_train: true
+  drop_last_eval: true
 
 train:
   epochs: 100
   seed: 0
   device: cuda
-  amp: true
+  amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hrn_cifar100
-  smoothing: 0.1
+  output_dir: /scratch/g.saggini1/outputs/hrn_cifar100_parity
+  smoothing: 0.0
 
 optim:
   name: sgd

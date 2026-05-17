@@ -45,7 +45,7 @@ python -m train.train --config configs/hcast/hcast_cifar100.yaml
 CLI dotlist overrides are supported:
 
 ```bash
-python -m train.train --config configs/hrn/hrn_cub200.yaml train.epochs=1 dataloader.batch_size=4
+python -m train.train --config configs/hrn/hrn_cub200_parity.yaml train.epochs=1 dataloader.batch_size=4
 ```
 
 There is no separate standalone evaluation CLI at the moment. End-of-run test evaluation is part of `train/train.py`.
@@ -76,15 +76,15 @@ HT-CapsNet:
 
 HRN:
 
-- `configs/hrn/hrn_cifar100.yaml`
-- `configs/hrn/hrn_cub200.yaml`
-- `configs/hrn/hrn_aircraft.yaml`
+- `configs/hrn/hrn_cifar100_parity.yaml`
+- `configs/hrn/hrn_cub200_parity.yaml`
+- `configs/hrn/hrn_aircraft_parity.yaml`
 
 Hier-COS:
 
-- `configs/hiercos/hiercos_cifar100.yaml`
-- `configs/hiercos/hiercos_cub200.yaml`
-- `configs/hiercos/hiercos_aircraft.yaml`
+- `configs/hiercos/hiercos_cifar100_parity.yaml`
+- `configs/hiercos/hiercos_cub200_parity.yaml`
+- `configs/hiercos/hiercos_aircraft_parity.yaml`
 
 Reusable templates:
 
@@ -112,6 +112,9 @@ Common fields worth checking first:
 - `train.output_dir`
 - `train.device`
 - `train.resume`
+- `dataloader.drop_last_train` / `dataloader.drop_last_eval`
+- `dataset.transforms.manual.crop_bottom_pixels`
+- `model.hafpp_loss_mode` (Hier-COS `feature_space: haf++`)
 
 Lexicographic upper-bound mode (H-CAST only, 3-level):
 
@@ -158,14 +161,23 @@ Optional normalized JSON annotations are also supported for all datasets:
 - `lhdnn` requires at least 2 levels and always requires taxonomy.
 - `ht_capsnet` requires at least 2 levels. The builder also enforces `train.seed` and `runtime.deterministic: true`.
 - `hrn` supports exactly 3 levels.
-- `hrn` follows upstream HRN for CUB-200 and Aircraft: ImageNet-pretrained ResNet-50, 1024-d branch bottlenecks, 512-d classifiers, 448 crops from 550x550 resized images, `[0.5, 0.5, 0.5]` normalization, and SGD parameter groups with the ResNet trunk at 0.1x LR.
+- `hrn` follows upstream HRN for CUB-200 and Aircraft parity presets: ImageNet-pretrained ResNet-50, 1024-d branch bottlenecks, 512-d classifiers, 448 crops from 550x550 resized images, `[0.5, 0.5, 0.5]` normalization, and SGD parameter groups with the ResNet trunk at 0.1x LR.
 - `hrn` parity loss does not support mixup/cutmix soft targets, so the shipped HRN presets keep them disabled.
-- `hrn_cifar100` is a local extrapolation because the upstream HRN repo does not include CIFAR-100; it keeps this repo CIFAR hierarchy.
+- `hrn_cifar100_parity` is a local extrapolation because the upstream HRN repo does not include CIFAR-100; it keeps this repo CIFAR hierarchy.
 - `hiercos` requires taxonomy (`taxonomy.parent_of`) and at least 2 levels.
 - `hiercos` does not support mixup/cutmix soft targets. Keep `dataset.transforms.mixup/cutmix: 0.0`.
-- `hiercos` follows upstream feature-space/backbone choices: CIFAR-100 uses `feature_space: hier-cos` with `haframe_wide_resnet` from scratch, while Aircraft uses `feature_space: haf++` with an ImageNet-pretrained ResNet-50. The CUB preset is a local extrapolation and follows Aircraft.
-- `hiercos_cifar100` keeps this repo CIFAR hierarchy (3-level), not the paper 5-level CIFAR protocol.
-- `hiercos_cub200` is a pragmatic extrapolation preset (paper does not report CUB experiments).
+- `hiercos` follows upstream feature-space/backbone choices: CIFAR-100 uses `feature_space: hier-cos` with `haframe_wide_resnet` from scratch, while Aircraft uses `feature_space: haf++` with an ImageNet-pretrained ResNet-50. `hiercos_cub200_parity` is a local extrapolation and follows the Aircraft-style protocol.
+- For Hier-COS `feature_space: haf++`, `model.hafpp_loss_mode` supports:
+  - `leaf_only` (default repo behavior)
+  - `full_node` (upstream-style CE over full node logits; used by `hiercos_aircraft_parity.yaml`)
+- `hiercos_cifar100_parity` keeps this repo CIFAR hierarchy (3-level), not the paper 5-level CIFAR protocol.
+- `hiercos_cub200_parity` is a pragmatic extrapolation preset (paper does not report CUB experiments).
+
+Parity notes:
+
+- HRN and Hier-COS config folders now contain only `*_parity.yaml` presets.
+- Parity presets retain this repo's clean validation/test workflow and FPA/TICE checkpoint ranking.
+- See `docs/hrn_hiercos_alignment.md` for the detailed alignment audit and intentional divergences.
 
 If no explicit taxonomy file is provided by an adapter, the dataset base class tries to infer `taxonomy["parent_of"]` from the labels.
 

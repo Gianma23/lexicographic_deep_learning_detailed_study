@@ -2,8 +2,8 @@ model:
   name: hiercos
   variant: haframe_resnet50
   feature_space: haf++
+  hafpp_loss_mode: full_node
   pool: average
-  # Upstream FGVC-Aircraft ResNet-50 backbone starts from ImageNet weights.
   pretrained: true
   alpha: 0.1
   backbone_lr_scale: 0.1
@@ -16,6 +16,7 @@ dataset:
   mean: [0.4880712, 0.5191783, 0.54383063]
   std: [0.21482512, 0.20683703, 0.23937796]
   levels: [manufacturer, family, variant]
+  # Intentional clean-protocol choice: keep repo val split workflow.
   val_split_ratio: 0.2
   split_seed: null
   transforms:
@@ -24,12 +25,16 @@ dataset:
     manual:
       crop_mode: random_crop
       random_crop_padding: 4
+      random_crop_padding_mode: constant
       resize_before_crop: true
       resize_before_crop_size: 224
       interpolation: bilinear
       random_horizontal_flip_prob: 0.5
+      # Upstream preprocessing crops 20px from the bottom on FGVC-Aircraft.
+      crop_bottom_pixels: 20
     eval:
       resize_mode: resize
+      resize_size: 224
       crop_ratio: 1.0
       interpolation: bilinear
     mixup: 0.0
@@ -49,6 +54,8 @@ dataloader:
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
+  drop_last_train: true
+  drop_last_eval: true
 
 train:
   epochs: 100
@@ -56,7 +63,7 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft
+  output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft_parity
   smoothing: 0.0
 
 optim:

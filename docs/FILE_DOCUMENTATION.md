@@ -40,20 +40,20 @@ These presets configure the PyTorch HT-CapsNet port and its routing/loss paramet
 
 ### HRN presets
 
-- `configs/hrn/hrn_cifar100.yaml`
-- `configs/hrn/hrn_cub200.yaml`
-- `configs/hrn/hrn_aircraft.yaml`
+- `configs/hrn/hrn_cifar100_parity.yaml`
+- `configs/hrn/hrn_cub200_parity.yaml`
+- `configs/hrn/hrn_aircraft_parity.yaml`
 
 The HRN family supports exactly three hierarchy levels.
 The CUB-200 and Aircraft presets mirror upstream HRN preprocessing and optimization: ImageNet-pretrained ResNet-50, 448 crops after 550x550 resize, `[0.5, 0.5, 0.5]` normalization, cosine LR, and a 0.1x LR group for the ResNet trunk. The CIFAR-100 preset is a local extrapolation because upstream HRN does not include CIFAR-100.
 
 ### Hier-COS presets
 
-- `configs/hiercos/hiercos_cifar100.yaml`
-- `configs/hiercos/hiercos_cub200.yaml`
-- `configs/hiercos/hiercos_aircraft.yaml`
+- `configs/hiercos/hiercos_cifar100_parity.yaml`
+- `configs/hiercos/hiercos_cub200_parity.yaml`
+- `configs/hiercos/hiercos_aircraft_parity.yaml`
 
-These presets add the Hier-COS/HAF++ feature-space settings and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). Upstream uses `feature_space: hier-cos` with HAFrame WideResNet from scratch for CIFAR-100, and `feature_space: haf++` with an ImageNet-pretrained ResNet-50 for Aircraft; CUB follows the Aircraft preset.
+These presets add the Hier-COS/HAF++ feature-space settings and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). Upstream uses `feature_space: hier-cos` with HAFrame WideResNet from scratch for CIFAR-100, and `feature_space: haf++` with an ImageNet-pretrained ResNet-50 for Aircraft; CUB follows the Aircraft preset. HAF++ loss mode is configurable through `model.hafpp_loss_mode` (`leaf_only` or `full_node`).
 
 ### Templates
 
@@ -63,7 +63,7 @@ These presets add the Hier-COS/HAF++ feature-space settings and paper-style SGD/
 
 ## Datasets
 
-- `datasets/__init__.py`: Dataset registry, alias resolution, transforms, collate function, and dataloader builder.
+- `datasets/__init__.py`: Dataset registry, alias resolution, transforms, collate function, and dataloader builder (including optional `crop_bottom_pixels` transform and `drop_last_eval` dataloader flag).
 - `datasets/base.py`: Shared hierarchical dataset base class, train/val splitting, normalized JSON annotations, label remapping, and taxonomy inference.
 - `datasets/cifar100.py`: CIFAR-100 adapter. Supports 2-level `coarse -> fine` and 3-level `super -> coarse -> fine` hierarchies.
 - `datasets/cub.py`: CUB-200-2011 adapter for folder-based and official metadata layouts.
@@ -122,7 +122,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 - `models/hiercos/__init__.py`: Public Hier-COS exports.
 - `models/hiercos/factory.py`: Builds `HierCosModel` from config and taxonomy metadata.
 - `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces, upstream-style fixed random orthonormal frame for `feature_space: hier-cos`, and learnable HAF++ classifier mode for `feature_space: haf++`.
-- `models/hiercos/losses.py`: Hier-COS KL + level regularization objective, plus upstream Aircraft-style HAF++ leaf cross-entropy mode.
+- `models/hiercos/losses.py`: Hier-COS KL + level regularization objective, plus configurable HAF++ CE mode (`leaf_only` or upstream-style `full_node`).
 
 ## Training
 
@@ -149,6 +149,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 - `docs/FILE_DOCUMENTATION.md`: This repository map.
 - `docs/HCC_DIAGNOSTIC_LOGS.md`: Glossary and interpretation of HCC diagnostic metric keys.
 - `docs/GRADIENT_PARAM_DIAGNOSTIC_LOGS.md`: Glossary and interpretation of trunk gradient/parameter diagnostics, including lexicographic metrics.
+- `docs/hrn_hiercos_alignment.md`: HRN/Hier-COS upstream-alignment audit and intentional divergence notes.
 
 ## Runtime Artifacts
 

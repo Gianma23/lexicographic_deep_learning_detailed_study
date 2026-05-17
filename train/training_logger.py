@@ -109,6 +109,25 @@ class TrainingLogger:
         print(f"[LOGGER] saved test metrics: {self.test_metrics_path}")
         return payload
 
+    def log_resume(self, resume_info: Mapping[str, Any]) -> Dict[str, Any]:
+        warnings_raw = resume_info.get("warnings", [])
+        warnings_list = [str(item) for item in warnings_raw] if isinstance(warnings_raw, (list, tuple)) else []
+        event = {
+            "event": "resume",
+            "resumed": bool(resume_info.get("resumed", False)),
+            "resume_path": str(resume_info.get("resume_path", "")),
+            "checkpoint_found": bool(resume_info.get("checkpoint_found", False)),
+            "start_epoch": int(resume_info.get("start_epoch", 0)),
+            "config_check_passed": bool(resume_info.get("config_check_passed", False)),
+            "rng_state_restored": bool(resume_info.get("rng_state_restored", False)),
+            "loader_rng_state_restored": bool(resume_info.get("loader_rng_state_restored", False)),
+            "full_reproducibility_restored": bool(resume_info.get("full_reproducibility_restored", False)),
+            "resume_state_version": resume_info.get("resume_state_version", None),
+            "warnings": warnings_list,
+        }
+        self._append_event(event)
+        return event
+
     def _append_event(self, payload: Mapping[str, Any]):
         self.run_log_path.parent.mkdir(parents=True, exist_ok=True)
         with self.run_log_path.open("a", encoding="utf-8") as f:

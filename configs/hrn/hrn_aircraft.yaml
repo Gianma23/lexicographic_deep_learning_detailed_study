@@ -15,6 +15,7 @@ dataset:
   mean: [0.5, 0.5, 0.5]
   std: [0.5, 0.5, 0.5]
   levels: [manufacturer, family, variant]
+  # Intentional clean-protocol choice: keep repo val split workflow.
   val_split_ratio: 0.2
   split_seed: null
   transforms:
@@ -29,11 +30,11 @@ dataset:
       resize_before_crop_interpolation: bilinear
       interpolation: bilinear
       random_horizontal_flip_prob: 0.5
+      crop_bottom_pixels: 0
     eval:
       resize_mode: resize_center_crop
       resize_size: 550
       resize_square: true
-      # Upstream HRN uses Resize((550, 550)) followed by CenterCrop(448).
       crop_ratio: 0.8145454545
       interpolation: bilinear
     mixup: 0.0
@@ -50,8 +51,11 @@ dataset:
 
 dataloader:
   batch_size: 8
-  num_workers: 8
+  num_workers: 4
+  pin_memory: true
   windows_spawn_safe: true
+  drop_last_train: true
+  drop_last_eval: true
 
 train:
   epochs: 200
@@ -59,7 +63,7 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hrn_aircraft
+  output_dir: /scratch/g.saggini1/outputs/hrn_aircraft_parity
   smoothing: 0.0
 
 optim:

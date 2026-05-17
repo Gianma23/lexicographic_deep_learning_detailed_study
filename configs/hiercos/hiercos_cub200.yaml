@@ -2,9 +2,8 @@ model:
   name: hiercos
   variant: haframe_resnet50
   feature_space: haf++
+  hafpp_loss_mode: full_node
   pool: average
-  # CUB is not an upstream Hier-COS preset; this follows the upstream
-  # ResNet-50 protocol used for FGVC/iNat-style image datasets.
   pretrained: true
   alpha: 0.1
   backbone_lr_scale: 0.1
@@ -17,6 +16,7 @@ dataset:
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
   levels: [order, family, species]
+  # Local extrapolation: Hier-COS upstream does not report CUB-200 runs.
   val_split_ratio: 0.2
   split_seed: null
   transforms:
@@ -25,12 +25,15 @@ dataset:
     manual:
       crop_mode: random_crop
       random_crop_padding: 4
+      random_crop_padding_mode: constant
       resize_before_crop: true
       resize_before_crop_size: 224
       interpolation: bilinear
       random_horizontal_flip_prob: 0.5
+      crop_bottom_pixels: 0
     eval:
       resize_mode: resize
+      resize_size: 224
       crop_ratio: 1.0
       interpolation: bilinear
     mixup: 0.0
@@ -50,6 +53,8 @@ dataloader:
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
+  drop_last_train: true
+  drop_last_eval: true
 
 train:
   epochs: 100
@@ -57,7 +62,7 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_cub200
+  output_dir: /scratch/g.saggini1/outputs/hiercos_cub200_parity
   smoothing: 0.0
 
 optim:
