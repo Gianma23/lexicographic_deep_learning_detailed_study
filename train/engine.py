@@ -73,19 +73,46 @@ def _lexicographic_projection_active(lex_cfg: Dict[str, Any], epoch: int) -> boo
     return current_epoch >= start_epoch
 
 
+def _resolve_hiercos_loss_mode(model_cfg: Dict[str, Any]) -> str:
+    raw_mode = model_cfg.get("loss", "kl_reg")
+    if raw_mode is None:
+        raw_mode = "kl_reg"
+    if not isinstance(raw_mode, str):
+        raise ValueError(
+            "train.lexicographic.enabled=true with model.name='hiercos' requires "
+            "scalar `model.loss: per_level_ce`."
+        )
+    mode = raw_mode.strip().lower().replace("-", "_")
+    if mode in {"kl_reg", "klreg"}:
+        return "kl_reg"
+    if mode in {"per_level_ce", "perlevel_ce", "level_ce"}:
+        return "per_level_ce"
+    raise ValueError(
+        f"Unsupported Hier-COS model.loss '{raw_mode}'. Expected one of ['kl_reg', 'per_level_ce']."
+    )
+
+
 def _validate_lexicographic_enabled(cfg: Any, level_losses: List[torch.Tensor]) -> None:
     model_cfg = _section_to_dict(getattr(cfg, "model", None))
     model_name = str(model_cfg.get("name", "")).strip().lower()
-    if model_name != "hcast":
+    if model_name not in {"hcast", "hiercos"}:
         raise ValueError(
-            "train.lexicographic.enabled=true is currently supported only for model.name='hcast'."
+            "train.lexicographic.enabled=true is currently supported only for "
+            "model.name in ['hcast', 'hiercos']."
         )
 
-    loss_cfg = _section_to_dict(model_cfg.get("loss", None))
-    if bool(loss_cfg.get("globalkl", False)):
+    if model_name == "hcast":
+        loss_cfg = _section_to_dict(model_cfg.get("loss", None))
+        if bool(loss_cfg.get("globalkl", False)):
+            raise ValueError(
+                "train.lexicographic.enabled=true requires model.loss.globalkl=false "
+                "(pure level-loss lexicographic mode)."
+            )
+
+    if model_name == "hiercos" and _resolve_hiercos_loss_mode(model_cfg) != "per_level_ce":
         raise ValueError(
-            "train.lexicographic.enabled=true requires model.loss.globalkl=false "
-            "(pure level-loss lexicographic mode)."
+            "train.lexicographic.enabled=true with model.name='hiercos' requires "
+            "`model.loss: per_level_ce`; `kl_reg` does not expose CE level losses."
         )
 
     if len(level_losses) != 3:

@@ -145,12 +145,15 @@ def average_hierarchical_distance(
     taxonomy: Optional[Dict[str, Any]] = None,
     enforce_hierarchy: bool = False,
 ) -> float:
-    """Average edge distance between predicted and ground-truth root-to-leaf paths.
+    """Average LCA-equivalent hierarchical distance between predicted and GT paths.
 
     For each sample i with hierarchy depth L:
     1) decode predicted full path,
     2) compute longest shared prefix length s_i with target path,
-    3) distance d_H(i) = 2 * (L - s_i).
+    3) distance d_H(i) = L - s_i.
+
+    This is equivalent to the paper-style LCA-height distance for fixed-depth
+    rooted hierarchies and preserves lower-is-better semantics.
     """
     if not logits_per_level:
         return 0.0
@@ -167,7 +170,7 @@ def average_hierarchical_distance(
     # Prefix match mask per sample/level, then count initial contiguous matches.
     prefix_matches = pred_path.eq(targets).to(torch.int64).cumprod(dim=1)
     shared_prefix_len = prefix_matches.sum(dim=1).to(dtype=torch.float32)
-    distances = 2.0 * (float(depth) - shared_prefix_len)
+    distances = float(depth) - shared_prefix_len
     return float(distances.mean().item())
 
 

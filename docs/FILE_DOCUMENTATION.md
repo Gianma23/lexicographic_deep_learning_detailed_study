@@ -53,7 +53,7 @@ The CUB-200 and Aircraft presets mirror upstream HRN preprocessing and optimizat
 - `configs/hiercos/hiercos_cub200_parity.yaml`
 - `configs/hiercos/hiercos_aircraft_parity.yaml`
 
-These presets add the Hier-COS/HAF++ feature-space settings and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). Upstream uses `feature_space: hier-cos` with HAFrame WideResNet from scratch for CIFAR-100, and `feature_space: haf++` with an ImageNet-pretrained ResNet-50 for Aircraft; CUB follows the Aircraft preset. HAF++ loss mode is configurable through `model.hafpp_loss_mode` (`leaf_only` or `full_node`).
+These presets use the single Hier-COS implementation with a fixed orthonormal frame, taxonomy-driven subspace scores, configurable `model.loss` (`kl_reg` default or local `per_level_ce` ablation), optional CE weighting through `model.ce_weight_mode`, and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). CIFAR uses HAFrame WideResNet from scratch; Aircraft and CUB use an ImageNet-pretrained ResNet-50.
 
 ### Templates
 
@@ -121,8 +121,8 @@ These files are the closest local equivalents of the upstream CAST internals and
 
 - `models/hiercos/__init__.py`: Public Hier-COS exports.
 - `models/hiercos/factory.py`: Builds `HierCosModel` from config and taxonomy metadata.
-- `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces, upstream-style fixed random orthonormal frame for `feature_space: hier-cos`, and learnable HAF++ classifier mode for `feature_space: haf++`.
-- `models/hiercos/losses.py`: Hier-COS KL + level regularization objective, plus configurable HAF++ CE mode (`leaf_only` or upstream-style `full_node`).
+- `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces and an upstream-style fixed random orthonormal frame.
+- `models/hiercos/losses.py`: Hier-COS loss selection between paper-aligned KL + level regularization (`kl_reg`) and local weighted three-level CE ablation (`per_level_ce`, which exposes weighted CE tensors for gradient diagnostics).
 
 ## Training
 

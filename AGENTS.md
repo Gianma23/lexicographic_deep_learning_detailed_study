@@ -27,7 +27,7 @@ Primary model families:
 - `lhdnn`: LH-DNN baseline.
 - `ht_capsnet`: HT-CapsNet baseline.
 - `hrn`: HRN baseline, exactly three hierarchy levels.
-- `hiercos`: Hier-COS / HAF++ style baseline.
+- `hiercos`: Hier-COS fixed-frame, taxonomy-subspace baseline.
 
 Supported datasets are CIFAR-100, CUB-200-2011, FGVC-Aircraft, and iNat21-style data. Dataset files are external to the repo and should not be modified.
 
@@ -125,4 +125,3 @@ When analyzing runs:
 - Do not commit unless the user asks.
 - If unrelated modified notebooks or generated outputs are present, leave them alone.
 - In final replies, summarize changed files and verification performed. If tests or training were not run, say so.
-

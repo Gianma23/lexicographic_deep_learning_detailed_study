@@ -1,12 +1,13 @@
 model:
   name: hiercos
+  loss: kl_reg
+  ce_weight_mode: equal
   variant: haframe_resnet50
-  feature_space: haf++
-  hafpp_loss_mode: full_node
   pool: average
   pretrained: true
   alpha: 0.1
   backbone_lr_scale: 0.1
+  fixed_frame_mode: orthonormal_random
 
 dataset:
   name: fgvc-aircraft
@@ -63,7 +64,7 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft_parity
+  output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft
   smoothing: 0.0
 
 optim:

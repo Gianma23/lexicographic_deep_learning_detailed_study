@@ -16,7 +16,7 @@ dataset:
   std: [0.2683, 0.2683, 0.2683]
   levels: [coarse1, coarse2, fine]
   download: true
-  val_split_ratio: 0.2
+  val_split_ratio: 0.1
   val_source: test
   split_seed: null
   transforms:

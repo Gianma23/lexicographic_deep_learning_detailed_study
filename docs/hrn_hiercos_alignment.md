@@ -55,14 +55,13 @@ The implementation choices below follow the selected clean-protocol constraints 
 - **Aligned**:
   - CIFAR path: HAFrame WideResNet (`haframe_wide_resnet`) with hierarchical node-space backbone.
   - Aircraft path: HAFrame ResNet-50 (`haframe_resnet50`) with ImageNet-pretrained trunk.
-  - Feature-space modes supported: `hier-cos` and `haf++`.
+  - A single fixed orthonormal Hier-COS frame with taxonomy-driven subspace scores is supported.
 
 ### Loss
-- **Aligned + configurable**:
-  - `hier-cos`: local KL + level-regularization objective matches upstream `HierCOS_Loss` structure.
-  - `haf++`: added `model.hafpp_loss_mode`.
-    - `leaf_only`: existing repo behavior.
-    - `full_node`: upstream-style CE over full node logits using finest-level global node targets.
+- **Aligned**:
+  - Local KL + level-regularization objective matches upstream `HierCOS_Loss` structure.
+- **Local ablation**:
+  - `model.loss: per_level_ce` replaces KL + regularization with three weighted per-level CE losses. `model.ce_weight_mode` supports equal weights, leaf-heavy KL-style weights, and reversed/coarse-heavy weights. This mode is not paper-faithful Hier-COS; it exists to expose weighted CE level losses for gradient/cosine diagnostics and lexicographic projected-gradient experiments.
 
 ### Optimizer + Scheduler
 - **Aligned for parity presets**:

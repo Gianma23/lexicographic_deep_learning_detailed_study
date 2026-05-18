@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs H-CAST lexicographic variants on all datasets:
-# - hcast_lex (start epoch 0)
-# - hcast_lex starting from epoch 80
-# for: cifar100, cub200, aircraft.
+# Runs the full Hier-COS loss grid requested:
+# - model.loss=kl_reg
+# - model.loss=per_level_ce with ce_weight_mode in {equal, kl_leaf, kl_coarse}
+#   and lexicographic mode enabled
+# for all datasets: cifar100, cub200, aircraft.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -36,18 +37,18 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-# Notebook-compatible outputs root (run dir names match notebooks/hcast_analysis.ipynb).
+# Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hcast_lex_grid.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_full_grid.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
 
 DATASETS=(cifar100 cub200 aircraft)
 
-lex_config_for_dataset() {
+config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hcast/hcast_lex_cifar100.yaml" ;;
-    cub200) echo "configs/hcast/hcast_lex_cub200.yaml" ;;
-    aircraft) echo "configs/hcast/hcast_lex_aircraft.yaml" ;;
+    cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
+    cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
+    aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -107,12 +108,16 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local epoch_tag="$2"
-  case "$epoch_tag" in
-    e0) echo "$OUTPUTS_ROOT/hcast_lex_${ds}" ;;
-    e80) echo "$OUTPUTS_ROOT/hcast_lex_${ds}_step_80epoch" ;;
+  local loss_mode="$2"
+  local ce_mode="$3"
+
+  case "$loss_mode:$ce_mode" in
+    kl_reg:na) echo "$OUTPUTS_ROOT/hiercos_${ds}" ;;
+    per_level_ce:equal) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_equal" ;;
+    per_level_ce:kl_leaf) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_kl_leaf" ;;
+    per_level_ce:kl_coarse) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_kl_coarse" ;;
     *)
-      echo "Unknown lex epoch tag: $epoch_tag" >&2
+      echo "Unknown run naming tuple: $loss_mode $ce_mode" >&2
       exit 1
       ;;
   esac
@@ -124,19 +129,30 @@ printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 
 for ds in "${DATASETS[@]}"; do
-  lex_cfg="$(lex_config_for_dataset "$ds")"
+  cfg="$(config_for_dataset "$ds")"
 
-  # hcast_lex (epoch 0)
-  run_train "$lex_cfg" "$(run_output_dir "$ds" e0)" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0" \
-    "model.loss.globalkl=false"
+  # 1) Paper-aligned Hier-COS KL + regularization
+  run_train "$cfg" "$(run_output_dir "$ds" kl_reg na)" \
+    "model.loss=kl_reg"
 
-  # hcast_lex (epoch 80)
-  run_train "$lex_cfg" "$(run_output_dir "$ds" e80)" \
+  # 2) Local CE ablation with all supported weight modes + lexicographic mode
+  run_train "$cfg" "$(run_output_dir "$ds" per_level_ce equal)" \
+    "model.loss=per_level_ce" \
+    "model.ce_weight_mode=equal" \
     "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=80" \
-    "model.loss.globalkl=false"
+    "train.lexicographic.start_epoch=0"
+
+  run_train "$cfg" "$(run_output_dir "$ds" per_level_ce kl_leaf)" \
+    "model.loss=per_level_ce" \
+    "model.ce_weight_mode=kl_leaf" \
+    "train.lexicographic.enabled=true" \
+    "train.lexicographic.start_epoch=0"
+
+  run_train "$cfg" "$(run_output_dir "$ds" per_level_ce kl_coarse)" \
+    "model.loss=per_level_ce" \
+    "model.ce_weight_mode=kl_coarse" \
+    "train.lexicographic.enabled=true" \
+    "train.lexicographic.start_epoch=0"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -150,4 +166,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested lex runs.\n'
+printf 'Completed all requested Hier-COS runs.\n'

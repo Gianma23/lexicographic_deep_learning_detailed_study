@@ -17,6 +17,28 @@ DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-2}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 
+kill_running_jobs() {
+  jobs -pr | xargs -r kill 2>/dev/null || true
+}
+
+handle_interrupt() {
+  echo "[INTERRUPT] Received signal, stopping running jobs..." >&2
+  kill_running_jobs
+  wait || true
+  exit 130
+}
+
+handle_exit() {
+  local rc=$?
+  if (( rc != 0 )); then
+    kill_running_jobs
+    wait || true
+  fi
+}
+
+trap handle_interrupt INT TERM
+trap handle_exit EXIT
+
 # Notebook-compatible outputs root (run dir names match notebooks/hcast_analysis.ipynb).
 # Example:
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hcast_full_grid.sh

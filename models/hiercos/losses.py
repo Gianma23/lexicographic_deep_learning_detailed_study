@@ -25,73 +25,74 @@ def _hard_targets_from_input(targets: HierCosTargets, num_levels: int) -> torch.
     return hard_targets.long()
 
 
-def _resolve_model_alpha(cfg: Any, default: float = 0.1) -> float:
+def _resolve_model_alpha(cfg: Any, default: float = 1.0) -> float:
     model_cfg = getattr(cfg, "model", None)
     if model_cfg is None or not hasattr(model_cfg, "get"):
         return float(default)
     return float(model_cfg.get("alpha", default))
 
 
-def _resolve_hafpp_loss_mode(cfg: Any, default: str = "leaf_only") -> str:
+def _resolve_loss_mode(cfg: Any, default: str = "kl_reg") -> str:
     model_cfg = getattr(cfg, "model", None)
     raw_mode = default
     if model_cfg is not None and hasattr(model_cfg, "get"):
-        raw_mode = str(model_cfg.get("hafpp_loss_mode", default))
+        configured = model_cfg.get("loss", default)
+        if configured is not None:
+            raw_mode = configured
+
+    if not isinstance(raw_mode, str):
+        raise ValueError(
+            "Hier-COS `model.loss` must be a scalar string: one of ['kl_reg', 'per_level_ce']."
+        )
+
     mode = raw_mode.strip().lower().replace("-", "_")
-    if mode in {"leaf_only", "leaf"}:
-        return "leaf_only"
-    if mode in {"full_node", "fullnode", "node"}:
-        return "full_node"
+    if mode in {"kl_reg", "klreg"}:
+        return "kl_reg"
+    if mode in {"per_level_ce", "perlevel_ce", "level_ce"}:
+        return "per_level_ce"
     raise ValueError(
-        f"Unsupported model.hafpp_loss_mode '{raw_mode}'. Expected one of ['leaf_only', 'full_node']."
+        f"Unsupported Hier-COS model.loss '{raw_mode}'. Expected one of ['kl_reg', 'per_level_ce']."
     )
 
 
-def _resolve_feature_space(cfg: Any) -> str:
+def _resolve_ce_weight_mode(cfg: Any, default: str = "equal") -> str:
     model_cfg = getattr(cfg, "model", None)
-    raw = "hier-cos"
+    raw_mode = default
     if model_cfg is not None and hasattr(model_cfg, "get"):
-        raw = str(model_cfg.get("feature_space", raw))
-    mode = raw.strip().lower().replace("_", "-")
-    if mode in {"hier-cos", "hiercos"}:
-        return "hier-cos"
-    if mode in {"haf++", "hafpp", "haf-plus-plus"}:
-        return "haf++"
-    raise ValueError(f"Unsupported Hier-COS feature_space '{raw}'. Expected 'hier-cos' or 'haf++'.")
+        configured = model_cfg.get("ce_weight_mode", default)
+        if configured is not None:
+            raw_mode = configured
+
+    if not isinstance(raw_mode, str):
+        raise ValueError(
+            "Hier-COS `model.ce_weight_mode` must be a scalar string: "
+            "one of ['equal', 'kl_leaf', 'kl_coarse']."
+        )
+
+    mode = raw_mode.strip().lower().replace("-", "_")
+    if mode in {"equal", "uniform", "all_equal"}:
+        return "equal"
+    if mode in {"kl_leaf", "leaf", "leaf_heavy"}:
+        return "kl_leaf"
+    if mode in {"kl_coarse", "coarse", "coarse_heavy", "reverse_kl"}:
+        return "kl_coarse"
+    raise ValueError(
+        f"Unsupported Hier-COS model.ce_weight_mode '{raw_mode}'. "
+        "Expected one of ['equal', 'kl_leaf', 'kl_coarse']."
+    )
+
+
+def _label_smoothing_from_cfg(cfg: Any) -> float:
+    train_cfg = getattr(cfg, "train", None)
+    if train_cfg is None or not hasattr(train_cfg, "get"):
+        return 0.0
+    return min(max(float(train_cfg.get("smoothing", 0.0)), 0.0), 1.0)
 
 
 def _resolve_leaf_targets(hard_targets: torch.Tensor) -> torch.Tensor:
     if hard_targets.numel() == 0:
         return hard_targets.new_zeros((hard_targets.size(0),), dtype=torch.long)
     return hard_targets[:, -1].long()
-
-
-def _resolve_hafpp_full_node_targets(
-    hard_targets: torch.Tensor,
-    node_logits: torch.Tensor,
-    level_node_ids: List[torch.Tensor],
-    leaf_to_level_local: torch.Tensor,
-) -> torch.Tensor:
-    leaf_targets = _resolve_leaf_targets(hard_targets)
-    num_leaf = int(leaf_to_level_local.size(0))
-    if bool((leaf_targets < 0).any()) or bool((leaf_targets >= num_leaf).any()):
-        raise ValueError(
-            f"Hier-COS leaf targets out of range [0, {num_leaf}) for HAF++ full_node CE."
-        )
-
-    depth = int(leaf_to_level_local.size(1))
-    leaf_to_level_local = leaf_to_level_local.to(device=node_logits.device, dtype=torch.long)
-    finest_local = leaf_to_level_local[leaf_targets, depth - 1]
-
-    finest_node_ids = level_node_ids[-1].to(device=node_logits.device, dtype=torch.long)
-    if bool((finest_local < 0).any()) or bool((finest_local >= int(finest_node_ids.numel())).any()):
-        raise ValueError("Hier-COS invalid finest-level local indices for HAF++ full_node CE.")
-
-    global_targets = finest_node_ids[finest_local]
-    num_nodes = int(node_logits.size(1))
-    if bool((global_targets < 0).any()) or bool((global_targets >= num_nodes).any()):
-        raise ValueError("Hier-COS invalid global node targets for HAF++ full_node CE.")
-    return global_targets
 
 
 def _validate_hiercos_output(output: Dict[str, Any], num_levels: int) -> Tuple[torch.Tensor, List[torch.Tensor], torch.Tensor, torch.Tensor]:
@@ -181,6 +182,59 @@ def _level_regularization_loss(
     return reg, level_losses
 
 
+def _per_level_ce_losses(
+    logits_per_level: List[torch.Tensor],
+    hard_targets: torch.Tensor,
+    smoothing: float,
+) -> List[torch.Tensor]:
+    level_losses: List[torch.Tensor] = []
+    for level, logits in enumerate(logits_per_level):
+        if not isinstance(logits, torch.Tensor) or logits.ndim != 2:
+            raise ValueError(f"Hier-COS logits for level {level} must have shape [B, C].")
+        level_targets = hard_targets[:, level].to(device=logits.device, dtype=torch.long)
+        level_losses.append(
+            F.cross_entropy(
+                logits,
+                level_targets,
+                label_smoothing=float(smoothing),
+            )
+        )
+    return level_losses
+
+
+def _ce_level_weights(
+    output: Dict[str, Any],
+    cfg: Any,
+    num_levels: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    mode = _resolve_ce_weight_mode(cfg)
+    if mode == "equal":
+        return torch.ones((num_levels,), device=device, dtype=dtype)
+
+    node_prob_weights = output.get("node_prob_weights")
+    if not isinstance(node_prob_weights, torch.Tensor) or node_prob_weights.ndim != 1:
+        raise ValueError(
+            "Hier-COS CE weight modes 'kl_leaf' and 'kl_coarse' require "
+            "`node_prob_weights` with shape [depth]."
+        )
+    if int(node_prob_weights.numel()) != int(num_levels):
+        raise ValueError(
+            "Hier-COS `node_prob_weights` depth mismatch for CE weighting: "
+            f"expected {num_levels}, found {int(node_prob_weights.numel())}."
+        )
+
+    weights = node_prob_weights.to(device=device, dtype=dtype)
+    if bool((weights < 0).any()):
+        raise ValueError("Hier-COS CE weighting requires non-negative `node_prob_weights`.")
+    if mode == "kl_coarse":
+        weights = torch.flip(weights, dims=[0])
+
+    weight_sum = weights.sum().clamp_min(_EPS)
+    return weights / weight_sum * float(num_levels)
+
+
 def compute_loss(
     output: Dict[str, Any],
     targets: HierCosTargets,
@@ -198,47 +252,38 @@ def compute_loss(
     if not isinstance(logits_per_level, list) or not logits_per_level:
         raise ValueError("Hier-COS output must contain non-empty `logits_per_level`.")
     num_levels = len(logits_per_level)
+    loss_mode = _resolve_loss_mode(cfg)
 
     hard_targets = _hard_targets_from_input(targets, num_levels=num_levels)
     hard_targets = hard_targets.to(device=logits_per_level[-1].device, dtype=torch.long)
-    feature_space = _resolve_feature_space(cfg)
 
-    if feature_space == "haf++":
-        hafpp_loss_mode = _resolve_hafpp_loss_mode(cfg, default="leaf_only")
-        if hafpp_loss_mode == "leaf_only":
-            leaf_logits = output.get("leaf_logits", logits_per_level[-1])
-            if not isinstance(leaf_logits, torch.Tensor) or leaf_logits.ndim != 2:
-                raise ValueError("Hier-COS HAF++ output must provide `leaf_logits` with shape [B, num_leaf].")
-            leaf_targets = _resolve_leaf_targets(hard_targets).to(device=leaf_logits.device, dtype=torch.long)
-            loss = F.cross_entropy(leaf_logits, leaf_targets)
-            metrics = {
-                "total": float(loss.detach().item()),
-                "ce": float(loss.detach().item()),
-            }
-            if not return_aux:
-                return loss, metrics
-            return loss, metrics, {"level_losses": []}
-
-        node_logits, level_node_ids, leaf_to_level_local, _node_prob_weights = _validate_hiercos_output(
-            output,
-            num_levels=num_levels,
-        )
-        hard_targets = hard_targets.to(device=node_logits.device, dtype=torch.long)
-        global_targets = _resolve_hafpp_full_node_targets(
+    if loss_mode == "per_level_ce":
+        raw_level_losses = _per_level_ce_losses(
+            logits_per_level=logits_per_level,
             hard_targets=hard_targets,
-            node_logits=node_logits,
-            level_node_ids=level_node_ids,
-            leaf_to_level_local=leaf_to_level_local,
+            smoothing=_label_smoothing_from_cfg(cfg),
         )
-        loss = F.cross_entropy(node_logits, global_targets)
+        weights = _ce_level_weights(
+            output=output,
+            cfg=cfg,
+            num_levels=num_levels,
+            device=raw_level_losses[0].device,
+            dtype=raw_level_losses[0].dtype,
+        )
+        level_losses = [
+            level_loss * weights[level]
+            for level, level_loss in enumerate(raw_level_losses)
+        ]
+        total = torch.stack(level_losses).sum()
         metrics = {
-            "total": float(loss.detach().item()),
-            "ce": float(loss.detach().item()),
-            "ce_node": float(loss.detach().item()),
+            "total": float(total.detach().item()),
+            "level_ce": float(total.detach().item()),
         }
+        for level, level_loss in enumerate(level_losses):
+            metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
         if not return_aux:
-            return loss, metrics
-        return loss, metrics, {"level_losses": [], "hafpp_global_targets": global_targets}
+            return total, metrics
+        return total, metrics, {"level_losses": level_losses}
 
     node_logits, level_node_ids, leaf_to_level_local, node_prob_weights = _validate_hiercos_output(
         output,
@@ -272,7 +317,7 @@ def compute_loss(
         leaf_to_level_local=leaf_to_level_local.to(device=node_logits.device, dtype=torch.long),
     )
 
-    alpha = _resolve_model_alpha(cfg, default=0.1)
+    alpha = _resolve_model_alpha(cfg, default=1.0)
     total = kl + float(alpha) * reg
 
     metrics = {

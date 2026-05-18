@@ -33,15 +33,6 @@ def _build_resnet50_backbone(pretrained: bool):
                 return resnet50(pretrained=False)
 
 
-def _normalize_feature_space(feature_space: str) -> str:
-    mode = str(feature_space).strip().lower().replace("_", "-")
-    if mode in {"hier-cos", "hiercos"}:
-        return "hier-cos"
-    if mode in {"haf++", "hafpp", "haf-plus-plus"}:
-        return "haf++"
-    raise ValueError(f"Unsupported Hier-COS feature_space '{feature_space}'. Expected 'hier-cos' or 'haf++'.")
-
-
 def _normalize_parent_of(taxonomy: Dict[str, Any]) -> Dict[int, Dict[int, int]]:
     if not taxonomy or "parent_of" not in taxonomy:
         raise ValueError("Hier-COS requires taxonomy with `parent_of` mappings.")
@@ -401,7 +392,7 @@ class _WideResNetNodeBackbone(nn.Module):
 
 
 class _ResNet50NodeBackbone(nn.Module):
-    def __init__(self, out_dim: int, pretrained: bool = True, pool: str = "average"):
+    def __init__(self, out_dim: int, pretrained: bool = True, pool: str = "max"):
         super().__init__()
         trunk = _build_resnet50_backbone(pretrained=bool(pretrained))
         self.features = nn.Sequential(
@@ -429,9 +420,8 @@ class HierCosModel(nn.Module):
         num_classes_per_level: List[int],
         taxonomy: Optional[Dict[str, Any]],
         variant: str = "haframe_resnet50",
-        feature_space: str = "hier-cos",
         pretrained: bool = True,
-        pool: str = "average",
+        pool: str = "max",
         backbone_lr_scale: float = 0.1,
         fixed_frame_mode: str = "orthonormal_random",
         wide_depth: int = 28,
@@ -448,7 +438,6 @@ class HierCosModel(nn.Module):
         self.depth = int(topology["depth"])
         self.total_nodes = int(topology["total_nodes"])
         self.backbone_lr_scale = float(backbone_lr_scale)
-        self.feature_space = _normalize_feature_space(feature_space)
 
         self.level_node_id_names: List[str] = []
         self.level_subspace_mask_names: List[str] = []
@@ -484,11 +473,8 @@ class HierCosModel(nn.Module):
             )
 
         self.f_theta = self._build_transformation_module(self.total_nodes)
-        if self.feature_space == "haf++":
-            self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=True)
-        else:
-            self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
-            self._init_fixed_frame(mode=str(fixed_frame_mode))
+        self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
+        self._init_fixed_frame(mode=str(fixed_frame_mode))
 
     @staticmethod
     def _build_transformation_module(width: int) -> nn.Module:
@@ -544,12 +530,6 @@ class HierCosModel(nn.Module):
             scores.append(torch.sqrt(level_scores_sq.clamp_min(0.0)))
         return scores
 
-    def _level_node_scores(self, node_logits: torch.Tensor) -> List[torch.Tensor]:
-        scores: List[torch.Tensor] = []
-        for node_ids in self._level_node_ids():
-            scores.append(node_logits.index_select(dim=1, index=node_ids.to(device=node_logits.device)))
-        return scores
-
     def _level_node_ids(self) -> List[torch.Tensor]:
         return [getattr(self, name) for name in self.level_node_id_names]
 
@@ -557,11 +537,7 @@ class HierCosModel(nn.Module):
         z = self.backbone(x)
         transformed = self.f_theta(z)
         node_logits = self.fixed_classifier(transformed)
-
-        if self.feature_space == "haf++":
-            logits_per_level = self._level_node_scores(node_logits)
-        else:
-            logits_per_level = self._level_subspace_scores(node_logits)
+        logits_per_level = self._level_subspace_scores(node_logits)
         effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
 
         return {
@@ -572,5 +548,4 @@ class HierCosModel(nn.Module):
             "hiercos_level_node_ids": self._level_node_ids(),
             "leaf_to_level_local": self.leaf_to_level_local,
             "node_prob_weights": self.node_prob_weights,
-            "feature_space": self.feature_space,
         }
