@@ -1,4 +1,4 @@
-﻿from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -123,11 +123,6 @@ def weighted_average_precision(
     return float(weighted_sum / total_weight)
 
 
-def weighted_accuracy(logits_per_level: List[torch.Tensor], targets: torch.Tensor) -> float:
-    # Alias.
-    return weighted_average_precision(logits_per_level, targets)
-
-
 def full_path_accuracy(
     logits_per_level: List[torch.Tensor],
     targets: torch.Tensor,
@@ -145,16 +140,7 @@ def average_hierarchical_distance(
     taxonomy: Optional[Dict[str, Any]] = None,
     enforce_hierarchy: bool = False,
 ) -> float:
-    """Average LCA-equivalent hierarchical distance between predicted and GT paths.
-
-    For each sample i with hierarchy depth L:
-    1) decode predicted full path,
-    2) compute longest shared prefix length s_i with target path,
-    3) distance d_H(i) = L - s_i.
-
-    This is equivalent to the paper-style LCA-height distance for fixed-depth
-    rooted hierarchies and preserves lower-is-better semantics.
-    """
+    """Average LCA-equivalent hierarchical distance between predicted and GT paths."""
     if not logits_per_level:
         return 0.0
 
@@ -222,35 +208,14 @@ def tice_score(
     return float(1.0 - consistency)
 
 
-def inconsistency_rate(
-    logits_per_level: List[torch.Tensor],
-    taxonomy: Optional[Dict[str, Any]],
-    enforce_hierarchy: bool = False,
-) -> Optional[float]:
-    # Backward-compatible alias used by existing callers/docs.
-    return tice_score(logits_per_level, taxonomy, enforce_hierarchy=enforce_hierarchy)
-
-
-def tice_like_score(
-    logits_per_level: List[torch.Tensor],
-    taxonomy: Optional[Dict[str, Any]],
-    enforce_hierarchy: bool = False,
-) -> Optional[float]:
-    # Backward-compatible alias from previous implementation.
-    tice = tice_score(logits_per_level, taxonomy, enforce_hierarchy=enforce_hierarchy)
-    if tice is None:
-        return None
-    return float(1.0 - tice)
-
-
 def merge_metric_batches(metric_batches: List[Dict[str, float]]) -> Dict[str, float]:
     if not metric_batches:
         return {}
 
-    keys = set().union(*[m.keys() for m in metric_batches])
+    keys = set().union(*[metrics.keys() for metrics in metric_batches])
     out: Dict[str, float] = {}
-    for k in keys:
-        vals = [m[k] for m in metric_batches if k in m]
-        if vals:
-            out[k] = float(sum(vals) / len(vals))
+    for key in keys:
+        values = [metrics[key] for metrics in metric_batches if key in metrics]
+        if values:
+            out[key] = float(sum(values) / len(values))
     return out

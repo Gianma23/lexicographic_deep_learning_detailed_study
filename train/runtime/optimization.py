@@ -1,0 +1,196 @@
+import inspect
+import math
+import random
+from typing import Any, Dict, Optional
+
+import numpy as np
+import torch
+
+from .common import section_to_dict
+
+try:
+    from timm.scheduler import create_scheduler_v2 as timm_create_scheduler_v2
+except Exception:  # pragma: no cover
+    timm_create_scheduler_v2 = None
+
+
+def seed_everything(seed: int, deterministic: bool = True) -> None:
+    """Seed Python/NumPy/PyTorch RNGs and configure deterministic behavior."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # OpenCV RNG is used by H-CAST SEEDS segmentation when available.
+    try:
+        import cv2
+
+        cv2.setRNGSeed(int(seed))
+    except Exception:
+        pass
+    # Deterministic mode improves reproducibility, benchmark improves speed.
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
+    torch.use_deterministic_algorithms(deterministic)
+
+
+class HierCosCosineScheduler:
+    """Upstream cosine schedule with per-group LR scaling."""
+
+    def __init__(self, optimizer: torch.optim.Optimizer, num_epochs: int, base_lr: float = 0.1):
+        self.optimizer = optimizer
+        self.num_epochs = max(int(num_epochs), 1)
+        self.base_lr = float(base_lr)
+        self.group_scales = self._infer_group_scales()
+        self.last_t = 0.0
+
+    def _infer_group_scales(self):
+        if abs(self.base_lr) <= 1e-12:
+            return [1.0 for _ in self.optimizer.param_groups]
+        return [float(group.get("lr", self.base_lr)) / self.base_lr for group in self.optimizer.param_groups]
+
+    def _lr_at(self, t: float) -> float:
+        return float((self.base_lr / 2.0) * (math.cos(math.pi * (float(t) / float(self.num_epochs))) + 1.0))
+
+    def step(self, epoch: Optional[float] = None, _metric: Optional[float] = None):
+        if epoch is None:
+            t = float(self.last_t + 1.0)
+        else:
+            t = float(epoch)
+        self.last_t = t
+        scheduled_lr = self._lr_at(t)
+        for group, scale in zip(self.optimizer.param_groups, self.group_scales):
+            group["lr"] = float(scheduled_lr * scale)
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "num_epochs": int(self.num_epochs),
+            "base_lr": float(self.base_lr),
+            "group_scales": [float(scale) for scale in self.group_scales],
+            "last_t": float(self.last_t),
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        if not isinstance(state_dict, dict):
+            return
+        self.num_epochs = max(int(state_dict.get("num_epochs", self.num_epochs)), 1)
+        self.base_lr = float(state_dict.get("base_lr", self.base_lr))
+
+        saved_scales = state_dict.get("group_scales", None)
+        if isinstance(saved_scales, (list, tuple)) and len(saved_scales) == len(self.optimizer.param_groups):
+            self.group_scales = [float(scale) for scale in saved_scales]
+        else:
+            self.group_scales = self._infer_group_scales()
+
+        self.last_t = float(state_dict.get("last_t", 0.0))
+        self.step(self.last_t)
+
+
+def build_optimizer(cfg: Any, model: torch.nn.Module):
+    """Build an optimizer from cfg.optim."""
+    name = str(cfg.optim.name).lower()
+    lr = float(cfg.optim.lr)
+    wd = float(cfg.optim.get("weight_decay", 0.0))
+    momentum = float(cfg.optim.get("momentum", 0.0))
+    nesterov = bool(cfg.optim.get("nesterov", False))
+    raw_opt_eps = cfg.optim.get("opt_eps", None)
+    opt_eps = None if raw_opt_eps is None else float(raw_opt_eps)
+
+    raw_opt_betas = cfg.optim.get("opt_betas", None)
+    opt_betas = None
+    if raw_opt_betas is not None:
+        if isinstance(raw_opt_betas, str):
+            raise ValueError("optim.opt_betas must be null or a list/tuple with two floats.")
+        try:
+            betas = list(raw_opt_betas)
+        except TypeError as exc:
+            raise ValueError("optim.opt_betas must be null or a list/tuple with two floats.") from exc
+        if len(betas) != 2:
+            raise ValueError("optim.opt_betas must be null or a list/tuple with two floats.")
+        opt_betas = (float(betas[0]), float(betas[1]))
+
+    if name == "adam":
+        kwargs = {"lr": lr, "weight_decay": wd}
+        if opt_eps is not None:
+            kwargs["eps"] = opt_eps
+        if opt_betas is not None:
+            kwargs["betas"] = opt_betas
+        return torch.optim.Adam(model.parameters(), **kwargs)
+    if name == "adamw":
+        kwargs = {"lr": lr, "weight_decay": wd}
+        if opt_eps is not None:
+            kwargs["eps"] = opt_eps
+        if opt_betas is not None:
+            kwargs["betas"] = opt_betas
+        return torch.optim.AdamW(model.parameters(), **kwargs)
+    if name == "sgd":
+        model_cfg = section_to_dict(getattr(cfg, "model", None))
+        model_name = str(model_cfg.get("name", "")).strip().lower()
+        if model_name in {"hiercos", "hrn"} and hasattr(model, "parameter_groups"):
+            if model_name == "hrn":
+                lr_scale = float(model_cfg.get("trunk_lr_scale", 0.1))
+                param_groups = model.parameter_groups(base_lr=lr, trunk_lr_scale=lr_scale)
+            else:
+                lr_scale = float(model_cfg.get("backbone_lr_scale", 0.1))
+                param_groups = model.parameter_groups(base_lr=lr, backbone_lr_scale=lr_scale)
+            if not param_groups:
+                raise ValueError(f"{model_name} optimizer parameter_groups() returned no trainable parameters.")
+            return torch.optim.SGD(
+                param_groups,
+                lr=lr,
+                weight_decay=wd,
+                momentum=momentum,
+                nesterov=nesterov,
+            )
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            weight_decay=wd,
+            momentum=momentum,
+            nesterov=nesterov,
+        )
+
+    raise ValueError(f"Unsupported optimizer '{name}'")
+
+
+def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
+    """Build an LR scheduler from cfg.scheduler."""
+    sched_cfg = section_to_dict(cfg.scheduler)
+    name = str(sched_cfg.get("name", "none")).lower()
+    if name == "none":
+        return None
+    if name == "hiercos_cosine":
+        base_lr = float(sched_cfg.get("base_lr", cfg.optim.get("lr", 0.1)))
+        return HierCosCosineScheduler(
+            optimizer=optimizer,
+            num_epochs=int(cfg.train.epochs),
+            base_lr=base_lr,
+        )
+    model_cfg = section_to_dict(getattr(cfg, "model", None))
+    model_name = str(model_cfg.get("name", "")).strip().lower()
+    if model_name == "hrn" and name == "cosine":
+        base_lr = float(sched_cfg.get("base_lr", cfg.optim.get("lr", 0.002)))
+        return HierCosCosineScheduler(
+            optimizer=optimizer,
+            num_epochs=int(cfg.train.epochs),
+            base_lr=base_lr,
+        )
+
+    if timm_create_scheduler_v2 is None:
+        raise RuntimeError("timm scheduler is required but timm.scheduler.create_scheduler_v2 is unavailable")
+
+    extra = {
+        key: value
+        for key, value in sched_cfg.items()
+        if key not in {"name", "use_timm", "step_size", "gamma"}
+    }
+    normalized_extra = {str(key).replace("-", "_"): value for key, value in extra.items()}
+
+    allowed = set(inspect.signature(timm_create_scheduler_v2).parameters.keys())
+    filtered = {key: value for key, value in normalized_extra.items() if key in allowed}
+    scheduler, _ = timm_create_scheduler_v2(
+        optimizer,
+        sched=name,
+        num_epochs=int(cfg.train.epochs),
+        **filtered,
+    )
+    return scheduler

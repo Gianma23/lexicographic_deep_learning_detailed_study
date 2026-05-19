@@ -1,6 +1,6 @@
 # Gradient and Parameter Diagnostic Logs (Current Code + Recent Run Audit)
 
-This file documents the `train_metrics` keys written to `run_log.jsonl` by the **current** training code (`train/trunk_metrics.py`, `train/engine.py`).
+This file documents the `train_metrics` keys written to `run_log.jsonl` by the **current** training code (`train/lexicographic/gradients.py`, `train/engine.py`).
 
 ## Scope
 

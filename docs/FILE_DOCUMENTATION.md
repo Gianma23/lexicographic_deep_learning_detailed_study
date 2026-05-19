@@ -127,14 +127,16 @@ These files are the closest local equivalents of the upstream CAST internals and
 ## Training
 
 - `train/__init__.py`: Package marker for training utilities.
-- `train/train.py`: Main CLI entrypoint. Loads config, builds loaders/model/optimizer/scheduler, trains, saves top-down and independent best checkpoints, and evaluates both on the test split.
+- `train/train.py`: Main CLI entrypoint (`python -m train.train`) and run orchestration (loader/model/runtime setup, train loop, checkpoint selection, final test evaluation).
 - `train/config_loader.py`: YAML config loader with optional OmegaConf support and dotlist override handling.
 - `train/engine.py`: `train_one_epoch` and `evaluate` loops.
-- `train/eval.py`: Batch metric assembly and console metric formatting.
+- `train/evaluation.py`: Batch metric assembly.
+- `train/metric_formatting.py`: Console metric formatting (`pretty_metrics`).
 - `train/metrics.py`: Shared hierarchical metrics such as per-level accuracy, weighted AP, FPA, AHD, and TICE.
 - `train/mixup.py`: Mixup/CutMix helpers used by the unified training loop.
 - `train/training_logger.py`: Writes `config_resolved.yaml`, `run_log.jsonl`, and `test_metrics.yaml`.
-- `train/utils.py`: Seeding, optimizer/scheduler construction, finetune loading, checkpoint save/resume, and best-metric selection.
+- `train/lexicographic/`: Lexicographic config/types and trunk-gradient diagnostics/projection utilities.
+- `train/runtime/`: Runtime concerns split by responsibility (optimization, finetune loading, checkpoint/resume, best-checkpoint selection), imported directly from concrete modules.
 
 ## Notebooks
 

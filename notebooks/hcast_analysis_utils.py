@@ -474,6 +474,8 @@ def _detect_color_family(run_like: Mapping[str, Any]) -> str:
         run_dir_name = Path(run_dir).name.lower()
 
     text = f"{label} {run_dir_name}"
+    if ("ce " in text) or ("ce_" in text) or ("kl_leaf" in text) or ("kl_coarse" in text):
+        return "ce_weight"
     if "lex" in text:
         return "lex"
     if "hcc" in text or "step" in text or "inverse" in text:
@@ -511,7 +513,10 @@ def _apply_semantic_color_gradients(run_data_by_dataset: Mapping[str, List[RunDa
         "hcc": ["#f6d32d", "#f59e0b", "#ef4444", "#991b1b"],
         # Lexicographic runs use a green/teal ramp, separated from baseline blue and HCC warm colors.
         "lex": ["#006d5b", "#009e73", "#20c997"],
-        "other": ["#9ca3af", "#4b5563"],
+        # Hier-COS CE weight variants use a visible blue ramp instead of gray.
+        "ce_weight": ["#93c5fd", "#3b82f6", "#1d4ed8"],
+        # Keep a colorful fallback for uncategorized runs.
+        "other": ["#f97316", "#c026d3"],
     }
 
     for dataset_runs in run_data_by_dataset.values():
@@ -787,16 +792,21 @@ class HCastAnalysis:
                 for run in runs:
                     if Path(run["run_dir"]).resolve() == baseline_resolved:
                         run["is_baseline"] = True
+                        # Preserve notebook-configured baseline color from semantic auto-recolor.
+                        if not bool(run.get("color_locked", False)):
+                            run["color"] = baseline_spec.get("color", config.baseline_color)
+                            run["color_locked"] = True
                 continue
 
             baseline_meta = _run_meta_from_dir(baseline_run_dir)
-            baseline_has_explicit_color = ("color" in baseline_spec) and (baseline_spec.get("color") is not None)
+            baseline_color = baseline_spec.get("color", config.baseline_color)
             runs.append(
                 {
                     "label": baseline_spec.get("label", "H-CAST"),
                     "run_dir": baseline_run_dir,
-                    "color": baseline_spec.get("color", config.baseline_color),
-                    "color_locked": bool(baseline_has_explicit_color),
+                    "color": baseline_color,
+                    # Baseline color should stay user-controlled (BASELINE_COLOR or per-dataset override).
+                    "color_locked": True,
                     "temperature": baseline_meta["temperature"],
                     "hcc_projection_mode": baseline_meta["hcc_projection_mode"],
                     "hcc_constraint_strength_max": baseline_meta["hcc_constraint_strength_max"],

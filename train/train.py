@@ -1,25 +1,19 @@
 import argparse
 from pathlib import Path
+from typing import Any, Dict
 
 import torch
 
 from datasets import build_dataloader
 from models import build_model
-from .training_logger import TrainingLogger
 from .config_loader import load_config
 from .engine import evaluate, train_one_epoch
-from .eval import pretty_metrics
-from .utils import (
-    BEST_SELECTION_MODES,
-    build_optimizer,
-    build_scheduler,
-    load_finetune_checkpoint,
-    load_trusted_checkpoint,
-    metric_for_best,
-    resume_if_available,
-    save_checkpoint,
-    seed_everything,
-)
+from .metric_formatting import pretty_metrics
+from .runtime.checkpointing import resume_if_available, save_checkpoint
+from .runtime.finetune import load_finetune_checkpoint, load_trusted_checkpoint
+from .runtime.optimization import build_optimizer, build_scheduler, seed_everything
+from .runtime.selection import BEST_SELECTION_MODES, metric_for_best
+from .training_logger import TrainingLogger
 
 
 def _parse_args():
@@ -29,7 +23,7 @@ def _parse_args():
     return parser.parse_args()
 
 
-def _print_loader_sizes(train_loader, val_loader, test_loader):
+def _print_loader_sizes(train_loader, val_loader, test_loader) -> None:
     for split_name, loader in [("train", train_loader), ("val", val_loader), ("test", test_loader)]:
         sample_count = len(getattr(loader, "dataset", None))
         batch_count = len(loader)
@@ -38,13 +32,13 @@ def _print_loader_sizes(train_loader, val_loader, test_loader):
         print(f"[data] {split_name:<5} samples={samples_txt} batches={batches_txt}")
 
 
-def _print_model_parameter_count(model):
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+def _print_model_parameter_count(model) -> None:
+    total_params = sum(param.numel() for param in model.parameters())
+    trainable_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
     print(f"[model] parameters total={total_params:,} trainable={trainable_params:,}")
 
 
-def _apply_lr_scaling_if_enabled(cfg, cfg_resolved):
+def _apply_lr_scaling_if_enabled(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
     if not bool(cfg.train.get("scale_lr", False)):
         return
 
@@ -73,14 +67,8 @@ def _apply_lr_scaling_if_enabled(cfg, cfg_resolved):
     )
 
 
-# ======================================================================== #
-#                    M A I N   T R A I N I N G   L O O P                   #
-# ======================================================================== #
-def main():
-    args = _parse_args()
-    cfg, cfg_resolved = load_config(args.config, args.overrides)
+def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
     _apply_lr_scaling_if_enabled(cfg, cfg_resolved)
-
     seed_everything(int(cfg.train.seed), bool(cfg.runtime.get("deterministic", True)))
 
     device = torch.device(str(cfg.train.get("device", "cuda" if torch.cuda.is_available() else "cpu")))
@@ -124,22 +112,21 @@ def main():
         output_dir=out_dir,
         start_epoch=start_epoch,
         level_names=level_names,
-        model_name=str(cfg.model.name),
     )
     resolved_cfg_path = logger.save_resolved_config(cfg_resolved)
     print(f"[LOGGER] saved resolved config: {resolved_cfg_path}")
     print(f"[LOGGER] logging run events to: {logger.run_log_path}")
     if str(cfg.train.get("resume", "")).strip():
-        logger.log_resume(resume_info)
+        logger.log_resume(resume_info.to_dict())
         print(
             "[resume] "
-            f"path={resume_info.get('resume_path', '')} "
-            f"found={bool(resume_info.get('checkpoint_found', False))} "
-            f"start_epoch={int(resume_info.get('start_epoch', 0))} "
-            f"config_ok={bool(resume_info.get('config_check_passed', False))} "
-            f"rng_restored={bool(resume_info.get('rng_state_restored', False))} "
-            f"loader_rng_restored={bool(resume_info.get('loader_rng_state_restored', False))} "
-            f"full_replay={bool(resume_info.get('full_reproducibility_restored', False))}"
+            f"path={resume_info.resume_path} "
+            f"found={resume_info.checkpoint_found} "
+            f"start_epoch={resume_info.start_epoch} "
+            f"config_ok={resume_info.config_check_passed} "
+            f"rng_restored={resume_info.rng_state_restored} "
+            f"loader_rng_restored={resume_info.loader_rng_state_restored} "
+            f"full_replay={resume_info.full_reproducibility_restored}"
         )
 
     epochs = int(cfg.train.epochs)
@@ -191,7 +178,7 @@ def main():
                 loaders=loaders_by_split,
             )
 
-        # Always refresh latest checkpoint for resumable training
+        # Always refresh latest checkpoint for resumable training.
         save_checkpoint(
             str(latest_ckpt),
             model,
@@ -244,6 +231,12 @@ def main():
         }
 
     logger.log_test(test_results)
+
+
+def main():
+    args = _parse_args()
+    cfg, cfg_resolved = load_config(args.config, args.overrides)
+    run_training(cfg, cfg_resolved)
 
 
 if __name__ == "__main__":

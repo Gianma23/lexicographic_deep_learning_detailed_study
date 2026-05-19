@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 import yaml
 
-from .utils import BEST_SELECTION_MODES
+from .runtime.selection import BEST_SELECTION_MODES
 
 LOSS_KEYS_HINT_FIELD = "__loss_keys__"
 
@@ -51,7 +51,6 @@ class TrainingLogger:
         output_dir: Union[str, Path],
         start_epoch: int = 0,
         level_names: Optional[List[str]] = None,
-        model_name: str = "Model",
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +59,6 @@ class TrainingLogger:
         self.run_log_path = self.output_dir / "run_log.jsonl"
         self.test_metrics_path = self.output_dir / "test_metrics.yaml"
         self.level_names = [str(name) for name in (level_names or [])]
-        self.model_name = str(model_name)
 
         if start_epoch <= 0 and self.run_log_path.exists():
             self.run_log_path.unlink()

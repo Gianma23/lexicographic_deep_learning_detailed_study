@@ -2,17 +2,48 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
+from .types import GradTuple, LevelGradMap, LexicographicUpdateState, TrunkGradState
+
 _GRAD_EPS = 1e-12
 _GRAD_LEVEL_NAMES = ("coarse", "mid", "fine")
 
 
-def _trainable_named_params(model: torch.nn.Module) -> List[Tuple[str, torch.nn.Parameter]]:
+def get_trainable_named_params(model: torch.nn.Module) -> List[Tuple[str, torch.nn.Parameter]]:
     return [(name, param) for name, param in model.named_parameters() if param.requires_grad]
 
 
-def _capture_trainable_param_snapshot(params: Sequence[torch.nn.Parameter]) -> List[torch.Tensor]:
+def capture_trainable_param_snapshot(params: Sequence[torch.nn.Parameter]) -> List[torch.Tensor]:
     """Capture trainable parameter values for epoch-to-epoch delta norms."""
     return [param.detach().to(device="cpu", dtype=torch.float32).clone() for param in params]
+
+
+def extract_level_losses(loss_aux: Any) -> List[torch.Tensor]:
+    if not isinstance(loss_aux, dict):
+        return []
+    raw_level_losses = loss_aux.get("level_losses")
+    if not isinstance(raw_level_losses, (list, tuple)):
+        return []
+
+    level_losses: List[torch.Tensor] = []
+    for level_loss in raw_level_losses[: len(_GRAD_LEVEL_NAMES)]:
+        if (
+            isinstance(level_loss, torch.Tensor)
+            and int(level_loss.ndim) == 0
+            and bool(level_loss.requires_grad)
+        ):
+            level_losses.append(level_loss)
+    return level_losses
+
+
+def assign_grads_to_params(
+    params: Sequence[torch.nn.Parameter],
+    grads: Sequence[Optional[torch.Tensor]],
+) -> None:
+    for param, grad in zip(params, grads):
+        if grad is None:
+            param.grad = None
+            continue
+        param.grad = grad.detach()
 
 
 def _param_norm_from_values(
@@ -48,24 +79,6 @@ def _delta_param_norm_from_snapshot(
     if used <= 0:
         return 0.0
     return float(norm_sq**0.5)
-
-
-def _extract_level_losses(loss_aux: Any) -> List[torch.Tensor]:
-    if not isinstance(loss_aux, dict):
-        return []
-    raw_level_losses = loss_aux.get("level_losses")
-    if not isinstance(raw_level_losses, (list, tuple)):
-        return []
-
-    level_losses: List[torch.Tensor] = []
-    for level_loss in raw_level_losses[: len(_GRAD_LEVEL_NAMES)]:
-        if (
-            isinstance(level_loss, torch.Tensor)
-            and int(level_loss.ndim) == 0
-            and bool(level_loss.requires_grad)
-        ):
-            level_losses.append(level_loss)
-    return level_losses
 
 
 def _grad_norm_from_autograd_grads(
@@ -138,14 +151,14 @@ def _compute_level_grad_map(
     trainable_named_params: Sequence[Tuple[str, torch.nn.Parameter]],
     level_losses: Sequence[torch.Tensor],
     retain_graph: bool,
-) -> Optional[Dict[str, Tuple[Optional[torch.Tensor], ...]]]:
+) -> Optional[LevelGradMap]:
     if not trainable_named_params or len(level_losses) < 3:
         return None
 
     selected_level_losses = list(level_losses[:3])
     trainable_params = [param for _, param in trainable_named_params]
 
-    level_grad_map: Dict[str, Tuple[Optional[torch.Tensor], ...]] = {}
+    level_grad_map: LevelGradMap = {}
     num_levels = len(selected_level_losses)
     for idx, (level_name, level_loss) in enumerate(zip(_GRAD_LEVEL_NAMES, selected_level_losses)):
         keep_graph = bool(retain_graph or (idx < (num_levels - 1)))
@@ -156,6 +169,27 @@ def _compute_level_grad_map(
             allow_unused=True,
         )
     return level_grad_map
+
+
+def _coerce_level_grad_map(
+    level_grad_map: Any,
+    num_params: int,
+) -> Optional[LevelGradMap]:
+    if not isinstance(level_grad_map, Mapping):
+        return None
+
+    coerced: LevelGradMap = {}
+    for level_name in _GRAD_LEVEL_NAMES:
+        grads = level_grad_map.get(level_name)
+        if not isinstance(grads, (list, tuple)) or len(grads) != int(num_params):
+            return None
+        coerced_level: List[Optional[torch.Tensor]] = []
+        for grad in grads:
+            if grad is not None and not isinstance(grad, torch.Tensor):
+                return None
+            coerced_level.append(grad)
+        coerced[level_name] = tuple(coerced_level)
+    return coerced
 
 
 def _merge_masks(mask_a: Sequence[bool], mask_b: Sequence[bool]) -> List[bool]:
@@ -200,7 +234,7 @@ def _project_onto_reference(
     reference_grads: Sequence[Optional[torch.Tensor]],
     include_mask: Sequence[bool],
     eps: float,
-) -> Tuple[Tuple[Optional[torch.Tensor], ...], float, bool]:
+) -> Tuple[GradTuple, float, bool]:
     denom = _dot_from_autograd_grads(reference_grads, reference_grads, include_mask)
     denom_value = float(denom.item())
 
@@ -226,7 +260,7 @@ def _sum_grad_tuples(
     grads_a: Sequence[Optional[torch.Tensor]],
     grads_b: Sequence[Optional[torch.Tensor]],
     grads_c: Sequence[Optional[torch.Tensor]],
-) -> Tuple[Optional[torch.Tensor], ...]:
+) -> GradTuple:
     summed: List[Optional[torch.Tensor]] = []
     for grad_a, grad_b, grad_c in zip(grads_a, grads_b, grads_c):
         pieces = [grad for grad in (grad_a, grad_b, grad_c) if grad is not None]
@@ -246,7 +280,7 @@ def _compose_mid_projected_grads(
     mid_projected_t1: Sequence[Optional[torch.Tensor]],
     t2_mask: Sequence[bool],
     t1_mask: Sequence[bool],
-) -> Tuple[Optional[torch.Tensor], ...]:
+) -> GradTuple:
     composed: List[Optional[torch.Tensor]] = []
     for mid_grad, mid_t2, mid_t1, is_t2, is_t1 in zip(
         mid_grads,
@@ -267,7 +301,7 @@ def _compose_mid_projected_grads(
 def _scale_grad_tuple(
     grads: Sequence[Optional[torch.Tensor]],
     factor: float,
-) -> Tuple[Optional[torch.Tensor], ...]:
+) -> GradTuple:
     factor_f = float(factor)
     if abs(factor_f - 1.0) <= 1e-12:
         return tuple(grads)
@@ -284,7 +318,7 @@ def _scale_grad_tuple(
 def _scale_grad_pack(
     grad_pack: Mapping[str, Sequence[Optional[torch.Tensor]]],
     factor: float,
-) -> Dict[str, Tuple[Optional[torch.Tensor], ...]]:
+) -> Dict[str, GradTuple]:
     factor_f = float(factor)
     return {str(key): _scale_grad_tuple(grads, factor_f) for key, grads in grad_pack.items()}
 
@@ -347,31 +381,6 @@ def _trunk_grad_norm_metrics(
     return out
 
 
-def _trunk_param_norm_metrics(
-    params: Sequence[torch.nn.Parameter],
-    start_snapshot: Sequence[torch.Tensor],
-    trunk_masks: Optional[Mapping[str, Sequence[bool]]],
-) -> Dict[str, float]:
-    if trunk_masks is None:
-        return {}
-
-    mask_views = _mask_views_from_trunk_masks(trunk_masks)
-    metrics: Dict[str, float] = {}
-    trunk_order = ("t3t2t1", "t3", "t2t1", "t2", "t1")
-
-    for trunk_name in trunk_order:
-        mask = list(mask_views.get(trunk_name, []))
-        if not mask or not any(mask):
-            continue
-        metrics[f"param_norm_{trunk_name}"] = _param_norm_from_values(params, mask)
-        metrics[f"delta_param_norm_{trunk_name}"] = _delta_param_norm_from_snapshot(
-            params=params,
-            start_snapshot=start_snapshot,
-            include_mask=mask,
-        )
-    return metrics
-
-
 def _build_lexicographic_grads(
     coarse_grads: Sequence[Optional[torch.Tensor]],
     mid_grads: Sequence[Optional[torch.Tensor]],
@@ -379,7 +388,7 @@ def _build_lexicographic_grads(
     trunk_masks: Mapping[str, Sequence[bool]],
     eps: float = _GRAD_EPS,
     include_metrics: bool = True,
-) -> Tuple[Dict[str, Tuple[Optional[torch.Tensor], ...]], Dict[str, float]]:
+) -> Tuple[Dict[str, GradTuple], Dict[str, float]]:
     t1_mask = list(trunk_masks.get("t1", []))
     t2_mask = list(trunk_masks.get("t2", []))
 
@@ -418,7 +427,7 @@ def _build_lexicographic_grads(
     )
 
     total_grads = _sum_grad_tuples(coarse_grads, mid_projected, fine_projected)
-    grad_pack: Dict[str, Tuple[Optional[torch.Tensor], ...]] = {
+    grad_pack: Dict[str, GradTuple] = {
         "coarse": tuple(coarse_grads),
         "mid_projected": mid_projected,
         "fine_projected": fine_projected,
@@ -474,13 +483,39 @@ def _build_lexicographic_grads(
     return grad_pack, metrics
 
 
-def _prepare_lexicographic_update(
+def compute_trunk_param_norm_metrics(
+    params: Sequence[torch.nn.Parameter],
+    start_snapshot: Sequence[torch.Tensor],
+    trunk_masks: Optional[Mapping[str, Sequence[bool]]],
+) -> Dict[str, float]:
+    if trunk_masks is None:
+        return {}
+
+    mask_views = _mask_views_from_trunk_masks(trunk_masks)
+    metrics: Dict[str, float] = {}
+    trunk_order = ("t3t2t1", "t3", "t2t1", "t2", "t1")
+
+    for trunk_name in trunk_order:
+        mask = list(mask_views.get(trunk_name, []))
+        if not mask or not any(mask):
+            continue
+        metrics[f"param_norm_{trunk_name}"] = _param_norm_from_values(params, mask)
+        metrics[f"delta_param_norm_{trunk_name}"] = _delta_param_norm_from_snapshot(
+            params=params,
+            start_snapshot=start_snapshot,
+            include_mask=mask,
+        )
+    return metrics
+
+
+def prepare_lexicographic_update(
     trainable_named_params: Sequence[Tuple[str, torch.nn.Parameter]],
     level_losses: Sequence[torch.Tensor],
     eps: float = _GRAD_EPS,
     include_metrics: bool = True,
     grad_scale: float = 1.0,
-) -> Tuple[Optional[Dict[str, Any]], Dict[str, float]]:
+    precomputed_level_grad_map: Optional[Any] = None,
+) -> Tuple[Optional[LexicographicUpdateState], Dict[str, float]]:
     """Build lexicographic grads in unscaled units, optionally scaling returned grads.
 
     When AMP is active the caller passes the current GradScaler scale as
@@ -488,11 +523,16 @@ def _prepare_lexicographic_update(
     while returned gradients are multiplied by ``grad_scale`` so
     ``GradScaler.step`` can unscale and check them normally.
     """
-    level_grad_map = _compute_level_grad_map(
-        trainable_named_params=trainable_named_params,
-        level_losses=level_losses,
-        retain_graph=False,
+    level_grad_map = _coerce_level_grad_map(
+        level_grad_map=precomputed_level_grad_map,
+        num_params=len(trainable_named_params),
     )
+    if level_grad_map is None:
+        level_grad_map = _compute_level_grad_map(
+            trainable_named_params=trainable_named_params,
+            level_losses=level_losses,
+            retain_graph=False,
+        )
     if level_grad_map is None:
         return None, {}
 
@@ -539,22 +579,23 @@ def _prepare_lexicographic_update(
     safe_scale = float(grad_scale) if float(grad_scale) > 0.0 else 1.0
     projected_grads_for_step = _scale_grad_pack(projected_grads, safe_scale)
 
-    state: Dict[str, Any] = {
-        "trunk_masks": trunk_masks,
-        "level_grad_map": level_grad_map,
-        "projected_grads": projected_grads_for_step,
-    }
+    state = LexicographicUpdateState(
+        trunk_masks=trunk_masks,
+        level_grad_map=level_grad_map,
+        projected_grads=projected_grads_for_step,
+    )
     return state, metrics
 
 
-def _prepare_trunk_grad_metrics(
+def compute_trunk_grad_metrics(
     trainable_named_params: Sequence[Tuple[str, torch.nn.Parameter]],
     level_losses: Sequence[torch.Tensor],
-) -> Tuple[Optional[Dict[str, Any]], Dict[str, float]]:
+    retain_graph: bool = True,
+) -> Tuple[Optional[TrunkGradState], Dict[str, float]]:
     level_grad_map = _compute_level_grad_map(
         trainable_named_params=trainable_named_params,
         level_losses=level_losses,
-        retain_graph=True,
+        retain_graph=bool(retain_graph),
     )
     if level_grad_map is None:
         return None, {}
@@ -621,5 +662,8 @@ def _prepare_trunk_grad_metrics(
     if not metrics:
         return None, {}
 
-    state: Dict[str, Any] = {"trunk_masks": trunk_masks}
+    state = TrunkGradState(
+        trunk_masks=trunk_masks,
+        level_grad_map=level_grad_map,
+    )
     return state, metrics
