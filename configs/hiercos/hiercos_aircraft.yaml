@@ -62,7 +62,7 @@ train:
   epochs: 100
   seed: 0
   device: cuda
-  amp: false
+  amp: true
   resume: ""
   output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft
   smoothing: 0.0
