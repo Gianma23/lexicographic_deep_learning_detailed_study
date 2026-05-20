@@ -279,7 +279,7 @@ def compute_loss(
             "total": float(total.detach().item()),
             "level_ce": float(total.detach().item()),
         }
-        for level, level_loss in enumerate(level_losses):
+        for level, level_loss in enumerate(raw_level_losses):
             metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
         if not return_aux:
             return total, metrics

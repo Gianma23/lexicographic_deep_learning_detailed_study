@@ -1,0 +1,10 @@
+# Template for the `model:` section when using HRN.
+# Constraint: HRN supports exactly three hierarchy levels.
+model:
+  name: hrn                         # Model registry id. Must be exactly: hrn
+  backbone: resnet50                # Supported: resnet50
+  pretrained: true                  # If true, initialize ResNet-50 from ImageNet weights when available
+  branch_hidden_dim: 1024           # Hidden width inside each HRN branch conv/fc stack
+  embedding_dim: 512                # Output embedding width used by per-level classifiers
+  dropout: 0.0                      # Optional dropout in branch FC blocks
+  trunk_lr_scale: 0.1               # LR multiplier for backbone trunk parameter group (SGD path)

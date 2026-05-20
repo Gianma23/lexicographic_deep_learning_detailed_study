@@ -90,7 +90,11 @@ Reusable templates:
 
 - `configs/templates/dataset_template.yaml`
 - `configs/templates/hcast_template.yaml`
+- `configs/templates/hcc_template.yaml`
 - `configs/templates/ht_capsnet_template.yaml`
+- `configs/templates/hrn_template.yaml`
+- `configs/templates/hiercos_template.yaml`
+- `configs/templates/training_template.yaml`
 
 ## Config Structure
 

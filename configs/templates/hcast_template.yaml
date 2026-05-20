@@ -49,12 +49,3 @@ hcc:
   alpha_ramp_epochs: 0             # Ramp length; <=0 means "until train end"
   alpha_tanh_beta: 3.0             # Steepness for centered tanh alpha schedule, used for alpha_schedule=tanh
   alpha_tanh_center: 0.5           # Midpoint in [0,1] for tanh schedule
-
-# Optional lexicographic optimization (upper-bound analysis mode).
-# This is currently supported for 3-level H-CAST only.
-train:
-  lexicographic:
-    enabled: false                 # true enables coarse->mid->fine projected gradient composition
-    start_epoch: 0                 # Internal zero-based epoch index where projected gradients start
-    eps: 1.0e-12                   # Numerical epsilon for projection denominators
-    log_metrics: true              # Emit lexicographic projection diagnostics in train_metrics

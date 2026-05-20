@@ -1,0 +1,59 @@
+# Template for shared training/runtime sections: `train`, `optim`, `scheduler`, `runtime`.
+
+train:
+  epochs: 100                       # Total training epochs
+  seed: 0                           # Global RNG seed
+  device: cuda                      # cuda | cpu
+  amp: true                         # Enable automatic mixed precision on CUDA
+  progress_bar: true                # Enable tqdm progress bar when available
+  resume: ""                        # Optional checkpoint path to resume from
+  output_dir: /scratch/g.saggini1/outputs/<run_name> # Run artifact directory
+  smoothing: 0.1                    # Label smoothing in CE-based losses
+  stop_epoch: 100                   # Optional early stop epoch; must satisfy 1 <= stop_epoch <= epochs
+
+  # Optional linear LR scaling by batch size.
+  scale_lr: false                   # If true, final LR = optim.lr * batch_size / reference_batch_size
+  scale_lr_reference_batch_size: 512
+
+  # Optional lexicographic projected-gradient mode.
+  # Supported when exactly 3 differentiable level losses are available.
+  lexicographic:
+    enabled: false                  # true enables projected gradient composition
+    start_epoch: 0                  # Internal zero-based epoch where projected gradients start
+    eps: 1.0e-12                    # Numerical epsilon for projection denominators
+    log_metrics: true               # Emit projection diagnostics in train metrics
+
+optim:
+  name: adamw                       # adam | adamw | sgd
+  lr: 0.0005                        # Base LR (or scaled base LR if train.scale_lr=true)
+  weight_decay: 0.05
+  momentum: 0.9                     # Used by sgd
+  nesterov: false                   # Used by sgd
+  opt_eps: 1.0e-8                   # Optional Adam/AdamW epsilon (null uses torch default)
+  opt_betas: null                   # Optional [beta1, beta2] for Adam/AdamW
+
+scheduler:
+  # Supported families:
+  # - none
+  # - hiercos_cosine (custom scheduler; uses base_lr and train.epochs)
+  # - timm schedulers via timm.create_scheduler_v2 (e.g., cosine, step)
+  name: cosine
+
+  # Used by hiercos_cosine and HRN cosine path; optional for other schedulers.
+  base_lr: 0.0005
+
+  # Common timm scheduler kwargs (ignored when unsupported by selected sched).
+  warmup_lr: 0.000001
+  min_lr: 0.00001
+  noise: null
+  noise_pct: 0.67
+  noise_std: 1.0
+  noise_seed: 42
+  decay_epochs: 30
+  warmup_epochs: 5
+  cooldown_epochs: 10
+  patience_epochs: 10
+  decay_rate: 0.1
+
+runtime:
+  deterministic: true               # Enable deterministic algorithms / reproducibility guards

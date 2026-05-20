@@ -59,7 +59,11 @@ These presets use the single Hier-COS implementation with a fixed orthonormal fr
 
 - `configs/templates/dataset_template.yaml`: Commented template for dataset and transform settings.
 - `configs/templates/hcast_template.yaml`: Commented template for H-CAST-specific model options.
+- `configs/templates/hcc_template.yaml`: Standalone optional HCC projection block template.
 - `configs/templates/ht_capsnet_template.yaml`: Commented template for HT-CapsNet-specific model options.
+- `configs/templates/hrn_template.yaml`: Commented template for HRN-specific model options.
+- `configs/templates/hiercos_template.yaml`: Commented template for Hier-COS-specific model options.
+- `configs/templates/training_template.yaml`: Shared template for train/optim/scheduler/runtime sections.
 
 ## Datasets
 

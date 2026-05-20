@@ -1,0 +1,19 @@
+# Template for the `model:` section when using Hier-COS.
+# Constraints:
+# - Hier-COS requires taxonomy.parent_of mappings.
+# - Hier-COS requires at least two hierarchy levels.
+model:
+  name: hiercos                     # Model registry id. Must be exactly: hiercos
+  loss: kl_reg                      # kl_reg | per_level_ce
+  ce_weight_mode: equal             # equal | kl_leaf | kl_coarse (used only with loss=per_level_ce)
+  variant: haframe_resnet50         # haframe_resnet50 | haframe_wide_resnet
+  pool: average                     # Pooling for resnet50 variant: max | average
+  pretrained: true                  # Used by resnet50 variant; wide variant is trained from scratch
+  alpha: 0.1                        # Weight of level-regularization term when loss=kl_reg
+  backbone_lr_scale: 0.1            # LR multiplier for backbone parameter group (SGD path)
+  fixed_frame_mode: orthonormal_random # orthonormal_random | identity
+
+  # Used only when variant=haframe_wide_resnet
+  wide_depth: 28                    # WideResNet depth; must satisfy (depth - 4) % 6 == 0
+  wide_widen_factor: 8              # WideResNet channel multiplier
+  wide_drop_rate: 0.0               # WideResNet dropout inside residual blocks
