@@ -11,7 +11,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
 
     return HRNModel(
         num_classes_per_level=num_classes_per_level,
-        backbone=str(cfg.model.get("backbone", "resnet50")),
+        backbone=cfg.model.get("backbone", "resnet50"),
         pretrained=bool(cfg.model.get("pretrained", True)),
         branch_hidden_dim=int(cfg.model.get("branch_hidden_dim", 1024)),
         embedding_dim=int(cfg.model.get("embedding_dim", 512)),

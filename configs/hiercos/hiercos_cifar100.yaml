@@ -1,7 +1,7 @@
 model:
   name: hiercos
   loss: kl_reg
-  ce_weight_mode: equal
+  weight_mode: kl_leaf
   variant: haframe_wide_resnet
   alpha: 0.05
   pretrained: false
@@ -60,7 +60,7 @@ train:
   epochs: 100
   seed: 0
   device: cuda
-  amp: true
+  amp: false
   resume: ""
   output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100
   smoothing: 0.0

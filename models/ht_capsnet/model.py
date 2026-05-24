@@ -78,7 +78,12 @@ def _safe_num_heads(embed_dim: int, requested_heads: int) -> int:
 
 
 def _normalize_attn_postprocess(value: Optional[str]) -> str:
-    text = str(value or "layernorm").strip().lower().replace("-", "_")
+    if value is None:
+        text = "layernorm"
+    else:
+        if not isinstance(value, str):
+            raise ValueError("HT-CapsNet model.attn_postprocess must be a string.")
+        text = value
     if text == "layernorm":
         return "layernorm"
     if text == "squash":
@@ -90,8 +95,10 @@ def _normalize_attn_postprocess(value: Optional[str]) -> str:
 
 
 def _normalize_backbone_name(name: str) -> str:
-    value = str(name or "custom").strip().lower()
-    if value in {"custom"}:
+    if not isinstance(name, str):
+        raise ValueError("HT-CapsNet model.backbone_net must be a string.")
+    value = name
+    if value == "custom":
         return "custom"
     if value == "efficientnet_b7":
         return "efficientnet_b7"
@@ -104,7 +111,9 @@ def _normalize_backbone_name(name: str) -> str:
 def _normalize_backbone_weights(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
-    text = str(value).strip().lower()
+    if not isinstance(value, str):
+        raise ValueError("HT-CapsNet model.backbone_net_weights must be a string or null.")
+    text = value
     if text == "none":
         return None
     if text == "imagenet":

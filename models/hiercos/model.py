@@ -253,7 +253,9 @@ class _WideNetworkBlock(nn.Module):
 
 
 def _get_activation(name: str, channels: int) -> nn.Module:
-    mode = str(name).strip().lower()
+    if not isinstance(name, str):
+        raise ValueError("Hier-COS activation name must be a string.")
+    mode = name
     if mode == "relu":
         return nn.ReLU()
     if mode == "elu":
@@ -400,11 +402,18 @@ class _ResNet50NodeBackbone(nn.Module):
             nn.Conv2d(2048, int(out_dim), kernel_size=1, stride=1, padding=0, bias=False),
         )
 
-        pool_mode = str(pool).strip().lower()
-        if pool_mode in {"max", "maxpool"}:
+        if not isinstance(pool, str):
+            raise ValueError("Hier-COS `model.pool` must be a string.")
+        pool_mode = pool
+        if pool_mode == "max":
             self.pool = nn.MaxPool2d(kernel_size=7, stride=7)
-        else:
+        elif pool_mode == "average":
             self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        else:
+            raise ValueError(
+                f"Unsupported Hier-COS model.pool '{pool_mode}'. "
+                "Expected one of ['max', 'average']."
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.features(x)
@@ -452,19 +461,21 @@ class HierCosModel(nn.Module):
         self.register_buffer("leaf_to_level_local", topology["leaf_to_level_local"], persistent=False)
         self.register_buffer("node_prob_weights", topology["node_prob_weights"], persistent=False)
 
-        self.variant = str(variant).strip().lower()
-        if self.variant in {"haframe_wide_resnet", "wide_resnet"}:
+        if not isinstance(variant, str):
+            raise ValueError("Hier-COS `model.variant` must be a string.")
+        self.variant = variant
+        if self.variant == "haframe_wide_resnet":
             self.backbone = _WideResNetNodeBackbone(
                 out_dim=self.total_nodes,
                 depth=int(wide_depth),
                 widen_factor=int(wide_widen_factor),
                 drop_rate=float(wide_drop_rate),
             )
-        elif self.variant in {"haframe_resnet50", "resnet50"}:
+        elif self.variant == "haframe_resnet50":
             self.backbone = _ResNet50NodeBackbone(
                 out_dim=self.total_nodes,
                 pretrained=bool(pretrained),
-                pool=str(pool),
+                pool=pool,
             )
         else:
             raise ValueError(
@@ -474,7 +485,7 @@ class HierCosModel(nn.Module):
 
         self.f_theta = self._build_transformation_module(self.total_nodes)
         self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
-        self._init_fixed_frame(mode=str(fixed_frame_mode))
+        self._init_fixed_frame(mode=fixed_frame_mode)
 
     @staticmethod
     def _build_transformation_module(width: int) -> nn.Module:
@@ -488,14 +499,21 @@ class HierCosModel(nn.Module):
         )
 
     def _init_fixed_frame(self, mode: str = "identity") -> None:
-        frame_mode = str(mode).strip().lower()
+        if not isinstance(mode, str):
+            raise ValueError("Hier-COS `model.fixed_frame_mode` must be a string.")
+        frame_mode = mode
         with torch.no_grad():
             if frame_mode == "orthonormal_random":
                 random_matrix = torch.randn(self.total_nodes, self.total_nodes)
                 q, _ = torch.linalg.qr(random_matrix, mode="reduced")
                 self.fixed_classifier.weight.copy_(q)
-            else:
+            elif frame_mode == "identity":
                 self.fixed_classifier.weight.copy_(torch.eye(self.total_nodes))
+            else:
+                raise ValueError(
+                    f"Unsupported Hier-COS model.fixed_frame_mode '{frame_mode}'. "
+                    "Expected one of ['orthonormal_random', 'identity']."
+                )
         self.fixed_classifier.weight.requires_grad_(False)
 
     def parameter_groups(self, base_lr: float, backbone_lr_scale: Optional[float] = None):
@@ -506,7 +524,7 @@ class HierCosModel(nn.Module):
         transform_params = [p for p in self.f_theta.parameters() if p.requires_grad]
         classifier_params = [p for p in self.fixed_classifier.parameters() if p.requires_grad]
 
-        if self.variant in {"haframe_wide_resnet", "wide_resnet"}:
+        if self.variant == "haframe_wide_resnet":
             # Upstream wraps the WideResNet transformation head inside features_2,
             # so both backbone and transform head use the low LR group.
             other_params = classifier_params

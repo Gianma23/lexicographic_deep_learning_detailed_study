@@ -69,7 +69,11 @@ class CIFAR100Dataset(BaseHierDataset):
             raise RuntimeError("Invalid CIFAR-100 coarse->super mapping. Expected 20 entries.")
 
         val_ratio = resolve_val_split_ratio(self.cfg)
-        val_source = str(self.cfg.dataset.get("val_source", "train_split")).strip().lower()
+        val_source = self.cfg.dataset.get("val_source", "train_split")
+        if not isinstance(val_source, str):
+            raise ValueError("dataset.val_source must be a string.")
+        if val_source not in {"train_split", "test"}:
+            raise ValueError("dataset.val_source must be one of ['train_split', 'test'].")
         val_uses_test = self.split == "val" and val_ratio <= 0.0 and val_source == "test"
         split_is_train_pool = self.split in {"train", "val"} and not val_uses_test
         download = bool(self.cfg.dataset.get("download", False))

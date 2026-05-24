@@ -60,8 +60,10 @@ The implementation choices below follow the selected clean-protocol constraints 
 ### Loss
 - **Aligned**:
   - Local KL + level-regularization objective matches upstream `HierCOS_Loss` structure.
+- **Local lex extension**:
+  - `model.loss: per_level_kl_reg` exposes three differentiable level losses (`coarse`, `mid`, `fine`) for gradient/cosine diagnostics and lexicographic projected-gradient experiments; in this mode, `total` is defined as the sum of the three per-level losses.
 - **Local ablation**:
-  - `model.loss: per_level_ce` replaces KL + regularization with three weighted per-level CE losses. `model.ce_weight_mode` supports equal weights, leaf-heavy KL-style weights, and reversed/coarse-heavy weights. This mode is not paper-faithful Hier-COS; it exists to expose weighted CE level losses for gradient/cosine diagnostics and lexicographic projected-gradient experiments.
+  - `model.loss: per_level_ce` (CE on level subspace scores) and `model.loss: per_level_abs_node_ce` (CE on `node_logits.abs()` level node slices) replace KL + regularization with three weighted per-level CE losses. `model.weight_mode` supports equal weights (`1/depth`), leaf-heavy KL-style weights, and reversed/coarse-heavy weights. The same weights are also used for KL target-path node weighting in `kl_reg`/`per_level_kl_reg`. These modes are not paper-faithful Hier-COS; they exist to expose weighted level losses for gradient/cosine diagnostics and lexicographic projected-gradient experiments.
 
 ### Optimizer + Scheduler
 - **Aligned for parity presets**:

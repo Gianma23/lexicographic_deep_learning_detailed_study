@@ -8,7 +8,10 @@ def _model_name(cfg: Any) -> str:
     model_cfg = getattr(cfg, "model", None)
     if model_cfg is None or not hasattr(model_cfg, "get"):
         return ""
-    return str(model_cfg.get("name", "")).strip().lower()
+    name = model_cfg.get("name", "")
+    if not isinstance(name, str):
+        raise ValueError("model.name must be a string.")
+    return name
 
 
 def _transforms_cfg(cfg: Any) -> Any:
@@ -70,8 +73,12 @@ def mixup_switch_prob(cfg: Any) -> float:
 
 
 def mixup_mode(cfg: Any) -> str:
-    mode = str(_transforms_cfg(cfg).get("mixup_mode", "batch")).strip().lower()
-    return mode or "batch"
+    mode = _transforms_cfg(cfg).get("mixup_mode", "batch")
+    if not isinstance(mode, str):
+        raise ValueError("dataset.transforms.mixup_mode must be a string.")
+    if mode not in {"batch", "elem", "pair"}:
+        raise ValueError("dataset.transforms.mixup_mode must be one of ['batch', 'elem', 'pair'].")
+    return mode
 
 
 def one_hot(x: torch.Tensor, num_classes: int, on_value: float = 1.0, off_value: float = 0.0) -> torch.Tensor:

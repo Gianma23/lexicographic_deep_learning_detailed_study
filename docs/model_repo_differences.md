@@ -111,8 +111,10 @@ Pinning command used: `git ls-remote <repo_url> HEAD`.
 
 - `Structural`: Local code keeps upstream-style fixed-frame/taxonomy-subspace formulation and KL+regularization objective path (`model.loss: kl_reg`) as the parity baseline.
   - Why: preserve original method core before ablations.
-- `Intentional`: Added `model.loss: per_level_ce` ablation and `model.ce_weight_mode` (`equal`, `kl_leaf`, `kl_coarse`).
-  - Why: expose three differentiable level losses for gradient and lexicographic diagnostics.
+- `Intentional`: Added lex-ready loss `model.loss: per_level_kl_reg`, which exposes three differentiable level losses and defines `total` as their sum.
+  - Why: align lex/non-lex comparisons on the same reported objective in this mode while enabling per-level gradient and lexicographic diagnostics.
+- `Intentional`: Added CE ablation losses `model.loss: per_level_ce` and `model.loss: per_level_abs_node_ce`, plus shared `model.weight_mode` (`equal`, `kl_leaf`, `kl_coarse`) applied to both KL target-path and CE level weighting.
+  - Why: provide local weighted-level alternatives for diagnostic and ablation studies.
 - `Intentional`: CIFAR protocol keeps repository hierarchy depth (`3`) rather than upstream 5-level CIFAR protocol.
   - Why: maintain cross-model hierarchy consistency inside this repository.
 - `Intentional`: CUB-200 Hier-COS preset is explicitly marked as local extrapolation.
@@ -130,7 +132,7 @@ Pinning command used: `git ls-remote <repo_url> HEAD`.
 - Top-down and independent decoding are both first-class evaluation modes, with separate best-checkpoint selection and final test reporting.
 - H-CAST includes local HCC extensions not present in the original H-CAST upstream repository.
 - HT-CapsNet is implemented as a PyTorch port of a TensorFlow-origin baseline.
-- Hier-COS includes a local CE ablation path (`per_level_ce`) beyond the paper-aligned KL baseline.
+- Hier-COS includes local per-level extensions (`per_level_kl_reg`, `per_level_ce`, `per_level_abs_node_ce`) beyond the paper-aligned KL baseline.
 - LH-DNN comparison is necessarily paper-to-code (no official upstream code repository).
 
 ### Interpretation for Thesis Writing

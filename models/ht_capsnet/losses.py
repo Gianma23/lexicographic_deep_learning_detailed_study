@@ -158,7 +158,9 @@ def _level_weights(
 ) -> List[float]:
     num_levels = len(logits_per_level)
     loss_cfg = cfg.model.loss
-    mode = str(loss_cfg.get("weight_mode", "dynamic")).strip().lower()
+    mode = loss_cfg.get("weight_mode", "dynamic")
+    if not isinstance(mode, str):
+        raise ValueError("HT-CapsNet model.loss.weight_mode must be a string.")
 
     if mode == "dynamic":
         return _dynamic_level_weights(
@@ -169,7 +171,7 @@ def _level_weights(
     if mode == "static":
         static_weights = _initial_level_weights([int(logits.size(-1)) for logits in logits_per_level])
         return static_weights if len(static_weights) == num_levels else [1.0 for _ in range(num_levels)]
-    if mode in {"none", "uniform"}:
+    if mode == "none":
         return [1.0 for _ in range(num_levels)]
 
     raise ValueError(f"Unsupported HT-CapsNet loss weight_mode '{mode}'. Supported values: dynamic, static, none.")

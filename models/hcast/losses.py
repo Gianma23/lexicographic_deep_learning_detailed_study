@@ -189,9 +189,13 @@ def _resolve_level_weights(
 ) -> List[float]:
     """Return static or dynamic per-level weights according to the loss config."""
     level_weight_cfg = _section_to_dict(loss_cfg.get("level_weighting", {}))
-    mode = str(level_weight_cfg.get("mode", "static")).strip().lower()
-    if mode != "dynamic":
+    mode = level_weight_cfg.get("mode", "static")
+    if not isinstance(mode, str):
+        raise ValueError("model.loss.level_weighting.mode must be a string.")
+    if mode == "static":
         return [1.0 for _ in range(num_levels)]
+    if mode != "dynamic":
+        raise ValueError("model.loss.level_weighting.mode must be one of ['static', 'dynamic'].")
 
     if hard_targets is None:
         raise ValueError(

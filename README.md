@@ -118,8 +118,8 @@ Common fields worth checking first:
 - `train.resume`
 - `dataloader.drop_last_train` / `dataloader.drop_last_eval`
 - `dataset.transforms.manual.crop_bottom_pixels`
-- `model.loss` (Hier-COS: `kl_reg` or `per_level_ce`)
-- `model.ce_weight_mode` (Hier-COS CE only: `equal`, `kl_leaf`, or `kl_coarse`)
+- `model.loss` (Hier-COS: `kl_reg`, `per_level_kl_reg`, `per_level_ce`, or `per_level_abs_node_ce`)
+- `model.weight_mode` (Hier-COS shared weighting for KL target-path and CE: `equal`, `kl_leaf`, or `kl_coarse`)
 
 Lexicographic upper-bound mode (3-level):
 
@@ -128,18 +128,18 @@ Lexicographic upper-bound mode (3-level):
 - `train.lexicographic.eps`: projection denominator epsilon
 - `train.lexicographic.log_metrics`: logs projection diagnostics under `train_metrics`
 - H-CAST requires exactly 3 level losses and `model.loss.globalkl: false`
-- Hier-COS requires the local CE ablation `model.loss: per_level_ce`; paper-aligned `model.loss: kl_reg` does not expose CE level losses
+- Hier-COS lexicographic mode requires per-level losses (`model.loss: per_level_kl_reg`, `per_level_ce`, or `per_level_abs_node_ce`); plain `model.loss: kl_reg` does not expose differentiable per-level losses
 
 The config loader supports positional dotlist overrides such as `train.epochs=10` or `optim.lr=1e-4`.
 
 ## Supported Datasets
 
-Dataset ids and aliases:
+Strict dataset ids:
 
-- `cifar100`, `cifar-100`
-- `cub`, `cub-200-2011`
-- `aircraft`, `fgvc-aircraft`
-- `inat`, `inat21-mini`, `inat21_mini`
+- `cifar-100`
+- `cub-200-2011`
+- `fgvc-aircraft`
+- `inat21-mini`
 
 Adapter behavior:
 
@@ -172,7 +172,7 @@ Optional normalized JSON annotations are also supported for all datasets:
 - `hrn_cifar100_parity` is a local extrapolation because the upstream HRN repo does not include CIFAR-100; it keeps this repo CIFAR hierarchy.
 - `hiercos` requires taxonomy (`taxonomy.parent_of`) and at least 2 levels.
 - `hiercos` does not support mixup/cutmix soft targets. Keep `dataset.transforms.mixup/cutmix: 0.0`.
-- `hiercos` uses a single fixed orthonormal Hier-COS frame with taxonomy-driven subspace scores. `model.loss: kl_reg` is the default paper-aligned KL + level regularization objective. `model.loss: per_level_ce` is a local ablation that optimizes three per-level CE losses and enables gradient/cosine diagnostics. In CE mode, `model.ce_weight_mode` supports `equal`, leaf-heavy `kl_leaf`, and reversed/coarse-heavy `kl_coarse`; logged `loss_level_*` values are weighted CE losses. CLI examples: `model.loss=per_level_ce model.ce_weight_mode=equal`, `model.loss=per_level_ce model.ce_weight_mode=kl_leaf`, `model.loss=per_level_ce model.ce_weight_mode=kl_coarse`. CIFAR-100 uses `haframe_wide_resnet` from scratch; Aircraft and CUB-200 use ImageNet-pretrained `haframe_resnet50`.
+- `hiercos` uses a single fixed orthonormal Hier-COS frame with taxonomy-driven subspace scores. `model.loss: kl_reg` is the default paper-aligned KL + level regularization objective. `model.loss: per_level_kl_reg` exposes differentiable per-level losses (`coarse`, `mid`, `fine`) and uses their sum as `total`, making lex and non-lex comparisons use the same reported objective in this mode. `model.loss: per_level_ce` is a local ablation that optimizes CE on level subspace scores (`logits_per_level`). `model.loss: per_level_abs_node_ce` is a local ablation that optimizes CE on `node_logits.abs()[:, level_node_ids]` per level. `model.weight_mode` supports `equal` (exact `1/depth` per level), leaf-heavy `kl_leaf`, and reversed/coarse-heavy `kl_coarse`; the same per-level weights are used for KL target-path node weights (`kl_reg`/`per_level_kl_reg`) and CE level-loss weighting (`per_level_ce`/`per_level_abs_node_ce`). `per_level_kl_reg` additionally logs `kl_level_*` and `reg_level_*`. CLI examples: `model.loss=per_level_kl_reg`, `model.loss=per_level_ce model.weight_mode=equal`, `model.loss=per_level_ce model.weight_mode=kl_leaf`, `model.loss=per_level_abs_node_ce model.weight_mode=equal`. CIFAR-100 uses `haframe_wide_resnet` from scratch; Aircraft and CUB-200 use ImageNet-pretrained `haframe_resnet50`.
 - `hiercos_cifar100_parity` keeps this repo CIFAR hierarchy (3-level), not the paper 5-level CIFAR protocol.
 - `hiercos_cub200_parity` is a pragmatic extrapolation preset (paper does not report CUB experiments).
 
@@ -224,7 +224,7 @@ Standard logged metric keys:
 
 `topdown` metrics use taxonomy-constrained decoding. `independent` metrics use per-level argmax without hierarchy enforcement.
 
-Model-specific losses and diagnostics can add extra keys such as `loss_level_*`, `gk_loss`, `hier_loss`, `ce_loss_leaf`, or projection diagnostics. For Hier-COS, `loss_level_*` and gradient/cosine diagnostics are emitted only with `model.loss: per_level_ce`; `loss_level_*` follows `model.ce_weight_mode`.
+Model-specific losses and diagnostics can add extra keys such as `loss_level_*`, `gk_loss`, `hier_loss`, `ce_loss_leaf`, or projection diagnostics. For Hier-COS, `loss_level_*` and gradient/cosine diagnostics are emitted when `model.loss` exposes per-level losses (`per_level_kl_reg`, `per_level_ce`, `per_level_abs_node_ce`); plain `kl_reg` does not emit per-level losses. In Hier-COS, `model.weight_mode` is shared across KL target-path weighting and CE level weighting; `per_level_kl_reg` also logs `kl_level_*` and `reg_level_*`.
 
 For the full HCC diagnostic key glossary and interpretation guide, see `docs/HCC_DIAGNOSTIC_LOGS.md`.
 

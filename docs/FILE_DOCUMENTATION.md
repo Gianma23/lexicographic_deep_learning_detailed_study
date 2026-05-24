@@ -53,7 +53,7 @@ The CUB-200 and Aircraft presets mirror upstream HRN preprocessing and optimizat
 - `configs/hiercos/hiercos_cub200_parity.yaml`
 - `configs/hiercos/hiercos_aircraft_parity.yaml`
 
-These presets use the single Hier-COS implementation with a fixed orthonormal frame, taxonomy-driven subspace scores, configurable `model.loss` (`kl_reg` default or local `per_level_ce` ablation), optional CE weighting through `model.ce_weight_mode`, and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). CIFAR uses HAFrame WideResNet from scratch; Aircraft and CUB use an ImageNet-pretrained ResNet-50.
+These presets use the single Hier-COS implementation with a fixed orthonormal frame, taxonomy-driven subspace scores, configurable `model.loss` (`kl_reg` default, preferred lex mode `per_level_kl_reg`, or local CE ablations `per_level_ce` / `per_level_abs_node_ce`), shared per-level weighting through `model.weight_mode` (KL target-path and CE), and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). CIFAR uses HAFrame WideResNet from scratch; Aircraft and CUB use an ImageNet-pretrained ResNet-50.
 
 ### Templates
 
@@ -67,7 +67,7 @@ These presets use the single Hier-COS implementation with a fixed orthonormal fr
 
 ## Datasets
 
-- `datasets/__init__.py`: Dataset registry, alias resolution, transforms, collate function, and dataloader builder (including optional `crop_bottom_pixels` transform and `drop_last_eval` dataloader flag).
+- `datasets/__init__.py`: Strict dataset-id registry (`cifar-100`, `cub-200-2011`, `fgvc-aircraft`, `inat21-mini`), transforms, collate function, and dataloader builder (including optional `crop_bottom_pixels` transform and `drop_last_eval` dataloader flag).
 - `datasets/base.py`: Shared hierarchical dataset base class, train/val splitting, normalized JSON annotations, label remapping, and taxonomy inference.
 - `datasets/cifar100.py`: CIFAR-100 adapter. Supports 2-level `coarse -> fine` and 3-level `super -> coarse -> fine` hierarchies.
 - `datasets/cub.py`: CUB-200-2011 adapter for folder-based and official metadata layouts.
@@ -126,7 +126,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 - `models/hiercos/__init__.py`: Public Hier-COS exports.
 - `models/hiercos/factory.py`: Builds `HierCosModel` from config and taxonomy metadata.
 - `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces and an upstream-style fixed random orthonormal frame.
-- `models/hiercos/losses.py`: Hier-COS loss selection between paper-aligned KL + level regularization (`kl_reg`) and local weighted three-level CE ablation (`per_level_ce`, which exposes weighted CE tensors for gradient diagnostics).
+- `models/hiercos/losses.py`: Hier-COS loss selection between paper-aligned KL + level regularization (`kl_reg`), lex-ready per-level KL+reg decomposition (`per_level_kl_reg`), and local weighted three-level CE ablations (`per_level_ce` on subspace scores, `per_level_abs_node_ce` on `abs(node_logits)` node slices).
 
 ## Training
 

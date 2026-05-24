@@ -4,7 +4,9 @@ import torch
 
 
 def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[Dict] = None) -> torch.nn.Module:
-    name = str(cfg.model.name).lower()
+    name = cfg.model.name
+    if not isinstance(name, str):
+        raise ValueError("model.name must be a string.")
     if name == "hcast":
         from .hcast.factory import build_model as build_hcast
 
@@ -38,7 +40,9 @@ def compute_loss(
     Tuple[torch.Tensor, Dict[str, float]],
     Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
 ]:
-    name = str(cfg.model.name).lower()
+    name = cfg.model.name
+    if not isinstance(name, str):
+        raise ValueError("model.name must be a string.")
     if name == "hcast":
         from .hcast.losses import compute_loss as loss_hcast
 

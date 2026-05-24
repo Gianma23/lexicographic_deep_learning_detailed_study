@@ -1,6 +1,6 @@
 # Template for the `dataset:` section in experiment configs.
 dataset:
-  name: cifar-100                    # Dataset id/alias (e.g. cifar-100, cub-200-2011, fgvc-aircraft, inat21-mini)
+  name: cifar-100                    # Dataset id (strict): cifar-100 | cub-200-2011 | fgvc-aircraft | inat21-mini
   root: ./data/cifar100              # Root folder where images/annotations are stored
   hierarchy_depth: 3                 # Number of hierarchy levels expected in labels
   image_size: 32                     # Target input size (single int; square image)

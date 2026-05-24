@@ -1,7 +1,7 @@
 model:
   name: hiercos
   loss: kl_reg
-  ce_weight_mode: equal
+  weight_mode: kl_leaf
   variant: haframe_resnet50
   pool: average
   pretrained: true
@@ -61,7 +61,7 @@ train:
   epochs: 100
   seed: 0
   device: cuda
-  amp: true
+  amp: false
   resume: ""
   output_dir: /scratch/g.saggini1/outputs/hiercos_cub200
   smoothing: 0.0

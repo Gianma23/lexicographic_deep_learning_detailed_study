@@ -53,7 +53,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         num_blocks=int(cfg.model.get("num_blocks", 4)),
         initial_filters=int(cfg.model.get("initial_filters", 64)),
         filter_increment=int(cfg.model.get("filter_increment", 2)),
-        backbone_name=str(cfg.model.get("backbone_net", "custom")),
+        backbone_name=cfg.model.get("backbone_net", "custom"),
         backbone_weights=cfg.model.get("backbone_net_weights", None),
         taxonomy_temperature=float(cfg.model.get("taxonomy_temperature", 0.5)),
         mask_threshold_high=float(cfg.model.get("mask_threshold_high", 0.9)),
@@ -62,6 +62,6 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         mask_center=float(cfg.model.get("mask_center", 0.5)),
         attn_heads=int(cfg.model.get("attn_heads", 16)),
         attn_dropout=float(cfg.model.get("attn_dropout", 0.0)),
-        attn_postprocess=str(cfg.model.get("attn_postprocess", "layernorm")),
+        attn_postprocess=cfg.model.get("attn_postprocess", "layernorm"),
         input_size=input_size,
     )

@@ -103,7 +103,9 @@ def load_finetune_checkpoint(cfg: Any, model: torch.nn.Module) -> bool:
     if not finetune_path:
         return False
 
-    model_name = str(model_cfg.get("name", "")).lower()
+    model_name = model_cfg.get("name", "")
+    if not isinstance(model_name, str):
+        raise ValueError("model.name must be a string.")
     if model_name == "hcast":
         inner = getattr(model, "model", None)
         if not isinstance(inner, torch.nn.Module):

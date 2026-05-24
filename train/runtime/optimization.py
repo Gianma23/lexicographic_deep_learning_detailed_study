@@ -87,7 +87,9 @@ class HierCosCosineScheduler:
 
 def build_optimizer(cfg: Any, model: torch.nn.Module):
     """Build an optimizer from cfg.optim."""
-    name = str(cfg.optim.name).lower()
+    name = cfg.optim.name
+    if not isinstance(name, str):
+        raise ValueError("optim.name must be a string.")
     lr = float(cfg.optim.lr)
     wd = float(cfg.optim.get("weight_decay", 0.0))
     momentum = float(cfg.optim.get("momentum", 0.0))
@@ -124,7 +126,9 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
         return torch.optim.AdamW(model.parameters(), **kwargs)
     if name == "sgd":
         model_cfg = section_to_dict(getattr(cfg, "model", None))
-        model_name = str(model_cfg.get("name", "")).strip().lower()
+        model_name = model_cfg.get("name", "")
+        if not isinstance(model_name, str):
+            raise ValueError("model.name must be a string.")
         if model_name in {"hiercos", "hrn"} and hasattr(model, "parameter_groups"):
             if model_name == "hrn":
                 lr_scale = float(model_cfg.get("trunk_lr_scale", 0.1))
@@ -155,7 +159,9 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
 def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
     """Build an LR scheduler from cfg.scheduler."""
     sched_cfg = section_to_dict(cfg.scheduler)
-    name = str(sched_cfg.get("name", "none")).lower()
+    name = sched_cfg.get("name", "none")
+    if not isinstance(name, str):
+        raise ValueError("scheduler.name must be a string.")
     if name == "none":
         return None
     if name == "hiercos_cosine":
@@ -166,7 +172,9 @@ def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
             base_lr=base_lr,
         )
     model_cfg = section_to_dict(getattr(cfg, "model", None))
-    model_name = str(model_cfg.get("name", "")).strip().lower()
+    model_name = model_cfg.get("name", "")
+    if not isinstance(model_name, str):
+        raise ValueError("model.name must be a string.")
     if model_name == "hrn" and name == "cosine":
         base_lr = float(sched_cfg.get("base_lr", cfg.optim.get("lr", 0.002)))
         return HierCosCosineScheduler(
@@ -183,10 +191,9 @@ def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
         for key, value in sched_cfg.items()
         if key not in {"name", "use_timm", "step_size", "gamma"}
     }
-    normalized_extra = {str(key).replace("-", "_"): value for key, value in extra.items()}
 
     allowed = set(inspect.signature(timm_create_scheduler_v2).parameters.keys())
-    filtered = {key: value for key, value in normalized_extra.items() if key in allowed}
+    filtered = {key: value for key, value in extra.items() if key in allowed}
     scheduler, _ = timm_create_scheduler_v2(
         optimizer,
         sched=name,

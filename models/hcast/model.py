@@ -43,7 +43,11 @@ class HCASTModel(nn.Module):
 
         model_kwargs = model_kwargs or {}
         segments_cfg = segments_cfg or {}
-        self.segment_mode = str(segments_cfg.get("mode", "grid")).strip().lower()
+        self.segment_mode = segments_cfg.get("mode", "grid")
+        if not isinstance(self.segment_mode, str):
+            raise ValueError("model.segments.mode must be a string.")
+        if self.segment_mode not in {"grid", "seeds"}:
+            raise ValueError("model.segments.mode must be one of ['grid', 'seeds'].")
         self.segment_patch_size = int(segments_cfg.get("patch_size", 8))
         self.segment_mean = list(segments_cfg.get("mean", [0.485, 0.456, 0.406]))
         self.segment_std = list(segments_cfg.get("std", [0.229, 0.224, 0.225]))
@@ -125,7 +129,9 @@ class HCASTModel(nn.Module):
         eps = float(cfg.get("eps", 1e-12))
         if eps <= 0.0:
             eps = 1e-12
-        alpha_schedule = str(cfg.get("alpha_schedule", "exp")).strip().lower()
+        alpha_schedule = cfg.get("alpha_schedule", "exp")
+        if not isinstance(alpha_schedule, str):
+            raise ValueError("hcc.alpha_schedule must be a string.")
         if alpha_schedule not in {"exp", "tanh", "linear", "step"}:
             raise ValueError(
                 "hcc.alpha_schedule must be one of ['exp', 'tanh', 'linear', 'step']."
@@ -177,7 +183,9 @@ class HCASTModel(nn.Module):
     def _hcc_temperature_and_alpha(self) -> Tuple[float, float]:
         base_temperature = float(self.hcc_cfg["temperature"])
         eps = float(self.hcc_cfg["eps"])
-        alpha_schedule = str(self.hcc_cfg.get("alpha_schedule", "exp")).strip().lower()
+        alpha_schedule = self.hcc_cfg.get("alpha_schedule", "exp")
+        if not isinstance(alpha_schedule, str):
+            raise ValueError("hcc.alpha_schedule must be a string.")
         alpha_start_epoch = int(self.hcc_cfg.get("alpha_start_epoch", 0))
         if alpha_start_epoch < 0:
             alpha_start_epoch = 0

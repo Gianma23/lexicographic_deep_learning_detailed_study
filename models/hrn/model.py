@@ -86,7 +86,9 @@ class HRNModel(nn.Module):
         if len(self.num_classes_per_level) != 3:
             raise ValueError(f"HRN expects exactly 3 hierarchy levels, got: {self.num_classes_per_level}")
 
-        backbone_name = str(backbone).strip().lower()
+        backbone_name = backbone
+        if not isinstance(backbone_name, str):
+            raise ValueError("HRN model.backbone must be a string.")
         if backbone_name != "resnet50":
             raise ValueError(f"Unsupported HRN backbone '{backbone}'. Only 'resnet50' is supported.")
 

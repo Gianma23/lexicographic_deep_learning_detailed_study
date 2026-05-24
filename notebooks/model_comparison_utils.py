@@ -31,19 +31,11 @@ _ACC_LEVEL_TOPDOWN_PATTERN = re.compile(r"^acc_level_topdown_(\d+)$")
 _ACC_LEVEL_INDEPENDENT_PATTERN = re.compile(r"^acc_level_independent_(\d+)$")
 _LOSS_LEVEL_PATTERN = re.compile(r"^loss_level_(\d+)$")
 
-_DATASET_ALIASES = {
-    "cifar100": "cifar-100",
-    "cifar-100": "cifar-100",
-    "cub": "cub-200-2011",
-    "cub200": "cub-200-2011",
-    "cub-200": "cub-200-2011",
-    "cub-200-2011": "cub-200-2011",
-    "aircraft": "fgvc-aircraft",
-    "fgvc-aircraft": "fgvc-aircraft",
-    "inat": "inat21-mini",
-    "inat21mini": "inat21-mini",
-    "inat21-mini": "inat21-mini",
-    "inat21_mini": "inat21-mini",
+_DATASET_IDS = {
+    "cifar-100",
+    "cub-200-2011",
+    "fgvc-aircraft",
+    "inat21-mini",
 }
 
 _DATASET_DISPLAY = {
@@ -53,14 +45,12 @@ _DATASET_DISPLAY = {
     "inat21-mini": "iNat21-Mini",
 }
 
-_MODEL_ALIASES = {
-    "hcast": "hcast",
-    "hrn": "hrn",
-    "ht_capsnet": "ht_capsnet",
-    "htcapsnet": "ht_capsnet",
-    "capsnet": "ht_capsnet",
-    "lhdnn": "lhdnn",
-    "hiercos": "hiercos",
+_MODEL_IDS = {
+    "hcast",
+    "hrn",
+    "ht_capsnet",
+    "lhdnn",
+    "hiercos",
 }
 
 _MODEL_DISPLAY = {
@@ -80,10 +70,10 @@ _DEFAULT_MODEL_COLORS = {
 }
 
 _DATASET_RUN_NAME_TOKENS = {
-    "cifar-100": ("cifar100", "cifar-100"),
-    "cub-200-2011": ("cub200", "cub-200", "cub-200-2011", "cub"),
-    "fgvc-aircraft": ("aircraft", "fgvc-aircraft", "fgvcaircraft"),
-    "inat21-mini": ("inat", "inat21mini", "inat21-mini", "inat21_mini"),
+    "cifar-100": ("cifar-100",),
+    "cub-200-2011": ("cub-200-2011",),
+    "fgvc-aircraft": ("fgvc-aircraft",),
+    "inat21-mini": ("inat21-mini",),
 }
 
 
@@ -124,25 +114,15 @@ def _as_float_dict(metrics: Any) -> Dict[str, float]:
     return out
 
 
-def _canonical_key(raw_name: Optional[str]) -> Optional[str]:
-    if raw_name is None:
-        return None
-    key = "".join(ch for ch in str(raw_name).strip().lower() if ch.isalnum())
-    return key or None
-
-
 def canonical_dataset_name(name: Optional[str]) -> str:
-    canonical = _canonical_key(name)
-    if not canonical:
-        return "unknown-dataset"
-
-    if canonical in _DATASET_ALIASES:
-        return _DATASET_ALIASES[canonical]
-
-    hyphenated = str(name).strip().lower().replace("_", "-").replace(" ", "")
-    if hyphenated in _DATASET_ALIASES:
-        return _DATASET_ALIASES[hyphenated]
-    return hyphenated or "unknown-dataset"
+    if not isinstance(name, str):
+        raise ValueError("dataset_name must be a string.")
+    if name in _DATASET_IDS:
+        return name
+    raise ValueError(
+        f"Unsupported dataset_name '{name}'. "
+        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat21-mini']."
+    )
 
 
 def dataset_display_name(name: Optional[str]) -> str:
@@ -151,15 +131,14 @@ def dataset_display_name(name: Optional[str]) -> str:
 
 
 def canonical_model_name(name: Optional[str]) -> str:
-    canonical = _canonical_key(name)
-    if not canonical:
-        return "unknown-model"
-
-    if canonical in _MODEL_ALIASES:
-        return _MODEL_ALIASES[canonical]
-
-    underscored = str(name).strip().lower().replace("-", "_").replace(" ", "_")
-    return _MODEL_ALIASES.get(underscored, underscored)
+    if not isinstance(name, str):
+        raise ValueError("model_name must be a string.")
+    if name in _MODEL_IDS:
+        return name
+    raise ValueError(
+        f"Unsupported model_name '{name}'. "
+        "Expected one of ['hcast', 'hrn', 'ht_capsnet', 'lhdnn', 'hiercos']."
+    )
 
 
 def model_display_name(name: Optional[str]) -> str:
@@ -167,40 +146,25 @@ def model_display_name(name: Optional[str]) -> str:
     return _MODEL_DISPLAY.get(canonical, canonical)
 
 
-def infer_model_name_from_run_name(run_name: str) -> str:
-    normalized = str(run_name).strip().lower()
-    for raw_alias, canonical in _MODEL_ALIASES.items():
-        token = str(raw_alias).replace("_", "")
-        if token in normalized.replace("_", ""):
-            return canonical
-    return "unknown-model"
-
-
 def _model_run_name_tokens(model_name: str) -> List[str]:
-    canonical = canonical_model_name(model_name)
-    tokens = {canonical}
-    for raw_alias, mapped in _MODEL_ALIASES.items():
-        if mapped == canonical:
-            tokens.add(str(raw_alias).strip().lower())
-    return sorted(tokens)
+    return [canonical_model_name(model_name)]
 
 
 def _dataset_run_name_tokens(dataset_name: str) -> List[str]:
     canonical = canonical_dataset_name(dataset_name)
     explicit = _DATASET_RUN_NAME_TOKENS.get(canonical, ())
     if explicit:
-        return sorted({str(token).strip().lower() for token in explicit if str(token).strip()})
-
-    fallback = str(canonical).strip().lower()
-    compact = "".join(ch for ch in fallback if ch.isalnum())
-    return sorted({fallback, compact} - {""})
+        return [token for token in explicit if isinstance(token, str) and token]
+    return [canonical]
 
 
 def matches_model_dataset_run_name(run_data: Mapping[str, Any]) -> bool:
-    run_name = str(run_data.get("run_name", "")).strip().lower()
-    model_name = str(run_data.get("model_name", "")).strip().lower()
-    dataset_name = str(run_data.get("dataset_name", "")).strip().lower()
+    run_name = run_data.get("run_name", "")
+    model_name = run_data.get("model_name", "")
+    dataset_name = run_data.get("dataset_name", "")
 
+    if not isinstance(run_name, str) or not isinstance(model_name, str) or not isinstance(dataset_name, str):
+        return False
     if not run_name or not model_name or not dataset_name:
         return False
 
@@ -590,8 +554,6 @@ def parse_run(run_dir: Path) -> RunData:
 
     model_raw = cfg.get("model", {}).get("name")
     model_name = canonical_model_name(model_raw)
-    if model_name == "unknown-model":
-        model_name = infer_model_name_from_run_name(run_path.name)
 
     dataset_raw = cfg.get("dataset", {}).get("name")
 
@@ -732,7 +694,7 @@ def _manual_specs_by_dir(
 
 def _apply_manual_run_spec(run_data: RunData, spec: Mapping[str, Any]) -> None:
     if "dataset_name" in spec and spec.get("dataset_name") is not None:
-        dataset_name = canonical_dataset_name(str(spec["dataset_name"]))
+        dataset_name = canonical_dataset_name(spec["dataset_name"])
         run_data["dataset_name"] = dataset_name
         dataset_label = spec.get("dataset_label")
         run_data["dataset_label"] = str(dataset_label) if dataset_label is not None else dataset_display_name(dataset_name)
@@ -740,7 +702,7 @@ def _apply_manual_run_spec(run_data: RunData, spec: Mapping[str, Any]) -> None:
         run_data["dataset_label"] = str(spec["dataset_label"])
 
     if "model_name" in spec and spec.get("model_name") is not None:
-        model_name = canonical_model_name(str(spec["model_name"]))
+        model_name = canonical_model_name(spec["model_name"])
         run_data["model_name"] = model_name
         model_label = spec.get("model_label")
         run_data["model_label"] = str(model_label) if model_label is not None else model_display_name(model_name)

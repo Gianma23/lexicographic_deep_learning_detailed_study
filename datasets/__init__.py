@@ -21,30 +21,27 @@ from .inat import INatDataset
 
 
 _DATASET_REGISTRY = {
-    "cub": CUBDataset,
-    "aircraft": AircraftDataset,
-    "inat": INatDataset,
-    "cifar100": CIFAR100Dataset,
-}
-
-_DATASET_ALIASES = {
-    "cifar-100": "cifar100",
-    "cub-200-2011": "cub",
-    "fgvc-aircraft": "aircraft",
-    "inat21-mini": "inat",
-    "inat21_mini": "inat",
+    "cub-200-2011": CUBDataset,
+    "fgvc-aircraft": AircraftDataset,
+    "inat21-mini": INatDataset,
+    "cifar-100": CIFAR100Dataset,
 }
 
 
 def _interp_mode_from_name(name: str) -> InterpolationMode:
-    value = str(name).strip().lower()
-    if value == "nearest":
+    if not isinstance(name, str):
+        raise ValueError(
+            f"dataset interpolation mode must be a string. Got {type(name)!r}."
+        )
+    if name == "nearest":
         return InterpolationMode.NEAREST
-    if value == "bilinear":
+    if name == "bilinear":
         return InterpolationMode.BILINEAR
-    if value == "bicubic":
+    if name == "bicubic":
         return InterpolationMode.BICUBIC
-    return InterpolationMode.BICUBIC
+    raise ValueError(
+        f"Unsupported interpolation mode '{name}'. Expected one of: nearest, bilinear, bicubic."
+    )
 
 
 class _StandardScalerNormalize:
@@ -134,7 +131,9 @@ def build_transforms(cfg: Any, split: str):
     image_size = int(dataset_cfg["image_size"])
     mean = list(dataset_cfg.get("mean", [0.485, 0.456, 0.406]))
     std = list(dataset_cfg.get("std", [0.229, 0.224, 0.225]))
-    normalization_mode = str(transforms_cfg["normalization"]).strip().lower()
+    normalization_mode = transforms_cfg["normalization"]
+    if not isinstance(normalization_mode, str):
+        raise ValueError("dataset.transforms.normalization must be a string.")
     if normalization_mode not in {"torchvision", "standardscaler", "minmax", "none"}:
         raise ValueError(
             f"Unsupported dataset.transforms.normalization='{normalization_mode}'. "
@@ -147,7 +146,10 @@ def build_transforms(cfg: Any, split: str):
 
     # Simple fixed-resize-only pipeline used for HT-CapsNet parity runs.
     if bool(transforms_cfg.get("fixed_resize_only", False)):
-        resize_interp = _interp_mode_from_name(str(transforms_cfg.get("fixed_resize_interpolation", "bilinear")))
+        fixed_resize_interpolation = transforms_cfg.get("fixed_resize_interpolation", "bilinear")
+        if not isinstance(fixed_resize_interpolation, str):
+            raise ValueError("dataset.transforms.fixed_resize_interpolation must be a string.")
+        resize_interp = _interp_mode_from_name(fixed_resize_interpolation)
         return transforms.Compose(
             [
                 transforms.Resize((image_size, image_size), interpolation=resize_interp),
@@ -174,28 +176,43 @@ def build_transforms(cfg: Any, split: str):
         timm_cfg = transforms_cfg["timm"]
         random_erase_cfg = timm_cfg["random_erase"]
         color_jitter = float(timm_cfg["color_jitter"])
-        auto_augment = str(timm_cfg["auto_augment"])
-        train_interpolation = str(timm_cfg["train_interpolation"])
+        auto_augment = timm_cfg["auto_augment"]
+        if not isinstance(auto_augment, str):
+            raise ValueError("dataset.transforms.timm.auto_augment must be a string.")
+        train_interpolation = timm_cfg["train_interpolation"]
+        if not isinstance(train_interpolation, str):
+            raise ValueError("dataset.transforms.timm.train_interpolation must be a string.")
         reprob = float(random_erase_cfg["prob"])
-        remode = str(random_erase_cfg["mode"])
+        remode = random_erase_cfg["mode"]
+        if not isinstance(remode, str):
+            raise ValueError("dataset.transforms.timm.random_erase.mode must be a string.")
         recount = int(random_erase_cfg["count"])
         timm_small_image_crop_padding = int(timm_cfg.get("small_image_random_crop_padding", 4))
     else:
-        manual_crop_mode = str(manual_cfg["crop_mode"]).strip().lower()
+        manual_crop_mode = manual_cfg["crop_mode"]
+        if not isinstance(manual_crop_mode, str):
+            raise ValueError("dataset.transforms.manual.crop_mode must be a string.")
         manual_crop_padding = int(manual_cfg.get("random_crop_padding", 4))
-        manual_crop_padding_mode = str(manual_cfg.get("random_crop_padding_mode", "constant")).strip().lower()
+        manual_crop_padding_mode = manual_cfg.get("random_crop_padding_mode", "constant")
+        if not isinstance(manual_crop_padding_mode, str):
+            raise ValueError("dataset.transforms.manual.random_crop_padding_mode must be a string.")
         valid_padding_modes = {"constant", "edge", "reflect", "symmetric"}
         if manual_crop_padding_mode not in valid_padding_modes:
             raise ValueError(
                 f"Unsupported dataset.transforms.manual.random_crop_padding_mode='{manual_crop_padding_mode}'. "
                 "Expected one of: constant, edge, reflect, symmetric."
             )
-        manual_interpolation = str(manual_cfg.get("interpolation", "bicubic"))
+        manual_interpolation = manual_cfg.get("interpolation", "bicubic")
+        if not isinstance(manual_interpolation, str):
+            raise ValueError("dataset.transforms.manual.interpolation must be a string.")
         manual_resize_before_crop = bool(manual_cfg.get("resize_before_crop", False))
         manual_resize_before_crop_size = int(manual_cfg.get("resize_before_crop_size", image_size))
-        manual_resize_before_crop_interpolation = str(
-            manual_cfg.get("resize_before_crop_interpolation", manual_interpolation)
+        manual_resize_before_crop_interpolation = manual_cfg.get(
+            "resize_before_crop_interpolation",
+            manual_interpolation,
         )
+        if not isinstance(manual_resize_before_crop_interpolation, str):
+            raise ValueError("dataset.transforms.manual.resize_before_crop_interpolation must be a string.")
         manual_rrc_scale_raw = manual_cfg.get("random_resized_crop_scale", [0.08, 1.0])
         manual_rrc_ratio_raw = manual_cfg.get("random_resized_crop_ratio", [3.0 / 4.0, 4.0 / 3.0])
         if len(manual_rrc_scale_raw) != 2:
@@ -209,7 +226,9 @@ def build_transforms(cfg: Any, split: str):
             raise ValueError("dataset.transforms.manual.random_horizontal_flip_prob must be in [0, 1].")
 
     eval_cfg = transforms_cfg["eval"]
-    eval_resize_mode = str(eval_cfg["resize_mode"]).strip().lower()
+    eval_resize_mode = eval_cfg["resize_mode"]
+    if not isinstance(eval_resize_mode, str):
+        raise ValueError("dataset.transforms.eval.resize_mode must be a string.")
     eval_crop_ratio = float(eval_cfg["crop_ratio"])
     if eval_crop_ratio <= 0:
         raise ValueError("dataset.transforms.eval.crop_ratio must be > 0.")
@@ -219,7 +238,9 @@ def build_transforms(cfg: Any, split: str):
         if eval_resize_size <= 0:
             raise ValueError("dataset.transforms.eval.resize_size must be > 0 when provided.")
     eval_resize_square = bool(eval_cfg.get("resize_square", False))
-    eval_interpolation = str(eval_cfg["interpolation"]).strip().lower()
+    eval_interpolation = eval_cfg["interpolation"]
+    if not isinstance(eval_interpolation, str):
+        raise ValueError("dataset.transforms.eval.interpolation must be a string.")
 
     # TRAIN transforms
     if split == "train":
@@ -355,12 +376,12 @@ def _seed_worker(worker_id: int) -> None:
 
 
 def build_dataloader(cfg: Any, split: str):
-    dataset_name_raw = str(cfg.dataset.name).lower()
-    dataset_name = _DATASET_ALIASES.get(dataset_name_raw, dataset_name_raw)
-
+    dataset_name = cfg.dataset.name
+    if not isinstance(dataset_name, str):
+        raise ValueError("dataset.name must be a string.")
     if dataset_name not in _DATASET_REGISTRY:
-        supported = sorted(set(_DATASET_REGISTRY.keys()) | set(_DATASET_ALIASES.keys()))
-        raise ValueError(f"Unsupported dataset '{dataset_name_raw}'. Expected one of {supported}")
+        supported = sorted(_DATASET_REGISTRY.keys())
+        raise ValueError(f"Unsupported dataset '{dataset_name}'. Expected one of {supported}")
 
     dataset_cls = _DATASET_REGISTRY[dataset_name]
     dataset = dataset_cls(cfg=cfg, split=split, transform=build_transforms(cfg, split))
