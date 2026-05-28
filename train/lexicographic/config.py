@@ -22,7 +22,7 @@ def _resolve_hiercos_loss_mode(model_cfg) -> str:
         raise ValueError(
             "train.lexicographic.enabled=true with model.name='hiercos' requires "
             "scalar `model.loss` set to one of "
-            "['per_level_kl_reg', 'per_level_ce', 'per_level_abs_node_ce']."
+            "['per_level_kl_reg', 'per_level_ce']."
         )
     mode = raw_mode
     if mode == "kl_reg":
@@ -31,11 +31,9 @@ def _resolve_hiercos_loss_mode(model_cfg) -> str:
         return "per_level_kl_reg"
     if mode == "per_level_ce":
         return "per_level_ce"
-    if mode == "per_level_abs_node_ce":
-        return "per_level_abs_node_ce"
     raise ValueError(
         f"Unsupported Hier-COS model.loss '{raw_mode}'. "
-        "Expected one of ['kl_reg', 'per_level_kl_reg', 'per_level_ce', 'per_level_abs_node_ce']."
+        "Expected one of ['kl_reg', 'per_level_kl_reg', 'per_level_ce']."
     )
 
 
@@ -78,12 +76,11 @@ def validate_lexicographic_requirements(cfg: Any, level_losses: List[torch.Tenso
     if model_name == "hiercos" and _resolve_hiercos_loss_mode(model_cfg) not in {
         "per_level_kl_reg",
         "per_level_ce",
-        "per_level_abs_node_ce",
     }:
         raise ValueError(
             "train.lexicographic.enabled=true with model.name='hiercos' requires "
-            "`model.loss: per_level_kl_reg`, `model.loss: per_level_ce`, or "
-            "`model.loss: per_level_abs_node_ce`; plain `kl_reg` does not expose "
+            "`model.loss: per_level_kl_reg` or `model.loss: per_level_ce`; "
+            "plain `kl_reg` does not expose "
             "differentiable per-level losses."
         )
 

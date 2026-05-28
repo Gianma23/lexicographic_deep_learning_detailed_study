@@ -65,6 +65,7 @@ class HCASTModel(nn.Module):
             parsed_train_epochs = 1
         self._train_epochs = max(parsed_train_epochs, 1)
         self.hcc_cfg = self._build_hcc_cfg(hcc_cfg)
+        self._hcc_final_test_active = False
         self.hcc_projector: Optional[HierarchicalAffineProjector] = None
 
         if self.hcc_cfg["enabled"]:
@@ -154,6 +155,7 @@ class HCASTModel(nn.Module):
         alpha_tanh_center = float(cfg.get("alpha_tanh_center", 0.5))
         if alpha_tanh_center <= 0.0 or alpha_tanh_center >= 1.0:
             alpha_tanh_center = 0.5
+        final_test_only = bool(cfg.get("final_test_only", False))
 
         return {
             "enabled": enabled,
@@ -164,6 +166,7 @@ class HCASTModel(nn.Module):
             "alpha_ramp_epochs": alpha_ramp_epochs,
             "alpha_tanh_beta": alpha_tanh_beta,
             "alpha_tanh_center": alpha_tanh_center,
+            "final_test_only": final_test_only,
         }
 
     def set_epoch(self, epoch: int) -> None:
@@ -173,10 +176,15 @@ class HCASTModel(nn.Module):
             epoch_value = 0
         self._current_epoch = max(epoch_value, 0)
 
+    def set_hcc_final_test_active(self, active: bool) -> None:
+        self._hcc_final_test_active = bool(active)
+
     def _hcc_enabled(self) -> bool:
         if not self.hcc_cfg["enabled"]:
             return False
         if self.hcc_projector is None:
+            return False
+        if self.hcc_cfg.get("final_test_only", False) and not self._hcc_final_test_active:
             return False
         return True
 
@@ -343,7 +351,10 @@ class HCASTModel(nn.Module):
         effective_logits_per_level = None
         hcc_diagnostics = None
         if self._hcc_enabled():
-            temperature, alpha = self._hcc_temperature_and_alpha()
+            if self.hcc_cfg.get("final_test_only", False) and self._hcc_final_test_active:
+                temperature, alpha = 1.0, 1.0
+            else:
+                temperature, alpha = self._hcc_temperature_and_alpha()
             eps = float(self.hcc_cfg["eps"])
             projector_output = None
 

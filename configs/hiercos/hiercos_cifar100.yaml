@@ -1,6 +1,6 @@
 model:
   name: hiercos
-  loss: kl_reg
+  loss: per_level_kl_reg
   weight_mode: kl_leaf
   variant: haframe_wide_resnet
   alpha: 0.05
@@ -62,7 +62,7 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100
+  output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100_per_level_kl_reg_kl_leaf_nolex
   smoothing: 0.0
 
 optim:

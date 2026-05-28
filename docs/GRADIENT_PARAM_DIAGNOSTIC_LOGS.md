@@ -18,7 +18,7 @@ This file documents the `train_metrics` keys written to `run_log.jsonl` by the *
 
 Important: mask-dependent keys are emitted only when the corresponding mask is active (`any(mask)` in code).
 Pairwise cosine keys listed below are emitted for every epoch summary.
-For Hier-COS, these diagnostics require a loss mode with differentiable per-level losses (`model.loss: per_level_kl_reg`, `per_level_ce`, or `per_level_abs_node_ce`); plain `model.loss: kl_reg` does not expose per-level loss tensors. `model.weight_mode` is shared across Hier-COS KL target-path weighting and CE level-loss weighting; `per_level_kl_reg` still uses KL+reg per-level decomposition.
+For Hier-COS, these diagnostics require a loss mode with differentiable per-level losses (`model.loss: per_level_kl_reg` or `per_level_ce`); plain `model.loss: kl_reg` does not expose per-level loss tensors. `model.weight_mode` is shared across Hier-COS KL target-path weighting and CE level-loss weighting; `per_level_kl_reg` still uses KL+reg per-level decomposition.
 
 ## A) Standard Trunk Metrics (non-lex and lex)
 

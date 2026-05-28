@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS abs-node CE lexicographic variants on all datasets:
-# - model.loss=per_level_abs_node_ce
-# - model.weight_mode in {equal, kl_leaf, kl_coarse}
-# - train.lexicographic.enabled=true (start epoch 0)
-# for: cifar100, cub200, aircraft.
+# Runs three explicit Hier-COS final-only ablations:
+# - model.loss=per_level_kl_reg
+# - model.transform_mode=final_only
+# - train.lexicographic.enabled=true, start_epoch=0
+# - model.weight_mode:
+#   - cub200: kl_leaf
+#   - cifar100/aircraft: equal
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -39,22 +41,8 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_abs_ce_lex_grid.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_final_only_per_level_kl_reg_grid.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
-
-DATASETS=(cifar100 cub200 aircraft)
-
-config_for_dataset() {
-  case "$1" in
-    cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
-    cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
-    aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
-    *)
-      echo "Unknown dataset: $1" >&2
-      exit 1
-      ;;
-  esac
-}
 
 run_train() {
   local config="$1"
@@ -106,48 +94,37 @@ run_train() {
   fi
 }
 
-run_output_dir() {
-  local ds="$1"
-  local ce_mode="$2"
-
-  case "$ce_mode" in
-    equal) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_abs_node_equal" ;;
-    kl_leaf) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_abs_node_kl_leaf" ;;
-    kl_coarse) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_abs_node_kl_coarse" ;;
-    *)
-      echo "Unknown CE weight mode: $ce_mode" >&2
-      exit 1
-      ;;
-  esac
-}
-
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 
-for ds in "${DATASETS[@]}"; do
-  cfg="$(config_for_dataset "$ds")"
+# 1) CIFAR-100 (equal weights)
+run_train "configs/hiercos/hiercos_cifar100.yaml" \
+  "$OUTPUTS_ROOT/hiercos_cifar100_per_level_kl_reg_equal_final_only" \
+  "model.loss=per_level_kl_reg" \
+  "model.weight_mode=equal" \
+  "model.transform_mode=final_only" \
+  "train.lexicographic.enabled=true" \
+  "train.lexicographic.start_epoch=0"
 
-  # abs-node CE with all supported CE weight modes + lexicographic mode
-  run_train "$cfg" "$(run_output_dir "$ds" equal)" \
-    "model.loss=per_level_abs_node_ce" \
-    "model.weight_mode=equal" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
+# 2) CUB-200 (kl_leaf weights)
+run_train "configs/hiercos/hiercos_cub200.yaml" \
+  "$OUTPUTS_ROOT/hiercos_cub200_per_level_kl_reg_kl_leaf_final_only" \
+  "model.loss=per_level_kl_reg" \
+  "model.weight_mode=kl_leaf" \
+  "model.transform_mode=final_only" \
+  "train.lexicographic.enabled=true" \
+  "train.lexicographic.start_epoch=0"
 
-  run_train "$cfg" "$(run_output_dir "$ds" kl_leaf)" \
-    "model.loss=per_level_abs_node_ce" \
-    "model.weight_mode=kl_leaf" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
-
-  run_train "$cfg" "$(run_output_dir "$ds" kl_coarse)" \
-    "model.loss=per_level_abs_node_ce" \
-    "model.weight_mode=kl_coarse" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
-done
+# 3) FGVC-Aircraft (equal weights)
+run_train "configs/hiercos/hiercos_aircraft.yaml" \
+  "$OUTPUTS_ROOT/hiercos_aircraft_per_level_kl_reg_equal_final_only" \
+  "model.loss=per_level_kl_reg" \
+  "model.weight_mode=equal" \
+  "model.transform_mode=final_only" \
+  "train.lexicographic.enabled=true" \
+  "train.lexicographic.start_epoch=0"
 
 if [[ "$DRY_RUN" != "1" ]]; then
   while (( "$(jobs -pr | wc -l)" > 0 )); do
@@ -160,4 +137,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS abs-node CE lex runs.\n'
+printf 'Completed all requested Hier-COS final-only runs.\n'

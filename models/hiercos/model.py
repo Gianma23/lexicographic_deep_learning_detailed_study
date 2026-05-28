@@ -429,6 +429,7 @@ class HierCosModel(nn.Module):
         num_classes_per_level: List[int],
         taxonomy: Optional[Dict[str, Any]],
         variant: str = "haframe_resnet50",
+        transform_mode: str = "full",
         pretrained: bool = True,
         pool: str = "max",
         backbone_lr_scale: float = 0.1,
@@ -464,6 +465,16 @@ class HierCosModel(nn.Module):
         if not isinstance(variant, str):
             raise ValueError("Hier-COS `model.variant` must be a string.")
         self.variant = variant
+
+        if not isinstance(transform_mode, str):
+            raise ValueError("Hier-COS `model.transform_mode` must be a string.")
+        self.transform_mode = transform_mode
+        if self.transform_mode not in {"full", "bn_linear", "final_only"}:
+            raise ValueError(
+                f"Unsupported Hier-COS model.transform_mode '{self.transform_mode}'. "
+                "Expected one of ['full', 'bn_linear', 'final_only']."
+            )
+
         if self.variant == "haframe_wide_resnet":
             self.backbone = _WideResNetNodeBackbone(
                 out_dim=self.total_nodes,
@@ -483,19 +494,31 @@ class HierCosModel(nn.Module):
                 "Expected one of ['haframe_wide_resnet', 'haframe_resnet50']."
             )
 
-        self.f_theta = self._build_transformation_module(self.total_nodes)
+        self.f_theta = self._build_transformation_module(self.total_nodes, mode=self.transform_mode)
         self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
         self._init_fixed_frame(mode=fixed_frame_mode)
 
     @staticmethod
-    def _build_transformation_module(width: int) -> nn.Module:
-        return nn.Sequential(
-            nn.BatchNorm1d(width),
-            _NarrowResidualTransformationHead(
-                in_channels=width,
-                out_channels=width,
-                activation="prelu",
-            ),
+    def _build_transformation_module(width: int, mode: str) -> nn.Module:
+        if mode == "full":
+            return nn.Sequential(
+                nn.BatchNorm1d(width),
+                _NarrowResidualTransformationHead(
+                    in_channels=width,
+                    out_channels=width,
+                    activation="prelu",
+                ),
+            )
+        if mode == "bn_linear":
+            return nn.Sequential(
+                nn.BatchNorm1d(width),
+                nn.Linear(width, width, bias=False),
+            )
+        if mode == "final_only":
+            return nn.Identity()
+        raise ValueError(
+            f"Unsupported Hier-COS model.transform_mode '{mode}'. "
+            "Expected one of ['full', 'bn_linear', 'final_only']."
         )
 
     def _init_fixed_frame(self, mode: str = "identity") -> None:
@@ -521,7 +544,11 @@ class HierCosModel(nn.Module):
         backbone_lr = float(base_lr) * float(scale)
 
         backbone_params = [p for p in self.backbone.parameters() if p.requires_grad]
-        transform_params = [p for p in self.f_theta.parameters() if p.requires_grad]
+        transform_params = (
+            [p for p in self.f_theta.parameters() if p.requires_grad]
+            if self.transform_mode != "final_only"
+            else []
+        )
         classifier_params = [p for p in self.fixed_classifier.parameters() if p.requires_grad]
 
         if self.variant == "haframe_wide_resnet":
@@ -553,7 +580,7 @@ class HierCosModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Dict[str, Any]:
         z = self.backbone(x)
-        transformed = self.f_theta(z)
+        transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
         node_logits = self.fixed_classifier(transformed)
         logits_per_level = self._level_subspace_scores(node_logits)
         effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]

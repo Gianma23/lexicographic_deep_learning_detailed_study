@@ -1,6 +1,6 @@
 model:
   name: hiercos
-  loss: kl_reg
+  loss: per_level_kl_reg
   weight_mode: kl_leaf
   variant: haframe_resnet50
   pool: average
@@ -8,6 +8,7 @@ model:
   alpha: 0.1
   backbone_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
+  transform_mode: bn_linear
 
 dataset:
   name: cub-200-2011
@@ -63,8 +64,11 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_cub200
+  output_dir: /scratch/g.saggini1/outputs/hiercos_cub200_per_level_kl_reg_kl_leaf_bnlinear
   smoothing: 0.0
+  lexicographic:
+    enabled: true
+    start_epoch: 0
 
 optim:
   name: sgd

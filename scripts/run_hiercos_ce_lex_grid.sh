@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the supported Hier-COS baseline grid:
-# - model.loss=kl_reg
-# for all datasets: cifar100, cub200, aircraft.
+# Runs Hier-COS abs-node CE lexicographic variants on all datasets:
+# - model.loss=per_level_ce
+# - model.weight_mode in {equal, kl_leaf, kl_coarse}
+# - train.lexicographic.enabled=true (start epoch 0)
+# for: cifar100, cub200, aircraft.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -37,7 +39,7 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_full_grid.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_abs_ce_lex_grid.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
 
 DATASETS=(cifar100 cub200 aircraft)
@@ -106,13 +108,14 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local loss_mode="$2"
-  local variant="$3"
+  local ce_mode="$2"
 
-  case "$loss_mode:$variant" in
-    kl_reg:na) echo "$OUTPUTS_ROOT/hiercos_${ds}" ;;
+  case "$ce_mode" in
+    equal) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_equal" ;;
+    kl_leaf) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_kl_leaf" ;;
+    kl_coarse) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_kl_coarse" ;;
     *)
-      echo "Unknown run naming tuple: $loss_mode $variant" >&2
+      echo "Unknown CE weight mode: $ce_mode" >&2
       exit 1
       ;;
   esac
@@ -126,9 +129,24 @@ printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
-  # 1) Paper-aligned Hier-COS KL + regularization
-  run_train "$cfg" "$(run_output_dir "$ds" kl_reg na)" \
-    "model.loss=kl_reg"
+  # abs-node CE with all supported CE weight modes + lexicographic mode
+  run_train "$cfg" "$(run_output_dir "$ds" kl_leaf)" \
+    "model.loss=per_level_ce" \
+    "model.weight_mode=kl_leaf" \
+    "train.lexicographic.enabled=true" \
+    "train.lexicographic.start_epoch=0"
+
+  run_train "$cfg" "$(run_output_dir "$ds" equal)" \
+    "model.loss=per_level_ce" \
+    "model.weight_mode=equal" \
+    "train.lexicographic.enabled=true" \
+    "train.lexicographic.start_epoch=0"
+
+  run_train "$cfg" "$(run_output_dir "$ds" kl_coarse)" \
+    "model.loss=per_level_ce" \
+    "model.weight_mode=kl_coarse" \
+    "train.lexicographic.enabled=true" \
+    "train.lexicographic.start_epoch=0"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -142,4 +160,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS runs.\n'
+printf 'Completed all requested Hier-COS abs-node CE lex runs.\n'

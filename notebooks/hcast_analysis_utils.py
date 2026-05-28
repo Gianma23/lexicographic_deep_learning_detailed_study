@@ -241,24 +241,36 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         test_metrics = dict(test_results["independent"]["test_metrics"])
 
     level_names: List[str] = []
+    model_name: Optional[str] = None
     model_loss: Optional[str] = None
     weight_mode: Optional[str] = None
+    model_transform_mode: Optional[str] = None
     cfg_path = run_path / "config_resolved.yaml"
     if cfg_path.exists():
         cfg = load_yaml(cfg_path) or {}
         level_names = list(cfg.get("dataset", {}).get("levels", []))
         model_cfg = cfg.get("model", {})
         if isinstance(model_cfg, MappingABC):
+            raw_model_name = model_cfg.get("name")
+            if raw_model_name is not None:
+                if not isinstance(raw_model_name, str):
+                    raise ValueError("model.name in config_resolved.yaml must be a string.")
+                model_name = raw_model_name
             raw_loss = model_cfg.get("loss")
-            if raw_loss is not None:
-                if not isinstance(raw_loss, str):
-                    raise ValueError("Hier-COS model.loss in config_resolved.yaml must be a string.")
+            if isinstance(raw_loss, str):
                 model_loss = raw_loss
+            elif raw_loss is not None and model_name == "hiercos":
+                raise ValueError("Hier-COS model.loss in config_resolved.yaml must be a string.")
             raw_weight_mode = model_cfg.get("weight_mode")
             if raw_weight_mode is not None:
                 if not isinstance(raw_weight_mode, str):
                     raise ValueError("Hier-COS model.weight_mode in config_resolved.yaml must be a string.")
                 weight_mode = raw_weight_mode
+            raw_transform_mode = model_cfg.get("transform_mode")
+            if raw_transform_mode is not None:
+                if not isinstance(raw_transform_mode, str):
+                    raise ValueError("Hier-COS model.transform_mode in config_resolved.yaml must be a string.")
+                model_transform_mode = raw_transform_mode
 
     best_epoch_events = _best_epoch_events_by_mode(epoch_events, test_results)
     best_epoch_event = best_epoch_events.get("topdown")
@@ -272,8 +284,10 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         "test_results": test_results,
         "test_metrics_yaml": test_metrics_yaml,
         "level_names": level_names,
+        "model_name": model_name,
         "model_loss": model_loss,
         "weight_mode": weight_mode,
+        "model_transform_mode": model_transform_mode,
         "best_epoch_events": best_epoch_events,
         "best_epoch_event": best_epoch_event,
     }
@@ -469,6 +483,42 @@ def _run_meta_from_dir(run_dir: Path) -> Dict[str, Any]:
     }
 
 
+def _detect_hiercos_study_family(run_like: Mapping[str, Any], text: str) -> Optional[str]:
+    model_name_raw = run_like.get("model_name", None)
+    model_name = model_name_raw.strip().lower() if isinstance(model_name_raw, str) else ""
+    loss_raw = run_like.get("model_loss", None)
+    loss_mode = loss_raw.strip().lower() if isinstance(loss_raw, str) else ""
+    transform_raw = run_like.get("model_transform_mode", None)
+    transform_mode = transform_raw.strip().lower() if isinstance(transform_raw, str) else ""
+
+    looks_like_hiercos = (
+        model_name == "hiercos"
+        or "hiercos" in text
+        or "hier-cos" in text
+        or "per_level_kl_reg" in text
+        or "per_level_ce" in text
+    )
+    if not looks_like_hiercos:
+        return None
+
+    if (
+        transform_mode == "final_only"
+        or "final_only" in text
+        or "final only" in text
+        or "final fixed" in text
+        or "fixed layer" in text
+    ):
+        return "hiercos_final_only"
+
+    if loss_mode == "per_level_ce" or "ce_" in text or " ce " in text:
+        return "hiercos_loss_per_level_ce"
+    if loss_mode == "per_level_kl_reg" or "per_level_kl_reg" in text:
+        return "hiercos_loss_per_level_kl_reg"
+    if loss_mode == "kl_reg":
+        return "hiercos_loss_kl_reg"
+    return "hiercos_loss_kl_reg"
+
+
 def _detect_color_family(run_like: Mapping[str, Any]) -> str:
     if bool(run_like.get("is_baseline", False)):
         return "baseline"
@@ -480,7 +530,11 @@ def _detect_color_family(run_like: Mapping[str, Any]) -> str:
         run_dir_name = Path(run_dir).name.lower()
 
     text = f"{label} {run_dir_name}"
-    if ("ce " in text) or ("ce_" in text) or ("kl_leaf" in text) or ("kl_coarse" in text):
+    hiercos_family = _detect_hiercos_study_family(run_like, text)
+    if hiercos_family is not None:
+        return hiercos_family
+
+    if ("ce " in text) or ("ce_" in text):
         return "ce_weight"
     if "lex" in text:
         return "lex"
@@ -515,6 +569,14 @@ def _apply_semantic_color_gradients(run_data_by_dataset: Mapping[str, List[RunDa
     family_palettes = {
         # Baseline is intentionally stable and blue across datasets.
         "baseline": ["#1f77b4", "#0b4f8a"],
+        # Hier-COS paper-aligned KL + regularization family.
+        "hiercos_loss_kl_reg": ["#9ca3af", "#6b7280", "#374151"],
+        # Hier-COS per-level KL + regularization family.
+        "hiercos_loss_per_level_kl_reg": ["#86efac", "#22c55e", "#166534"],
+        # Hier-COS per-level CE family.
+        "hiercos_loss_per_level_ce": ["#fdba74", "#f97316", "#c2410c"],
+        # Hier-COS final fixed-layer ablation (`transform_mode=final_only`).
+        "hiercos_final_only": ["#c4b5fd", "#8b5cf6", "#5b21b6"],
         # HCC variants use a perceptually clear warm ramp instead of similar greens.
         "hcc": ["#f6d32d", "#f59e0b", "#ef4444", "#991b1b"],
         # Lexicographic runs use a green/teal ramp, separated from baseline blue and HCC warm colors.
@@ -585,11 +647,9 @@ def _canonical_hiercos_loss_mode(raw_mode: Optional[str], default: str = "kl_reg
         return "per_level_kl_reg"
     if mode == "per_level_ce":
         return "per_level_ce"
-    if mode == "per_level_abs_node_ce":
-        return "per_level_abs_node_ce"
     raise ValueError(
         f"Unsupported Hier-COS model.loss '{mode}'. "
-        "Expected one of ['kl_reg', 'per_level_kl_reg', 'per_level_ce', 'per_level_abs_node_ce']."
+        "Expected one of ['kl_reg', 'per_level_kl_reg', 'per_level_ce']."
     )
 
 
@@ -626,7 +686,7 @@ def _hiercos_ce_level_weight_map(
     level_loss_ids: Sequence[int],
 ) -> Dict[int, float]:
     loss_mode = _canonical_hiercos_loss_mode(run_data.get("model_loss"))
-    if loss_mode not in {"per_level_ce", "per_level_abs_node_ce"}:
+    if loss_mode != "per_level_ce":
         return {}
     if not level_loss_ids:
         return {}

@@ -38,6 +38,21 @@ _DATASET_IDS = {
     "inat21-mini",
 }
 
+_DATASET_CANONICAL_ALIASES = {
+    "cifar-100": "cifar-100",
+    "cifar100": "cifar-100",
+    "cub-200-2011": "cub-200-2011",
+    "cub-200": "cub-200-2011",
+    "cub200": "cub-200-2011",
+    "cub2002011": "cub-200-2011",
+    "fgvc-aircraft": "fgvc-aircraft",
+    "fgvcaircraft": "fgvc-aircraft",
+    "aircraft": "fgvc-aircraft",
+    "inat21-mini": "inat21-mini",
+    "inat21mini": "inat21-mini",
+    "inat21": "inat21-mini",
+}
+
 _DATASET_DISPLAY = {
     "cifar-100": "CIFAR-100",
     "cub-200-2011": "CUB-200-2011",
@@ -53,12 +68,30 @@ _MODEL_IDS = {
     "hiercos",
 }
 
+_MODEL_CANONICAL_ALIASES = {
+    "hcast": "hcast",
+    "hrn": "hrn",
+    "ht-capsnet": "ht_capsnet",
+    "capsnet": "ht_capsnet",
+    "lhdnn": "lhdnn",
+    "hiercos": "hiercos",
+    "hier-cos": "hiercos",
+}
+
 _MODEL_DISPLAY = {
     "hcast": "H-CAST",
     "hrn": "HRN",
     "ht_capsnet": "HT-CapsNet",
     "lhdnn": "LH-DNN",
     "hiercos": "HierCoS",
+}
+
+_MODEL_RUN_NAME_TOKENS = {
+    "hcast": ("hcast",),
+    "hrn": ("hrn",),
+    "ht_capsnet": ("capsnet", "ht_capsnet"),
+    "lhdnn": ("lhdnn",),
+    "hiercos": ("hiercos",),
 }
 
 _DEFAULT_MODEL_COLORS = {
@@ -70,10 +103,10 @@ _DEFAULT_MODEL_COLORS = {
 }
 
 _DATASET_RUN_NAME_TOKENS = {
-    "cifar-100": ("cifar-100",),
-    "cub-200-2011": ("cub-200-2011",),
-    "fgvc-aircraft": ("fgvc-aircraft",),
-    "inat21-mini": ("inat21-mini",),
+    "cifar-100": ("cifar100", "cifar-100"),
+    "cub-200-2011": ("cub200", "cub-200-2011", "cub2002011"),
+    "fgvc-aircraft": ("aircraft", "fgvc-aircraft", "fgvcaircraft"),
+    "inat21-mini": ("inat21-mini", "inat21mini"),
 }
 
 
@@ -114,11 +147,18 @@ def _as_float_dict(metrics: Any) -> Dict[str, float]:
     return out
 
 
+def _normalize_lookup_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+
+
 def canonical_dataset_name(name: Optional[str]) -> str:
     if not isinstance(name, str):
         raise ValueError("dataset_name must be a string.")
     if name in _DATASET_IDS:
         return name
+    alias = _DATASET_CANONICAL_ALIASES.get(_normalize_lookup_token(name))
+    if alias is not None:
+        return alias
     raise ValueError(
         f"Unsupported dataset_name '{name}'. "
         "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat21-mini']."
@@ -135,6 +175,9 @@ def canonical_model_name(name: Optional[str]) -> str:
         raise ValueError("model_name must be a string.")
     if name in _MODEL_IDS:
         return name
+    alias = _MODEL_CANONICAL_ALIASES.get(_normalize_lookup_token(name))
+    if alias is not None:
+        return alias
     raise ValueError(
         f"Unsupported model_name '{name}'. "
         "Expected one of ['hcast', 'hrn', 'ht_capsnet', 'lhdnn', 'hiercos']."
@@ -147,7 +190,11 @@ def model_display_name(name: Optional[str]) -> str:
 
 
 def _model_run_name_tokens(model_name: str) -> List[str]:
-    return [canonical_model_name(model_name)]
+    canonical = canonical_model_name(model_name)
+    explicit = _MODEL_RUN_NAME_TOKENS.get(canonical, ())
+    if explicit:
+        return [token for token in explicit if isinstance(token, str) and token]
+    return [canonical]
 
 
 def _dataset_run_name_tokens(dataset_name: str) -> List[str]:
@@ -622,14 +669,24 @@ def build_model_dataset_run_specs(
 
     for dataset_name_raw in dataset_names:
         dataset_key = str(dataset_name_raw)
-        dataset_token = str(dataset_run_names.get(dataset_key, dataset_key))
         dataset_name = canonical_dataset_name(dataset_key)
+        dataset_token = str(
+            dataset_run_names.get(
+                dataset_key,
+                dataset_run_names.get(dataset_name, _dataset_run_name_tokens(dataset_name)[0]),
+            )
+        )
         dataset_label = dataset_labels.get(dataset_key, dataset_display_name(dataset_name))
 
         for model_name_raw in model_names:
             model_key = str(model_name_raw)
-            model_token = str(model_run_names.get(model_key, model_key))
             model_name = canonical_model_name(model_key)
+            model_token = str(
+                model_run_names.get(
+                    model_key,
+                    model_run_names.get(model_name, _model_run_name_tokens(model_name)[0]),
+                )
+            )
             model_label = model_labels.get(model_key, model_labels.get(model_name, model_display_name(model_name)))
             run_dir = run_name_overrides.get(
                 (model_key, dataset_key),

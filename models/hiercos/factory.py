@@ -12,6 +12,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         num_classes_per_level=num_classes_per_level,
         taxonomy=taxonomy,
         variant=model_cfg.get("variant", "haframe_resnet50"),
+        transform_mode=model_cfg.get("transform_mode", "full"),
         pretrained=bool(model_cfg.get("pretrained", True)),
         pool=model_cfg.get("pool", "max"),
         backbone_lr_scale=float(model_cfg.get("backbone_lr_scale", 0.1)),
