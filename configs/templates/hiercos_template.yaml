@@ -4,14 +4,15 @@
 # - Hier-COS requires at least two hierarchy levels.
 model:
   name: hiercos                     # Model registry id. Must be exactly: hiercos
-  loss: kl_reg                      # kl_reg | per_level_kl_reg | per_level_ce
-  weight_mode: equal                # equal | kl_leaf | kl_coarse (shared across KL target-path and CE modes)
+  loss: kl_reg                      # kl_reg | global_softmax_ce_reg | level_softmax_ce_reg
+  weight_mode: equal                # equal | kl_leaf | kl_coarse (path/CE weights; regularization stays unweighted)
   variant: haframe_resnet50         # haframe_resnet50 | haframe_wide_resnet
   transform_mode: full              # full (residual head) | bn_linear (light BN+Linear head) | final_only (bypass f_theta)
   pool: average                     # Pooling for resnet50 variant: max | average
   pretrained: true                  # Used by resnet50 variant; wide variant is trained from scratch
-  alpha: 0.1                        # Weight of level-regularization term when loss=kl_reg/per_level_kl_reg
+  alpha: 0.1                        # Weight of level regularization in all supported loss modes
   backbone_lr_scale: 0.1            # LR multiplier for backbone parameter group (SGD path)
+  transform_lr_scale: 1.0           # LR multiplier for f_theta on resnet50; set 0.1 to match upstream --larger-backbone
   fixed_frame_mode: orthonormal_random # orthonormal_random | identity
 
   # Used only when variant=haframe_wide_resnet

@@ -111,14 +111,16 @@ Pinning command used: `git ls-remote <repo_url> HEAD`.
 
 - `Structural`: Local code keeps upstream-style fixed-frame/taxonomy-subspace formulation and KL+regularization objective path (`model.loss: kl_reg`) as the parity baseline.
   - Why: preserve original method core before ablations.
-- `Intentional`: Added lex-ready loss `model.loss: per_level_kl_reg`, which exposes three differentiable level losses and defines `total` as their sum.
+- `Intentional`: Added lex-ready `model.loss: global_softmax_ce_reg`, which uses weighted target CE under one global taxonomy-node softmax plus level regularization, exposes three differentiable level losses, and defines `total` as their sum.
   - Why: align lex/non-lex comparisons on the same reported objective in this mode while enabling per-level gradient and lexicographic diagnostics.
-- `Intentional`: Added CE ablation loss `model.loss: per_level_ce`, plus shared `model.weight_mode` (`equal`, `kl_leaf`, `kl_coarse`) applied to both KL target-path and CE level weighting.
-  - Why: provide local weighted-level alternatives for diagnostic and ablation studies.
+- `Intentional`: Added `model.loss: level_softmax_ce_reg`, which differs from `global_softmax_ce_reg` only by using an independent softmax inside each hierarchy level. Shared `model.weight_mode` values (`equal`, `kl_leaf`, `kl_coarse`) weight CE only; regularization remains unweighted.
+  - Why: isolate normalization scope while providing exact per-level objectives for diagnostics and lexicographic experiments.
 - `Intentional`: CIFAR protocol keeps repository hierarchy depth (`3`) rather than upstream 5-level CIFAR protocol.
   - Why: maintain cross-model hierarchy consistency inside this repository.
 - `Intentional`: CUB-200 Hier-COS preset is explicitly marked as local extrapolation.
   - Why: upstream Hier-COS does not report CUB experiments.
+- `Intentional`: iNat19 Hier-COS uses upstream iNaturalist19-224 hyperparameters where compatible, but projects the taxonomy to this repo's three levels (`family -> genus -> species`).
+  - Why: keep the requested H-CAST-compatible hierarchy depth while preserving the closest available Hier-COS iNat19 recipe. The preset keeps the upstream `kl_reg`-style objective, `kl_leaf` path weighting, `alpha=0.001`, and `--larger-backbone`-style low-LR transform/backbone groups.
 - `Intentional`: Aircraft preprocessing includes explicit bottom-banner crop support (`crop_bottom_pixels: 20`) for parity.
   - Why: replicate known preprocessing behavior from upstream scripts.
 - `Structural`: AMP is enabled in shipped Hier-COS configs (`train.amp: true`) via shared runtime controls.
@@ -132,7 +134,7 @@ Pinning command used: `git ls-remote <repo_url> HEAD`.
 - Top-down and independent decoding are both first-class evaluation modes, with separate best-checkpoint selection and final test reporting.
 - H-CAST includes local HCC extensions not present in the original H-CAST upstream repository.
 - HT-CapsNet is implemented as a PyTorch port of a TensorFlow-origin baseline.
-- Hier-COS includes local per-level extensions (`per_level_kl_reg`, `per_level_ce`) beyond the paper-aligned KL baseline.
+- Hier-COS includes local per-level extensions (`global_softmax_ce_reg`, `level_softmax_ce_reg`) beyond the paper-aligned KL baseline.
 - LH-DNN comparison is necessarily paper-to-code (no official upstream code repository).
 
 ### Interpretation for Thesis Writing
@@ -145,7 +147,7 @@ Pinning command used: `git ls-remote <repo_url> HEAD`.
 
 - Upstream drift: pinned SHAs are fixed on May 19, 2026; upstream repositories may change afterward.
 - LH-DNN source limitation: absence of official code forces paper-to-code reconstruction risk.
-- Extrapolation risk: HRN CIFAR and Hier-COS CUB settings are local extrapolations, not upstream-reported benchmarks.
+- Extrapolation risk: HRN CIFAR and Hier-COS CUB settings are local extrapolations, and Hier-COS iNat19 is a local three-level projection rather than the upstream full-depth iNat19 protocol.
 - Protocol dependence: validation-based dual-checkpoint selection differs from some original repos and can alter final test outcomes.
 - Decoder dependence: top-down and independent conclusions may differ; they must not be merged into a single claim without mode qualification.
 

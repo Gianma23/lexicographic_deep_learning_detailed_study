@@ -398,11 +398,11 @@ def _normalize_dataset_key(value: Optional[str]) -> Optional[str]:
         return None
     if not isinstance(value, str):
         raise ValueError("dataset key must be a string.")
-    if value in {"cifar-100", "cub-200-2011", "fgvc-aircraft", "inat21-mini"}:
+    if value in {"cifar-100", "cub-200-2011", "fgvc-aircraft", "inat19"}:
         return value
     raise ValueError(
         f"Unsupported dataset key '{value}'. "
-        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat21-mini']."
+        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat19']."
     )
 
 
@@ -495,8 +495,8 @@ def _detect_hiercos_study_family(run_like: Mapping[str, Any], text: str) -> Opti
         model_name == "hiercos"
         or "hiercos" in text
         or "hier-cos" in text
-        or "per_level_kl_reg" in text
-        or "per_level_ce" in text
+        or "global_softmax_ce_reg" in text
+        or "level_softmax_ce_reg" in text
     )
     if not looks_like_hiercos:
         return None
@@ -510,10 +510,10 @@ def _detect_hiercos_study_family(run_like: Mapping[str, Any], text: str) -> Opti
     ):
         return "hiercos_final_only"
 
-    if loss_mode == "per_level_ce" or "ce_" in text or " ce " in text:
-        return "hiercos_loss_per_level_ce"
-    if loss_mode == "per_level_kl_reg" or "per_level_kl_reg" in text:
-        return "hiercos_loss_per_level_kl_reg"
+    if loss_mode == "level_softmax_ce_reg" or "level_softmax_ce_reg" in text:
+        return "hiercos_loss_level_softmax_ce_reg"
+    if loss_mode == "global_softmax_ce_reg" or "global_softmax_ce_reg" in text:
+        return "hiercos_loss_global_softmax_ce_reg"
     if loss_mode == "kl_reg":
         return "hiercos_loss_kl_reg"
     return "hiercos_loss_kl_reg"
@@ -571,10 +571,10 @@ def _apply_semantic_color_gradients(run_data_by_dataset: Mapping[str, List[RunDa
         "baseline": ["#1f77b4", "#0b4f8a"],
         # Hier-COS paper-aligned KL + regularization family.
         "hiercos_loss_kl_reg": ["#9ca3af", "#6b7280", "#374151"],
-        # Hier-COS per-level KL + regularization family.
-        "hiercos_loss_per_level_kl_reg": ["#86efac", "#22c55e", "#166534"],
-        # Hier-COS per-level CE family.
-        "hiercos_loss_per_level_ce": ["#fdba74", "#f97316", "#c2410c"],
+        # Hier-COS global-softmax CE + regularization family.
+        "hiercos_loss_global_softmax_ce_reg": ["#86efac", "#22c55e", "#166534"],
+        # Hier-COS level-softmax CE + regularization family.
+        "hiercos_loss_level_softmax_ce_reg": ["#fdba74", "#f97316", "#c2410c"],
         # Hier-COS final fixed-layer ablation (`transform_mode=final_only`).
         "hiercos_final_only": ["#c4b5fd", "#8b5cf6", "#5b21b6"],
         # HCC variants use a perceptually clear warm ramp instead of similar greens.
@@ -643,73 +643,14 @@ def _canonical_hiercos_loss_mode(raw_mode: Optional[str], default: str = "kl_reg
         raise ValueError("Hier-COS model.loss must be a string.")
     if mode == "kl_reg":
         return "kl_reg"
-    if mode == "per_level_kl_reg":
-        return "per_level_kl_reg"
-    if mode == "per_level_ce":
-        return "per_level_ce"
+    if mode == "global_softmax_ce_reg":
+        return "global_softmax_ce_reg"
+    if mode == "level_softmax_ce_reg":
+        return "level_softmax_ce_reg"
     raise ValueError(
         f"Unsupported Hier-COS model.loss '{mode}'. "
-        "Expected one of ['kl_reg', 'per_level_kl_reg', 'per_level_ce']."
+        "Expected one of ['kl_reg', 'global_softmax_ce_reg', 'level_softmax_ce_reg']."
     )
-
-
-def _canonical_hiercos_weight_mode(raw_mode: Optional[str], default: str = "equal") -> str:
-    mode = default if raw_mode is None else raw_mode
-    if not isinstance(mode, str):
-        raise ValueError("Hier-COS model.weight_mode must be a string.")
-    if mode == "equal":
-        return "equal"
-    if mode == "kl_leaf":
-        return "kl_leaf"
-    if mode == "kl_coarse":
-        return "kl_coarse"
-    raise ValueError(
-        f"Unsupported Hier-COS model.weight_mode '{mode}'. "
-        "Expected one of ['equal', 'kl_leaf', 'kl_coarse']."
-    )
-
-
-def _hiercos_node_prob_weights(num_levels: int) -> np.ndarray:
-    if int(num_levels) <= 0:
-        return np.array([], dtype=np.float64)
-    level_weights = np.arange(int(num_levels), 0, -1, dtype=np.float64)
-    level_weights = np.exp(1.0 / level_weights)
-    norm = float(np.linalg.norm(level_weights))
-    if not np.isfinite(norm) or norm <= 0.0:
-        return np.ones((int(num_levels),), dtype=np.float64) / float(num_levels)
-    level_weights = level_weights / norm
-    return np.square(level_weights)
-
-
-def _hiercos_ce_level_weight_map(
-    run_data: Mapping[str, Any],
-    level_loss_ids: Sequence[int],
-) -> Dict[int, float]:
-    loss_mode = _canonical_hiercos_loss_mode(run_data.get("model_loss"))
-    if loss_mode != "per_level_ce":
-        return {}
-    if not level_loss_ids:
-        return {}
-
-    num_levels_from_names = len(run_data.get("level_names") or [])
-    num_levels_from_ids = max(level_loss_ids) + 1
-    num_levels = max(num_levels_from_names, num_levels_from_ids)
-    if int(num_levels) <= 0:
-        return {}
-
-    mode = _canonical_hiercos_weight_mode(run_data.get("weight_mode"))
-    if mode == "equal":
-        weights = np.ones((int(num_levels),), dtype=np.float64) / float(num_levels)
-    else:
-        weights = _hiercos_node_prob_weights(int(num_levels))
-        if mode == "kl_coarse":
-            weights = weights[::-1]
-
-    return {
-        int(level_idx): float(weights[int(level_idx)])
-        for level_idx in level_loss_ids
-        if int(level_idx) >= 0 and int(level_idx) < int(weights.size)
-    }
 
 
 def _fmt_pct(x: float) -> str:
@@ -1061,31 +1002,54 @@ class HCastAnalysis:
             plt.show()
 
     def plot_projection_diagnostics(
-        self, base_diag_specs: Optional[Sequence[Tuple[str, str, bool]]] = None
+        self,
+        base_diag_specs: Optional[Sequence[Union[Tuple[str, str, bool], Tuple[str, str, bool, str]]]] = None,
     ) -> None:
         base_diag_specs = base_diag_specs or [
-            ("proj_constraint_alpha", "Constraint alpha", False),
-            ("proj_constraint_strength", "Constraint strength", False),
-            ("proj_temperature", "Projection temperature", False),
-            ("proj_mode_intrinsic_soft", "Intrinsic-soft mode flag (1=true)", False),
+            ("proj_constraint_alpha", "Constraint alpha", False, "val"),
+            ("proj_constraint_strength", "Constraint strength", False, "val"),
+            ("proj_temperature", "Projection temperature", False, "val"),
+            ("proj_mode_intrinsic_soft", "Intrinsic-soft mode flag (1=true)", False, "val"),
         ]
+
+        diag_specs: List[Tuple[str, str, bool, str]] = []
+        for spec in base_diag_specs:
+            if len(spec) == 3:
+                metric_key, title, is_percent = spec
+                source = "val"
+            elif len(spec) == 4:
+                metric_key, title, is_percent, source = spec
+            else:
+                raise ValueError(
+                    "Projection diagnostic specs must be tuples of length 3 "
+                    "(metric_key, title, is_percent) or 4 (+source)."
+                )
+            source_norm = str(source).strip().lower()
+            if source_norm not in {"val", "train"}:
+                raise ValueError(
+                    "Projection diagnostic source must be 'val' or 'train': "
+                    f"got '{source}'."
+                )
+            diag_specs.append((str(metric_key), str(title), bool(is_percent), source_norm))
 
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
             if not dataset_runs:
                 continue
 
-            diag_specs = list(base_diag_specs)
             active_diag_specs = []
-            for metric_key, title, is_percent in diag_specs:
+            for metric_key, title, is_percent, source in diag_specs:
                 has_finite = False
                 for run_data in dataset_runs:
-                    _, values = get_metric_series(run_data["epoch_events"], metric_key)
+                    if source == "train":
+                        _, values = get_train_metric_series(run_data["epoch_events"], metric_key)
+                    else:
+                        _, values = get_metric_series(run_data["epoch_events"], metric_key)
                     if np.any(np.isfinite(values)):
                         has_finite = True
                         break
                 if has_finite:
-                    active_diag_specs.append((metric_key, title, is_percent))
+                    active_diag_specs.append((metric_key, title, is_percent, source))
 
             if not active_diag_specs:
                 print(f"[{dataset_key}] No projection diagnostics found in selected runs.")
@@ -1095,9 +1059,12 @@ class HCastAnalysis:
             if len(active_diag_specs) == 1:
                 axes = [axes]
 
-            for ax, (metric_key, title, is_percent) in zip(axes, active_diag_specs):
+            for ax, (metric_key, title, is_percent, source) in zip(axes, active_diag_specs):
                 for run_data in dataset_runs:
-                    epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
+                    if source == "train":
+                        epochs, values = get_train_metric_series(run_data["epoch_events"], metric_key)
+                    else:
+                        epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
                     plot_values = values * 100.0 if is_percent else values
                     ax.plot(
                         epochs,
@@ -1107,26 +1074,28 @@ class HCastAnalysis:
                         linewidth=2.0,
                     )
 
-                    best_events = run_data.get("best_epoch_events", {})
-                    best_event = (
-                        best_events.get("topdown")
-                        if isinstance(best_events, MappingABC)
-                        else run_data.get("best_epoch_event")
-                    )
-                    if best_event is not None:
-                        best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
-                        if np.isfinite(best_value):
-                            best_plot_value = best_value * 100.0 if is_percent else best_value
-                            ax.scatter(
-                                [best_event["epoch"]],
-                                [best_plot_value],
-                                color=run_data["color"],
-                                marker="o",
-                                s=45,
-                                zorder=4,
-                            )
+                    if source == "val":
+                        best_events = run_data.get("best_epoch_events", {})
+                        best_event = (
+                            best_events.get("topdown")
+                            if isinstance(best_events, MappingABC)
+                            else run_data.get("best_epoch_event")
+                        )
+                        if best_event is not None:
+                            best_value = float(best_event["val_metrics_norm"].get(metric_key, np.nan))
+                            if np.isfinite(best_value):
+                                best_plot_value = best_value * 100.0 if is_percent else best_value
+                                ax.scatter(
+                                    [best_event["epoch"]],
+                                    [best_plot_value],
+                                    color=run_data["color"],
+                                    marker="o",
+                                    s=45,
+                                    zorder=4,
+                                )
 
-                ax.set_title(f"Validation {title}")
+                title_prefix = "Validation" if source == "val" else "Training"
+                ax.set_title(f"{title_prefix} {title}")
                 ax.set_ylabel("Value (%)" if is_percent else "Value")
                 ax.grid(True, alpha=0.3)
                 ax.legend(fontsize=9)
@@ -1139,9 +1108,8 @@ class HCastAnalysis:
     def plot_training_losses(
         self,
         aggregate_loss_keys: Optional[Sequence[str]] = None,
-        weighted_level_losses: bool = False,
     ) -> None:
-        aggregate_loss_keys = aggregate_loss_keys or ["total", "level_ce", "gk_loss"]
+        aggregate_loss_keys = aggregate_loss_keys or ["total", "ce", "reg", "kl", "level_ce", "gk_loss"]
 
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
@@ -1157,20 +1125,10 @@ class HCastAnalysis:
                     if key.startswith("loss_level_") and key.rsplit("_", 1)[-1].isdigit()
                 }
             )
-            level_weight_maps_by_run = {
-                id(run_data): _hiercos_ce_level_weight_map(run_data, level_loss_ids)
-                for run_data in dataset_runs
-            }
-
             metric_specs = [(key, key) for key in aggregate_loss_keys]
             for level_idx in level_loss_ids:
                 level_name = get_level_label(level_idx, dataset_runs[0])
-                if bool(weighted_level_losses):
-                    metric_specs.append(
-                        (f"loss_level_{level_idx}", f"loss_{level_name} (L{level_idx}, weighted)")
-                    )
-                else:
-                    metric_specs.append((f"loss_level_{level_idx}", f"loss_{level_name} (L{level_idx})"))
+                metric_specs.append((f"loss_level_{level_idx}", f"loss_{level_name} (L{level_idx})"))
 
             n_metrics = len(metric_specs)
             ncols = 2
@@ -1181,11 +1139,6 @@ class HCastAnalysis:
             for ax, (metric_key, metric_title) in zip(axes, metric_specs):
                 for run_data in dataset_runs:
                     epochs, values = get_train_loss_series(run_data["epoch_events"], metric_key)
-                    if bool(weighted_level_losses) and metric_key.startswith("loss_level_"):
-                        level_idx = int(metric_key.rsplit("_", 1)[-1])
-                        level_weight = level_weight_maps_by_run.get(id(run_data), {}).get(level_idx)
-                        if level_weight is not None and np.isfinite(level_weight):
-                            values = values * float(level_weight)
                     ax.plot(
                         epochs,
                         values,
@@ -1202,12 +1155,11 @@ class HCastAnalysis:
             for ax in axes[n_metrics:]:
                 ax.axis("off")
 
-            subtitle = "weighted per-level CE (when applicable)" if bool(weighted_level_losses) else "raw level losses"
-            plt.suptitle(f"{dataset_key}: Training Losses ({subtitle})", y=1.02, fontsize=13)
+            plt.suptitle(f"{dataset_key}: Training Losses", y=1.02, fontsize=13)
             plt.tight_layout()
             plt.show()
 
-    def plot_per_run_per_level_training_losses(self, weighted_level_losses: bool = False) -> None:
+    def plot_per_run_per_level_training_losses(self) -> None:
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
             if not dataset_runs:
@@ -1229,8 +1181,6 @@ class HCastAnalysis:
                         if key.startswith("loss_level_") and key.rsplit("_", 1)[-1].isdigit()
                     }
                 )
-                level_weight_map = _hiercos_ce_level_weight_map(run_data, level_loss_ids)
-
                 if not level_loss_ids:
                     print(f"[{dataset_key}] No per-level train losses for {run_data['label']}")
                     continue
@@ -1242,10 +1192,6 @@ class HCastAnalysis:
                 for idx, level_idx in enumerate(level_loss_ids):
                     metric_key = f"loss_level_{level_idx}"
                     epochs, values = get_train_loss_series(run_data["epoch_events"], metric_key)
-                    if bool(weighted_level_losses):
-                        level_weight = level_weight_map.get(level_idx)
-                        if level_weight is not None and np.isfinite(level_weight):
-                            values = values * float(level_weight)
                     if np.all(~np.isfinite(values)):
                         continue
 
@@ -1264,10 +1210,7 @@ class HCastAnalysis:
                     print(f"[{dataset_key}] No finite per-level train losses for {run_data['label']}")
                     continue
 
-                level_loss_title = "weighted" if bool(weighted_level_losses) else "raw"
-                ax.set_title(
-                    f"{run_data['label']}: Per-Level Training Losses ({dataset_key}, {level_loss_title})"
-                )
+                ax.set_title(f"{run_data['label']}: Per-Level Training Losses ({dataset_key})")
                 ax.set_xlabel("Epoch")
                 ax.set_ylabel("Loss")
                 ax.grid(True, alpha=0.3)

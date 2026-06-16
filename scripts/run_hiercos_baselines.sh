@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs three explicit Hier-COS final-only ablations:
-# - model.loss=per_level_kl_reg
-# - model.transform_mode=final_only
-# - train.lexicographic.enabled=true, start_epoch=0
-# - model.weight_mode:
-#   - cub200: kl_leaf
-#   - cifar100/aircraft: equal
+# Runs Hier-COS global-softmax CE+regularization baselines:
+# - model.loss=global_softmax_ce_reg
+# - model.weight_mode in {equal, kl_leaf}
+# - model.transform_mode=full
+# - train.lexicographic.enabled=false
+# for: cifar100, cub200, aircraft, inat19.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -41,8 +40,23 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_final_only_per_level_kl_reg_grid.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_baselines.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
+
+DATASETS=(cifar100 cub200 aircraft inat19)
+
+config_for_dataset() {
+  case "$1" in
+    cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
+    cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
+    aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
+    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
+    *)
+      echo "Unknown dataset: $1" >&2
+      exit 1
+      ;;
+  esac
+}
 
 run_train() {
   local config="$1"
@@ -94,37 +108,31 @@ run_train() {
   fi
 }
 
+run_output_dir() {
+  local ds="$1"
+  local weight_mode="$2"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_global_softmax_ce_reg_baseline_${weight_mode}"
+}
+
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Loss: global_softmax_ce_reg\n'
+printf 'Transform mode: full\n'
+printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 
-# 1) CIFAR-100 (equal weights)
-run_train "configs/hiercos/hiercos_cifar100.yaml" \
-  "$OUTPUTS_ROOT/hiercos_cifar100_per_level_kl_reg_equal_final_only" \
-  "model.loss=per_level_kl_reg" \
-  "model.weight_mode=equal" \
-  "model.transform_mode=final_only" \
-  "train.lexicographic.enabled=true" \
-  "train.lexicographic.start_epoch=0"
+for ds in "${DATASETS[@]}"; do
+  cfg="$(config_for_dataset "$ds")"
 
-# 2) CUB-200 (kl_leaf weights)
-run_train "configs/hiercos/hiercos_cub200.yaml" \
-  "$OUTPUTS_ROOT/hiercos_cub200_per_level_kl_reg_kl_leaf_final_only" \
-  "model.loss=per_level_kl_reg" \
-  "model.weight_mode=kl_leaf" \
-  "model.transform_mode=final_only" \
-  "train.lexicographic.enabled=true" \
-  "train.lexicographic.start_epoch=0"
-
-# 3) FGVC-Aircraft (equal weights)
-run_train "configs/hiercos/hiercos_aircraft.yaml" \
-  "$OUTPUTS_ROOT/hiercos_aircraft_per_level_kl_reg_equal_final_only" \
-  "model.loss=per_level_kl_reg" \
-  "model.weight_mode=equal" \
-  "model.transform_mode=final_only" \
-  "train.lexicographic.enabled=true" \
-  "train.lexicographic.start_epoch=0"
+  for weight_mode in equal kl_leaf; do
+    run_train "$cfg" "$(run_output_dir "$ds" "$weight_mode")" \
+      "model.loss=global_softmax_ce_reg" \
+      "model.weight_mode=$weight_mode" \
+      "model.transform_mode=full" \
+      "train.lexicographic.enabled=false"
+  done
+done
 
 if [[ "$DRY_RUN" != "1" ]]; then
   while (( "$(jobs -pr | wc -l)" > 0 )); do
@@ -137,4 +145,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS final-only runs.\n'
+printf 'Completed all requested Hier-COS baseline runs.\n'

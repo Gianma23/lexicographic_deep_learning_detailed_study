@@ -15,6 +15,8 @@ class LexicographicConfig:
     eps: float = 1e-12
     log_metrics: bool = True
     start_epoch: int = 0
+    projection_mode: str = "coarse_first"
+    projection_rule: str = "orthogonalize_all"
 
     def projection_active(self, epoch: int) -> bool:
         return self.enabled and int(epoch) >= int(self.start_epoch)

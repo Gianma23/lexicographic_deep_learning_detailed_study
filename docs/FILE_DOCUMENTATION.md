@@ -17,7 +17,7 @@ All experiment configs follow the same top-level sections: `model`, `dataset`, `
 - `configs/hcast/hcast_cifar100.yaml`: Base H-CAST on CIFAR-100.
 - `configs/hcast/hcast_cub200.yaml`: Base H-CAST on CUB-200-2011.
 - `configs/hcast/hcast_aircraft.yaml`: Base H-CAST on FGVC-Aircraft.
-- `configs/hcast/hcast_inat21mini.yaml`: Base H-CAST on iNat21-style data.
+- `configs/hcast/hcast_inat19.yaml`: Base H-CAST on iNaturalist 2019 with a 3-level family/genus/species projection.
 - `configs/hcast/hcast_hcc_cifar100.yaml`: H-CAST with the hard hierarchy projection block on CIFAR-100.
 - `configs/hcast/hcast_hcc_cub200.yaml`: Same HCC variant on CUB.
 - `configs/hcast/hcast_hcc_aircraft.yaml`: Same HCC variant on Aircraft.
@@ -49,11 +49,12 @@ The CUB-200 and Aircraft presets mirror upstream HRN preprocessing and optimizat
 
 ### Hier-COS presets
 
-- `configs/hiercos/hiercos_cifar100_parity.yaml`
-- `configs/hiercos/hiercos_cub200_parity.yaml`
-- `configs/hiercos/hiercos_aircraft_parity.yaml`
+- `configs/hiercos/hiercos_cifar100.yaml`
+- `configs/hiercos/hiercos_cub200.yaml`
+- `configs/hiercos/hiercos_aircraft.yaml`
+- `configs/hiercos/hiercos_inat19.yaml`
 
-These presets use the single Hier-COS implementation with a fixed orthonormal frame, taxonomy-driven subspace scores, configurable `model.loss` (`kl_reg` default, preferred lex mode `per_level_kl_reg`, or local CE ablation `per_level_ce`), shared per-level weighting through `model.weight_mode` (KL target-path and CE), and paper-style SGD/cosine settings for CIFAR-100 and Aircraft, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol). CIFAR uses HAFrame WideResNet from scratch; Aircraft and CUB use an ImageNet-pretrained ResNet-50.
+These presets use the single Hier-COS implementation with a fixed orthonormal frame, taxonomy-driven subspace scores, configurable `model.loss` (`kl_reg` default, global-softmax `global_softmax_ce_reg`, or level-softmax `level_softmax_ce_reg`), shared CE weighting through `model.weight_mode` in non-lex and lex modes, and paper-style SGD/cosine settings for CIFAR-100, Aircraft, and iNat19, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol), and iNat19 uses the local 3-level family/genus/species projection rather than the upstream 7-level taxonomy. The iNat19 preset defaults to the upstream-aligned `kl_reg`/`kl_leaf` objective and low-LR transform/backbone groups; runner scripts override the loss mode for local lex-ready CE studies. CIFAR uses HAFrame WideResNet from scratch; Aircraft, CUB, and iNat19 use an ImageNet-pretrained ResNet-50.
 
 ### Templates
 
@@ -67,14 +68,14 @@ These presets use the single Hier-COS implementation with a fixed orthonormal fr
 
 ## Datasets
 
-- `datasets/__init__.py`: Strict dataset-id registry (`cifar-100`, `cub-200-2011`, `fgvc-aircraft`, `inat21-mini`), transforms, collate function, and dataloader builder (including optional `crop_bottom_pixels` transform and `drop_last_eval` dataloader flag).
+- `datasets/__init__.py`: Strict dataset-id registry (`cifar-100`, `cub-200-2011`, `fgvc-aircraft`, `inat19`), transforms, collate function, and dataloader builder (including optional `crop_bottom_pixels` transform and `drop_last_eval` dataloader flag).
 - `datasets/base.py`: Shared hierarchical dataset base class, train/val splitting, normalized JSON annotations, label remapping, and taxonomy inference.
 - `datasets/cifar100.py`: CIFAR-100 adapter. Supports 2-level `coarse -> fine` and 3-level `super -> coarse -> fine` hierarchies.
 - `datasets/cub.py`: CUB-200-2011 adapter for folder-based and official metadata layouts.
 - `datasets/cub_tree.py`: Static order/family/species mapping used by the CUB adapter.
 - `datasets/aircraft.py`: FGVC-Aircraft adapter for official variant split files and related fallbacks.
 - `datasets/aircraft_tree.py`: Static manufacturer/family/variant mapping used by the Aircraft adapter.
-- `datasets/inat.py`: iNat21-style adapter for JSON and JSON-in-tar annotations, with repo-specific split fallback logic.
+- `datasets/inat.py`: iNaturalist 2019 adapter for official COCO-style JSON and JSON-in-tar annotations, using `family -> genus -> species` labels and repo-specific split fallback logic.
 
 ## Models
 
@@ -126,7 +127,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 - `models/hiercos/__init__.py`: Public Hier-COS exports.
 - `models/hiercos/factory.py`: Builds `HierCosModel` from config and taxonomy metadata.
 - `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces and an upstream-style fixed random orthonormal frame.
-- `models/hiercos/losses.py`: Hier-COS loss selection between paper-aligned KL + level regularization (`kl_reg`), lex-ready per-level KL+reg decomposition (`per_level_kl_reg`), and a local weighted three-level CE ablation (`per_level_ce` on `abs(node_logits)` node slices).
+- `models/hiercos/losses.py`: Hier-COS loss selection between paper-aligned exact KL + level regularization (`kl_reg`) and two lex-ready weighted target-CE + regularization decompositions that differ only by global-taxonomy versus per-level softmax normalization (`global_softmax_ce_reg`, `level_softmax_ce_reg`).
 
 ## Training
 
@@ -139,7 +140,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 - `train/metrics.py`: Shared hierarchical metrics such as per-level accuracy, weighted AP, FPA, AHD, and TICE.
 - `train/mixup.py`: Mixup/CutMix helpers used by the unified training loop.
 - `train/training_logger.py`: Writes `config_resolved.yaml`, `run_log.jsonl`, and `test_metrics.yaml`.
-- `train/lexicographic/`: Lexicographic config/types and trunk-gradient diagnostics/projection utilities.
+- `train/lexicographic/`: Lexicographic config/types, trunk-gradient diagnostics, and projection utilities.
 - `train/runtime/`: Runtime concerns split by responsibility (optimization, finetune loading, checkpoint/resume, best-checkpoint selection), imported directly from concrete modules.
 
 ## Notebooks

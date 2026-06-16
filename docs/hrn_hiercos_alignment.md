@@ -55,25 +55,27 @@ The implementation choices below follow the selected clean-protocol constraints 
 - **Aligned**:
   - CIFAR path: HAFrame WideResNet (`haframe_wide_resnet`) with hierarchical node-space backbone.
   - Aircraft path: HAFrame ResNet-50 (`haframe_resnet50`) with ImageNet-pretrained trunk.
+  - iNat19 path: HAFrame ResNet-50 (`haframe_resnet50`) with ImageNet-pretrained trunk, average pooling, `kl_reg`/`kl_leaf`, `alpha=0.001`, batch size 256, 100 epochs, SGD/cosine, and upstream iNaturalist19-224 hyperparameters where compatible.
   - A single fixed orthonormal Hier-COS frame with taxonomy-driven subspace scores is supported.
 
 ### Loss
 - **Aligned**:
   - Local KL + level-regularization objective matches upstream `HierCOS_Loss` structure.
 - **Local lex extension**:
-  - `model.loss: per_level_kl_reg` exposes three differentiable level losses (`coarse`, `mid`, `fine`) for gradient/cosine diagnostics and lexicographic projected-gradient experiments; in this mode, `total` is defined as the sum of the three per-level losses.
+  - `model.loss: global_softmax_ce_reg` uses weighted target CE under one global taxonomy-node softmax plus the existing level regularizer. It exposes three differentiable level losses (`coarse`, `mid`, `fine`), and `total` is their sum.
 - **Local ablation**:
-  - `model.loss: per_level_ce` replaces KL + regularization with three weighted per-level CE losses on `node_logits.abs()` level node slices. `model.weight_mode` supports equal weights (`1/depth`), leaf-heavy KL-style weights, and reversed/coarse-heavy weights. The same weights are also used for KL target-path node weighting in `kl_reg`/`per_level_kl_reg`. This mode is not paper-faithful Hier-COS; it exists to expose weighted level losses for gradient/cosine diagnostics and lexicographic projected-gradient experiments.
+  - `model.loss: level_softmax_ce_reg` uses the same path targets, CE weights, regularizer, and aggregation as `global_softmax_ce_reg`, but normalizes logits independently inside each hierarchy level. `model.weight_mode` supports equal weights (`1/depth`), leaf-heavy KL-style weights, and reversed/coarse-heavy weights. CE is weighted and regularization is not. This mode is not paper-faithful Hier-COS; it isolates the effect of softmax normalization scope.
 
 ### Optimizer + Scheduler
 - **Aligned for parity presets**:
-  - SGD with backbone at `0.1x` LR and head/transform at base LR.
-  - Cosine schedule equivalent to upstream custom-sgd cosine behavior.
+  - SGD with backbone at `0.1x` LR and cosine schedule equivalent to upstream custom-sgd cosine behavior.
+  - The iNat19 preset additionally matches upstream `--larger-backbone` behavior by training the transform head at `0.1x` LR.
 
 ### Data Transforms
 - **Aligned + explicit FGVC parity option**:
   - CIFAR parity: reflect-padded random crop + horizontal flip + CIFAR normalization.
   - FGVC-Aircraft parity: `Resize(224) -> RandomCrop(224,padding=4) -> HFlip -> FGVC normalization`.
+  - iNat19 parity: upstream iNat19 normalization with 224-pixel random resized crops for training and 224-pixel resize for validation/test.
   - Added shared transform option `dataset.transforms.manual.crop_bottom_pixels`; parity FGVC config uses `20` to reproduce upstream preprocessing that removes the bottom banner.
 
 ### Split/Evaluation Protocol
@@ -84,16 +86,18 @@ The implementation choices below follow the selected clean-protocol constraints 
 ## Intentional Divergences Kept In This Pass
 
 1. Hier-COS CIFAR remains 3-level in this repo (not upstream 5-level CIFAR protocol).
-2. HRN partial-label (`proportion`) experiments are not implemented in this pass.
-3. Checkpoint selection remains `FPA/TICE/weighted AP` to preserve repository-wide comparability.
+2. Hier-COS iNat19 uses this repo's local 3-level family/genus/species projection, not the upstream full 7-level iNaturalist19 taxonomy.
+3. HRN partial-label (`proportion`) experiments are not implemented in this pass.
+4. Checkpoint selection remains `FPA/TICE/weighted AP` to preserve repository-wide comparability.
 
 ## New Parity Presets Added
 
 - `configs/hrn/hrn_cifar100_parity.yaml` (local extrapolation)
 - `configs/hrn/hrn_cub200_parity.yaml`
 - `configs/hrn/hrn_aircraft_parity.yaml`
-- `configs/hiercos/hiercos_cifar100_parity.yaml`
-- `configs/hiercos/hiercos_cub200_parity.yaml` (local extrapolation)
-- `configs/hiercos/hiercos_aircraft_parity.yaml`
+- `configs/hiercos/hiercos_cifar100.yaml`
+- `configs/hiercos/hiercos_cub200.yaml` (local extrapolation)
+- `configs/hiercos/hiercos_aircraft.yaml`
+- `configs/hiercos/hiercos_inat19.yaml` (local 3-level iNat19 projection)
 
-These are the only HRN/Hier-COS presets kept in their folders for this alignment pass.
+These are the HRN/Hier-COS presets kept in their folders for this alignment pass.

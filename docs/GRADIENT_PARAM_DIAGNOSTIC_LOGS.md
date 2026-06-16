@@ -18,7 +18,7 @@ This file documents the `train_metrics` keys written to `run_log.jsonl` by the *
 
 Important: mask-dependent keys are emitted only when the corresponding mask is active (`any(mask)` in code).
 Pairwise cosine keys listed below are emitted for every epoch summary.
-For Hier-COS, these diagnostics require a loss mode with differentiable per-level losses (`model.loss: per_level_kl_reg` or `per_level_ce`); plain `model.loss: kl_reg` does not expose per-level loss tensors. `model.weight_mode` is shared across Hier-COS KL target-path weighting and CE level-loss weighting; `per_level_kl_reg` still uses KL+reg per-level decomposition.
+For Hier-COS, these diagnostics require a loss mode with differentiable per-level losses (`model.loss: global_softmax_ce_reg` or `level_softmax_ce_reg`); plain `model.loss: kl_reg` does not expose per-level loss tensors. Both decomposed modes use weighted target CE plus the same unweighted level regularizer and differ only by global-taxonomy versus per-level softmax normalization. Logged `loss_level_*` values exactly match the tensors used by lexicographic optimization.
 
 ## A) Standard Trunk Metrics (non-lex and lex)
 
@@ -54,13 +54,28 @@ Notes:
 
 ## B) Lex-Only Additional Metrics (`train.lexicographic.enabled=true` and `log_metrics=true`)
 
-### Post-projection applied flags (`post_` prefix)
+The expectations below describe the default
+`train.lexicographic.projection_rule: orthogonalize_all` +
+`train.lexicographic.projection_mode: coarse_first` behavior.
+
+Post-projection applied flags (`post_` prefix):
 
 - `post_projection_applied_t2_mid_coarse`
 - `post_projection_applied_t1_mid_coarse`
 - `post_projection_applied_t1_fine_higher`
+- `post_projection_applied_t1_mid_fine`
+- `post_projection_applied_t2_coarse_mid`
+- `post_projection_applied_t1_coarse_higher`
+- `post_projection_applied_t1_fine_coarse`
+- `post_projection_applied_t1_fine_mid_proj`
 
-### Lex cosine diagnostics (post naming)
+Lex projection mode indicators:
+
+- `lex_projection_mode_coarse_first`
+- `lex_projection_mode_fine_first`
+- `lex_projection_mode_pairwise_orthogonal`
+
+Lex cosine diagnostics (post naming):
 
 - `post_cos_t2_mid_proj_coarse`
 - `post_cos_t1_mid_proj_coarse`
@@ -69,7 +84,7 @@ Notes:
 - `post_cos_t1_fine_proj_coarse`
 - `post_cos_t1_fine_proj_mid_proj`
 
-### Post-lex gradient norms
+Post-lex gradient norms:
 
 - `post_grad_norm_t3t2t1_coarse`
 - `post_grad_norm_t3_coarse`
@@ -82,11 +97,13 @@ Notes:
 - `post_grad_norm_t1_fine`
 
 Semantics:
+
 - `post_*_coarse`: coarse component after lex composition (equal to coarse pre-component).
 - `post_*_mid`: projected mid component.
 - `post_*_fine`: projected fine component.
 - `post_projection_applied_*`: whether the corresponding projection step was applied (1) or
-  skipped for numerical safety (0).
+  skipped (0). Skips happen for denominator safety (`denom <= eps`) and, when
+  `projection_rule: conflict_only`, for non-conflicting pairs (`dot >= -eps`).
 - `cos_t2_mid_coarse`, `cos_t1_mid_coarse`, and `cos_t2t1_mid_coarse`
   measure the raw mid/coarse alignment before lex projection, block-wise and
   on the combined `t2t1` view.
@@ -95,10 +112,10 @@ Semantics:
 - `cos_t1_fine_coarse` and `cos_t1_fine_mid` measure raw fine alignment
   against each raw higher-priority component on `t1`.
 - `post_cos_t2_mid_proj_coarse`, `post_cos_t1_mid_proj_coarse`, and
-  `post_cos_t2t1_mid_proj_coarse` are expected to move near 0 because mid is
-  projected off coarse separately on `t2` and `t1`.
-- `post_cos_t1_fine_proj_higher` is expected to move near 0 because fine is projected
-  off the composed `coarse + mid_projected_t1` update on `t1`.
+  `post_cos_t2t1_mid_proj_coarse` are expected to move near 0 where projection
+  is applied.
+- `post_cos_t1_fine_proj_higher` is expected to move near 0 where projection is
+  applied.
 - `post_cos_t1_fine_proj_coarse` and `post_cos_t1_fine_proj_mid_proj` are component-wise
   diagnostics only. They are not expected to be near 0 under the current
   single-vector fine projection.
@@ -108,14 +125,13 @@ Semantics:
 - Lex projection coefficients and diagnostics are computed on unscaled gradients, even when AMP is enabled.
 - When AMP is enabled, the final projected gradients assigned to parameters are multiplied by the current
   `grad_scale` before `GradScaler.step`, so PyTorch can unscale and check them normally.
-- Logged gradient norms (`grad_norm_*`, `post_grad_norm_*`) are reported in unscaled-equivalent units.
+- Logged gradient norms (`grad_norm_*` and `post_grad_norm_*`) are reported in unscaled-equivalent units.
 - Cosines/flags are scale-invariant.
 
 ## D) Recent Log Audit (Concrete, from `/scratch/g.saggini1/outputs`)
 
 Audit date: **April 21, 2026**.
 Scanned runs: `hcast*` with `run_log.jsonl` present.
-
 ### Observed key-set patterns
 
 1. **49 keys** (full standard + full lex in older logs):
@@ -165,8 +181,8 @@ Counts differ because metric emission is mask-dependent. If a run has no active 
 
 ### Lex (`enabled=true`, `log_metrics=true`)
 
-- Includes: standard metrics + post-projection applied flags (`post_projection_applied_*`) + post-grad norms
-  (`post_grad_norm_*`) + post cosine diagnostics listed above.
+- Includes: standard metrics + post-projection applied flags (`post_projection_applied_*`)
+  + post-grad norms (`post_grad_norm_*`) + post cosine diagnostics listed above.
 
 ### Lex (`enabled=true`, `log_metrics=false`)
 

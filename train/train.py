@@ -161,9 +161,17 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
             num_classes_per_level=num_classes_per_level,
             taxonomy=taxonomy,
         )
-        val_metrics = evaluate(model, val_loader, device, cfg, epoch=epoch, taxonomy=taxonomy)
+        val_outputs = evaluate(
+            model,
+            val_loader,
+            device,
+            cfg,
+            epoch=epoch,
+            taxonomy=taxonomy,
+            include_losses=True,
+        )
 
-        scores = {mode: metric_for_best(val_metrics, mode=mode) for mode in BEST_SELECTION_MODES}
+        scores = {mode: metric_for_best(val_outputs, mode=mode) for mode in BEST_SELECTION_MODES}
         if scheduler is not None:
             scheduler.step(epoch + 1, scores["topdown"])
 
@@ -205,12 +213,12 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
             lr=float(optimizer.param_groups[0]["lr"]) if optimizer.param_groups else float("nan"),
             best_metrics=best_metrics,
             train_outputs=train_outputs,
-            val_metrics=val_metrics,
+            val_outputs=val_outputs,
         )
 
         epoch_tag = f"[epoch {epoch + 1:03d}/{stop_epoch:03d}]"
         print(f"{epoch_tag} train | {pretty_metrics(train_outputs, level_names=level_names)}")
-        print(f"{epoch_tag} val   | {pretty_metrics(val_metrics, level_names=level_names)}")
+        print(f"{epoch_tag} val   | {pretty_metrics(val_outputs, level_names=level_names)}")
         print("")
 
     # Evaluate each best validation checkpoint on the test set.

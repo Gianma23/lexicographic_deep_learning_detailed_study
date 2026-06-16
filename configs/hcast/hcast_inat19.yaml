@@ -21,15 +21,17 @@ model:
     gk_weight: 0.5
 
 dataset:
-  name: inat21-mini
-  root: /scratch/g.saggini1/datasets/inat21mini
+  name: inat19
+  root: /scratch/g.saggini1/datasets/inat19
   hierarchy_depth: 3
   image_size: 224
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
-  levels: [order, family, species]
+  levels: [family, genus, species]
   download: false
-  val_split_ratio: 0.2
+  # Fixed Making Better Mistakes / Hier-COS split over official iNat19 train+val images.
+  split_policy: explicit
+  val_split_ratio: 0.0
   split_seed: null
   transforms:
     use_timm: true
@@ -57,9 +59,9 @@ dataset:
     mixup_mode: batch
 
   annotations:
-    train: train.json
-    val: val.json
-    test: test.json
+    train: annotations_mbm/train.json
+    val: annotations_mbm/val.json
+    test: annotations_mbm/test.json
 
 dataloader:
   batch_size: 256
@@ -76,7 +78,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hcast_inat21mini
+  output_dir: /scratch/g.saggini1/outputs/hcast_inat19
   smoothing: 0.1
 
 optim:

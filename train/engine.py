@@ -124,6 +124,8 @@ def train_one_epoch(
                 eps=float(lex_cfg.eps),
                 include_metrics=bool(lex_cfg.log_metrics),
                 grad_scale=lex_grad_scale,
+                projection_mode=str(lex_cfg.projection_mode),
+                projection_rule=str(lex_cfg.projection_rule),
                 precomputed_level_grad_map=precomputed_level_grad_map,
             )
             if lex_state is None:
@@ -187,10 +189,12 @@ def evaluate(
     cfg: Any,
     epoch: int = 0,
     taxonomy: Optional[Dict] = None,
-) -> Dict[str, float]:
+    include_losses: bool = False,
+) -> Dict[str, Any]:
     model.eval()
     _set_model_epoch(model, epoch)
 
+    loss_vals = []
     batch_metrics = []
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
 
@@ -200,8 +204,19 @@ def evaluate(
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
             output = model(images)
+            if include_losses:
+                _, loss_dict = compute_loss(cfg, output, labels, taxonomy)
 
+        if include_losses:
+            loss_vals.append(loss_dict)
         batch_metrics.append(evaluate_batch(output, labels, taxonomy))
 
     metrics = merge_metric_batches(batch_metrics)
-    return metrics
+    if not include_losses:
+        return metrics
+
+    loss_metrics = merge_metric_batches(loss_vals)
+    outputs: Dict[str, Any] = dict(loss_metrics)
+    outputs.update(metrics)
+    outputs["__loss_keys__"] = sorted(loss_metrics.keys())
+    return outputs

@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS per_level_kl_reg lexicographic variants on all datasets:
-# - model.loss=per_level_kl_reg
-# - model.weight_mode in {equal, kl_leaf, kl_coarse} (tagged sweep)
-# - train.lexicographic.enabled=true (start epoch 0)
-# for: cifar100, cub200, aircraft.
+# Runs the Hier-COS transformation-layer ablation on all datasets:
+# - model.loss=global_softmax_ce_reg
+# - model.weight_mode=equal
+# - train.lexicographic.enabled=true
+# - train.lexicographic.start_epoch=0
+# - train.lexicographic.projection_mode=coarse_first
+# - train.lexicographic.projection_rule=orthogonalize_all
+# - model.transform_mode in {bn_linear, final_only}
+# The matching full-transform reference is produced by
+# run_hiercos_lex_orthogonalize_all.sh.
+# for: cifar100, cub200, aircraft, inat19.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -39,16 +45,18 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_per_level_kl_reg_lex_grid.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_transform_ablation.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
 
-DATASETS=(cifar100 cub200 aircraft)
+DATASETS=(cifar100 cub200 aircraft inat19)
+TRANSFORM_MODES=(bn_linear final_only)
 
 config_for_dataset() {
   case "$1" in
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
     cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
     aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
+    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -108,20 +116,14 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local mode_tag="$2"
-
-  case "$mode_tag" in
-    equal) echo "$OUTPUTS_ROOT/hiercos_${ds}_per_level_kl_reg_equal" ;;
-    kl_leaf) echo "$OUTPUTS_ROOT/hiercos_${ds}_per_level_kl_reg_kl_leaf" ;;
-    kl_coarse) echo "$OUTPUTS_ROOT/hiercos_${ds}_per_level_kl_reg_kl_coarse" ;;
-    *)
-      echo "Unknown mode tag: $mode_tag" >&2
-      exit 1
-      ;;
-  esac
+  local transform_mode="$2"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_global_softmax_ce_reg_lex_orthogonalize_all_coarse_first_transform_${transform_mode}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Weight mode: equal\n'
+printf 'Projection mode: coarse_first\n'
+printf 'Projection rule: orthogonalize_all\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -129,24 +131,16 @@ printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
-  # per_level_kl_reg with tagged mode sweep + lexicographic mode
-  run_train "$cfg" "$(run_output_dir "$ds" kl_leaf)" \
-    "model.loss=per_level_kl_reg" \
-    "model.weight_mode=kl_leaf" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
-
-  run_train "$cfg" "$(run_output_dir "$ds" equal)" \
-    "model.loss=per_level_kl_reg" \
-    "model.weight_mode=equal" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
-
-  run_train "$cfg" "$(run_output_dir "$ds" kl_coarse)" \
-    "model.loss=per_level_kl_reg" \
-    "model.weight_mode=kl_coarse" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
+  for transform_mode in "${TRANSFORM_MODES[@]}"; do
+    run_train "$cfg" "$(run_output_dir "$ds" "$transform_mode")" \
+      "model.loss=global_softmax_ce_reg" \
+      "model.weight_mode=equal" \
+      "model.transform_mode=$transform_mode" \
+      "train.lexicographic.enabled=true" \
+      "train.lexicographic.start_epoch=0" \
+      "train.lexicographic.projection_mode=coarse_first" \
+      "train.lexicographic.projection_rule=orthogonalize_all"
+  done
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -160,4 +154,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS per_level_kl_reg lex runs.\n'
+printf 'Completed all requested Hier-COS transform ablation runs.\n'

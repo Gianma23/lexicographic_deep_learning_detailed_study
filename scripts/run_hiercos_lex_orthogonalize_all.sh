@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS abs-node CE lexicographic variants on all datasets:
-# - model.loss=per_level_ce
-# - model.weight_mode in {equal, kl_leaf, kl_coarse}
-# - train.lexicographic.enabled=true (start epoch 0)
-# for: cifar100, cub200, aircraft.
+# Runs equal-weight Hier-COS orthogonalize-all lexicographic variants:
+# - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
+# - model.weight_mode=equal
+# - model.transform_mode=full
+# - train.lexicographic.enabled=true
+# - train.lexicographic.start_epoch=0
+# - train.lexicographic.projection_mode in {coarse_first, fine_first}
+# - train.lexicographic.projection_rule=orthogonalize_all
+# for: cifar100, cub200, aircraft, inat19.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -14,6 +18,16 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
+LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
+
+case "$LOSS_MODE" in
+  global_softmax_ce_reg|level_softmax_ce_reg) ;;
+  *)
+    echo "Unsupported LOSS_MODE: $LOSS_MODE" >&2
+    echo "Expected global_softmax_ce_reg or level_softmax_ce_reg." >&2
+    exit 1
+    ;;
+esac
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -39,16 +53,19 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_abs_ce_lex_grid.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_lex_orthogonalize_all.sh
+#   LOSS_MODE=level_softmax_ce_reg ./scripts/run_hiercos_lex_orthogonalize_all.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
 
-DATASETS=(cifar100 cub200 aircraft)
+DATASETS=(cifar100 cub200 aircraft inat19)
+LEX_PROJECTION_MODES=(coarse_first fine_first)
 
 config_for_dataset() {
   case "$1" in
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
     cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
     aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
+    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -108,20 +125,15 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local ce_mode="$2"
-
-  case "$ce_mode" in
-    equal) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_equal" ;;
-    kl_leaf) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_kl_leaf" ;;
-    kl_coarse) echo "$OUTPUTS_ROOT/hiercos_${ds}_ce_kl_coarse" ;;
-    *)
-      echo "Unknown CE weight mode: $ce_mode" >&2
-      exit 1
-      ;;
-  esac
+  local projection_mode="$2"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_orthogonalize_all_${projection_mode}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Loss: %s\n' "$LOSS_MODE"
+printf 'Weight mode: equal\n'
+printf 'Transform mode: full\n'
+printf 'Projection rule: orthogonalize_all\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -129,24 +141,16 @@ printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
-  # abs-node CE with all supported CE weight modes + lexicographic mode
-  run_train "$cfg" "$(run_output_dir "$ds" kl_leaf)" \
-    "model.loss=per_level_ce" \
-    "model.weight_mode=kl_leaf" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
-
-  run_train "$cfg" "$(run_output_dir "$ds" equal)" \
-    "model.loss=per_level_ce" \
-    "model.weight_mode=equal" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
-
-  run_train "$cfg" "$(run_output_dir "$ds" kl_coarse)" \
-    "model.loss=per_level_ce" \
-    "model.weight_mode=kl_coarse" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0"
+  for lex_mode in "${LEX_PROJECTION_MODES[@]}"; do
+    run_train "$cfg" "$(run_output_dir "$ds" "$lex_mode")" \
+      "model.loss=$LOSS_MODE" \
+      "model.weight_mode=equal" \
+      "model.transform_mode=full" \
+      "train.lexicographic.enabled=true" \
+      "train.lexicographic.start_epoch=0" \
+      "train.lexicographic.projection_mode=$lex_mode" \
+      "train.lexicographic.projection_rule=orthogonalize_all"
+  done
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -160,4 +164,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS abs-node CE lex runs.\n'
+printf 'Completed all requested equal-weight Hier-COS orthogonalize-all lex runs.\n'

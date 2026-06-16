@@ -135,7 +135,12 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
                 param_groups = model.parameter_groups(base_lr=lr, trunk_lr_scale=lr_scale)
             else:
                 lr_scale = float(model_cfg.get("backbone_lr_scale", 0.1))
-                param_groups = model.parameter_groups(base_lr=lr, backbone_lr_scale=lr_scale)
+                transform_lr_scale = float(model_cfg.get("transform_lr_scale", 1.0))
+                param_groups = model.parameter_groups(
+                    base_lr=lr,
+                    backbone_lr_scale=lr_scale,
+                    transform_lr_scale=transform_lr_scale,
+                )
             if not param_groups:
                 raise ValueError(f"{model_name} optimizer parameter_groups() returned no trainable parameters.")
             return torch.optim.SGD(

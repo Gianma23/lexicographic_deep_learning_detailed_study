@@ -1,34 +1,36 @@
 model:
   name: hiercos
   loss: global_softmax_ce_reg
-  weight_mode: equal
+  weight_mode: kl_leaf
   variant: haframe_resnet50
   pool: average
   pretrained: true
-  alpha: 0.1
+  # Upstream Hier-COS iNaturalist19-224 uses alpha=0.001 and gamma=1.0.
+  # The local Hier-COS loss exposes alpha; fixed-frame scaling keeps gamma=1 behavior.
+  alpha: 0.001
   backbone_lr_scale: 0.1
+  # Upstream --larger-backbone uses 0.01 for both f_theta and the ResNet trunk.
+  transform_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
 
 dataset:
-  name: cub-200-2011
-  root: /scratch/g.saggini1/datasets/CUB_200_2011
+  name: inat19
+  root: /scratch/g.saggini1/datasets/inat19
   hierarchy_depth: 3
   image_size: 224
-  mean: [0.485, 0.456, 0.406]
-  std: [0.229, 0.224, 0.225]
-  levels: [order, family, species]
-  # Local extrapolation: Hier-COS upstream does not report CUB-200 runs.
-  val_split_ratio: 0.2
+  mean: [0.454, 0.474, 0.367]
+  std: [0.237, 0.230, 0.249]
+  levels: [family, genus, species]
+  download: false
+  # Fixed Making Better Mistakes / Hier-COS split over official iNat19 train+val images.
+  split_policy: explicit
+  val_split_ratio: 0.0
   split_seed: 0
   transforms:
     use_timm: false
     normalization: torchvision
     manual:
-      crop_mode: random_crop
-      random_crop_padding: 4
-      random_crop_padding_mode: constant
-      resize_before_crop: true
-      resize_before_crop_size: 224
+      crop_mode: random_resized_crop
       interpolation: bilinear
       random_horizontal_flip_prob: 0.5
       crop_bottom_pixels: 0
@@ -45,12 +47,12 @@ dataset:
     mixup_mode: batch
 
   annotations:
-    train: train.json
-    val: val.json
-    test: test.json
+    train: annotations_mbm/train.json
+    val: annotations_mbm/val.json
+    test: annotations_mbm/test.json
 
 dataloader:
-  batch_size: 64
+  batch_size: 256
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
@@ -63,7 +65,8 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_cub200_global_softmax_ce_reg_baseline_equal
+  output_dir: /scratch/g.saggini1/outputs/hiercos_inat19_global_softmax_ce_reg_baseline_kl_leaf
+  smoothing: 0.0
 
 optim:
   name: sgd

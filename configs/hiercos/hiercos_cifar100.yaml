@@ -1,7 +1,7 @@
 model:
   name: hiercos
-  loss: per_level_kl_reg
-  weight_mode: kl_leaf
+  loss: global_softmax_ce_reg
+  weight_mode: equal
   variant: haframe_wide_resnet
   alpha: 0.05
   pretrained: false
@@ -22,7 +22,7 @@ dataset:
   download: true
   # Intentional clean-protocol choice: keep repo val split workflow (not upstream 50/class).
   val_split_ratio: 0.1
-  split_seed: null
+  split_seed: 0
   transforms:
     use_timm: false
     normalization: torchvision
@@ -62,7 +62,7 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100_per_level_kl_reg_kl_leaf_nolex
+  output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100_global_softmax_ce_reg_baseline_equal
   smoothing: 0.0
 
 optim:

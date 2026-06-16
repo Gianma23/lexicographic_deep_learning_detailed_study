@@ -7,42 +7,49 @@ from typing import Any, Dict, List, Optional
 from .base import BaseHierDataset, split_train_val_samples
 
 
-class INatDataset(BaseHierDataset):
-    """iNaturalist 2021 mini adapter (Visipedia inat_comp/2021 format)."""
+class INat19Dataset(BaseHierDataset):
+    """iNaturalist 2019 adapter (Visipedia inat_comp/2019 format)."""
 
     def default_levels(self) -> List[str]:
         """Default hierarchy names used when config does not provide levels."""
-        return ["order", "family", "species"]
+        return ["family", "genus", "species"]
 
     def load_samples(self) -> List[Dict[str, Any]]:
-        """Load iNat21-mini using split policy: train->(train,val), official val->test."""
+        """Load iNat19 using explicit manifests or official annotation fallbacks."""
+        split_policy = self.cfg.dataset.get("split_policy", "official_val_test")
+        if split_policy == "explicit":
+            ann = self._configured_annotation_file(self.split)
+            if ann is None:
+                return []
+            return self._read_inat19_annotations(ann, split_hint=self.split)
+
         train_ann = self._find_preferred_annotation_file("train")
         val_ann = self._find_preferred_annotation_file("val")
 
         if self.split in {"train", "val"}:
             if train_ann is None:
                 return []
-            pool = self._read_inat21_annotations(train_ann, split_hint="train")
+            pool = self._read_inat19_annotations(train_ann, split_hint="train")
             return split_train_val_samples(pool, split=self.split, cfg=self.cfg, stratify_level=-1)
 
         # test split: use official validation labels as the held-out test set.
         if val_ann is not None:
-            test_samples = self._read_inat21_annotations(val_ann, split_hint="val")
+            test_samples = self._read_inat19_annotations(val_ann, split_hint="val")
             if test_samples:
                 return test_samples
             warnings.warn(
-                "Validation annotation file exists but produced no labeled samples; trying test/public_test fallback.",
+                "Validation annotation file exists but produced no labeled samples; trying configured test fallback.",
                 RuntimeWarning,
             )
 
         test_ann = self._find_preferred_annotation_file("test")
         if test_ann is not None:
-            test_samples = self._read_inat21_annotations(test_ann, split_hint="test")
+            test_samples = self._read_inat19_annotations(test_ann, split_hint="test")
             if test_samples:
                 return test_samples
 
         if train_ann is not None:
-            pool = self._read_inat21_annotations(train_ann, split_hint="train")
+            pool = self._read_inat19_annotations(train_ann, split_hint="train")
             return split_train_val_samples(pool, split="val", cfg=self.cfg, stratify_level=-1)
         return []
 
@@ -65,23 +72,15 @@ class INatDataset(BaseHierDataset):
         return None
 
     def _find_official_annotation_file(self, split_name: str) -> Optional[Path]:
-        """Resolve official iNat 2021 annotation files for the requested split."""
+        """Resolve official iNat 2019 annotation files for the requested split."""
         names_by_split = {
             "train": [
-                "train_mini.json",
-                "train_mini.json.tar.gz",
-                "train.json",
-                "train.json.tar.gz",
+                "train2019.json",
+                "train2019.json.tar.gz",
             ],
             "val": [
-                "val.json",
-                "val.json.tar.gz",
-            ],
-            "test": [
-                "public_test.json",
-                "public_test.json.tar.gz",
-                "test.json",
-                "test.json.tar.gz",
+                "val2019.json",
+                "val2019.json.tar.gz",
             ],
         }
 
@@ -100,8 +99,8 @@ class INatDataset(BaseHierDataset):
                 return path
         return None
 
-    def _read_inat21_annotations(self, ann_path: Path, split_hint: str) -> List[Dict[str, Any]]:
-        """Read official iNat21-mini annotations from JSON or JSON-in-tar files."""
+    def _read_inat19_annotations(self, ann_path: Path, split_hint: str) -> List[Dict[str, Any]]:
+        """Read official iNat19 annotations from JSON or JSON-in-tar files."""
         payload = self._load_json_payload(ann_path)
         if not payload:
             return []
@@ -126,7 +125,12 @@ class INatDataset(BaseHierDataset):
             if len(labels) != self.depth:
                 continue
             image_path = self._resolve_image_path(str(image_rel), ann_path=ann_path, split_hint=split_hint)
-            out.append({"image": image_path, "labels": labels, "meta": dict(row)})
+            meta = row.get("meta")
+            if isinstance(meta, dict):
+                meta = dict(meta)
+            else:
+                meta = dict(row)
+            out.append({"image": image_path, "labels": labels, "meta": meta})
         return out
 
     @staticmethod
@@ -140,7 +144,7 @@ class INatDataset(BaseHierDataset):
         ann_path: Path,
         split_hint: str,
     ) -> List[Dict[str, Any]]:
-        """Parse Visipedia iNat21 COCO-style annotations into dataset samples."""
+        """Parse Visipedia iNat19 COCO-style annotations into dataset samples."""
         images = payload.get("images", [])
         categories = payload.get("categories", [])
         annotations = payload.get("annotations", [])
@@ -162,8 +166,8 @@ class INatDataset(BaseHierDataset):
             image_by_id[image_id] = image
 
         category_by_id: Dict[int, Dict[str, Any]] = {}
-        order_keys = set()
         family_keys = set()
+        genus_keys = set()
         for category in categories:
             if not isinstance(category, dict):
                 continue
@@ -172,15 +176,15 @@ class INatDataset(BaseHierDataset):
             except (TypeError, ValueError):
                 continue
 
-            order_key = self._normalize_taxon_name(category.get("order"))
             family_key = self._normalize_taxon_name(category.get("family"))
-            if order_key and family_key:
-                order_keys.add(order_key)
-                family_keys.add((order_key, family_key))
+            genus_key = self._normalize_taxon_name(category.get("genus"))
+            if family_key and genus_key:
+                family_keys.add(family_key)
+                genus_keys.add((family_key, genus_key))
             category_by_id[category_id] = category
 
-        order_to_id = {name: idx for idx, name in enumerate(sorted(order_keys))}
         family_to_id = {name: idx for idx, name in enumerate(sorted(family_keys))}
+        genus_to_id = {name: idx for idx, name in enumerate(sorted(genus_keys))}
 
         samples: List[Dict[str, Any]] = []
         for ann in annotations:
@@ -197,13 +201,13 @@ class INatDataset(BaseHierDataset):
             if image is None or category is None:
                 continue
 
-            order_key = self._normalize_taxon_name(category.get("order"))
             family_key = self._normalize_taxon_name(category.get("family"))
-            if not order_key or not family_key:
+            genus_key = self._normalize_taxon_name(category.get("genus"))
+            if not family_key or not genus_key:
                 continue
-            order = order_to_id.get(order_key)
-            family = family_to_id.get((order_key, family_key))
-            if order is None or family is None:
+            family = family_to_id.get(family_key)
+            genus = genus_to_id.get((family_key, genus_key))
+            if family is None or genus is None:
                 continue
 
             file_name = str(image.get("file_name", "")).strip()
@@ -220,15 +224,15 @@ class INatDataset(BaseHierDataset):
             samples.append(
                 {
                     "image": image_path,
-                    "labels": [order, family, species],
+                    "labels": [family, genus, species],
                     "meta": {
-                        "source": "inat21_coco",
+                        "source": "inat19_coco",
                         "annotation_file": str(ann_path),
                         "annotation_id": ann.get("id"),
                         "image_id": image_id,
                         "category_id": species,
-                        "order_name": category.get("order"),
                         "family_name": category.get("family"),
+                        "genus_name": category.get("genus"),
                         "species_name": category.get("name"),
                         "file_name": file_name,
                     },
@@ -270,21 +274,15 @@ class INatDataset(BaseHierDataset):
     def _split_dir_for_context(split_hint: str, ann_name: str) -> str:
         """Infer expected image subdirectory from split hint and annotation file name."""
         ann_lower = ann_name.lower()
-        if "train_mini" in ann_lower:
-            return "train_mini"
-        if ann_lower.startswith("train"):
-            return "train"
-        if ann_lower.startswith("val"):
-            return "val"
-        if "public_test" in ann_lower:
-            return "public_test"
-        if ann_lower.startswith("test"):
-            return "public_test"
+        if ann_lower.startswith("train2019") or ann_lower.startswith("val2019"):
+            return "train_val2019"
+        if ann_lower.startswith("train") or ann_lower.startswith("val"):
+            return "train_val2019"
 
         by_split = {
-            "train": "train_mini",
-            "val": "val",
-            "test": "public_test",
+            "train": "train_val2019",
+            "val": "train_val2019",
+            "test": "train_val2019",
         }
         return by_split.get(split_hint, "")
 
@@ -295,7 +293,7 @@ class INatDataset(BaseHierDataset):
         split_hint: str,
         category_dir: str = "",
     ) -> Path:
-        """Resolve iNat image paths across official train_mini/val/public_test layouts."""
+        """Resolve iNat19 image paths across official train_val2019 layouts."""
         rel = Path(rel_path)
         if rel.is_absolute():
             return rel

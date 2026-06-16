@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the supported Hier-COS baseline grid:
-# - model.loss=kl_reg
-# for all datasets: cifar100, cub200, aircraft.
+# Runs equal-weight Hier-COS conflict-only lexicographic variants:
+# - model.loss=global_softmax_ce_reg
+# - model.weight_mode=equal
+# - model.transform_mode=full
+# - train.lexicographic.enabled=true
+# - train.lexicographic.start_epoch=0
+# - train.lexicographic.projection_mode in {coarse_first, fine_first}
+# - train.lexicographic.projection_rule=conflict_only
+# for: cifar100, cub200, aircraft, inat19.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -37,16 +43,18 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_full_grid.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_lex_conflict_only.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
 
-DATASETS=(cifar100 cub200 aircraft)
+DATASETS=(cifar100 cub200 aircraft inat19)
+LEX_PROJECTION_MODES=(coarse_first fine_first)
 
 config_for_dataset() {
   case "$1" in
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
     cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
     aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
+    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -106,19 +114,14 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local loss_mode="$2"
-  local variant="$3"
-
-  case "$loss_mode:$variant" in
-    kl_reg:na) echo "$OUTPUTS_ROOT/hiercos_${ds}" ;;
-    *)
-      echo "Unknown run naming tuple: $loss_mode $variant" >&2
-      exit 1
-      ;;
-  esac
+  local projection_mode="$2"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_global_softmax_ce_reg_lex_conflict_only_${projection_mode}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Weight mode: equal\n'
+printf 'Transform mode: full\n'
+printf 'Projection rule: conflict_only\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -126,9 +129,16 @@ printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
-  # 1) Paper-aligned Hier-COS KL + regularization
-  run_train "$cfg" "$(run_output_dir "$ds" kl_reg na)" \
-    "model.loss=kl_reg"
+  for projection_mode in "${LEX_PROJECTION_MODES[@]}"; do
+    run_train "$cfg" "$(run_output_dir "$ds" "$projection_mode")" \
+      "model.loss=global_softmax_ce_reg" \
+      "model.weight_mode=equal" \
+      "model.transform_mode=full" \
+      "train.lexicographic.enabled=true" \
+      "train.lexicographic.start_epoch=0" \
+      "train.lexicographic.projection_mode=$projection_mode" \
+      "train.lexicographic.projection_rule=conflict_only"
+  done
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -142,4 +152,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS runs.\n'
+printf 'Completed all requested equal-weight Hier-COS conflict-only lex runs.\n'

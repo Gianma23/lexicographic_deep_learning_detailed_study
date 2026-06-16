@@ -433,6 +433,7 @@ class HierCosModel(nn.Module):
         pretrained: bool = True,
         pool: str = "max",
         backbone_lr_scale: float = 0.1,
+        transform_lr_scale: float = 1.0,
         fixed_frame_mode: str = "orthonormal_random",
         wide_depth: int = 28,
         wide_widen_factor: int = 8,
@@ -448,6 +449,7 @@ class HierCosModel(nn.Module):
         self.depth = int(topology["depth"])
         self.total_nodes = int(topology["total_nodes"])
         self.backbone_lr_scale = float(backbone_lr_scale)
+        self.transform_lr_scale = float(transform_lr_scale)
 
         self.level_node_id_names: List[str] = []
         self.level_subspace_mask_names: List[str] = []
@@ -513,6 +515,7 @@ class HierCosModel(nn.Module):
             return nn.Sequential(
                 nn.BatchNorm1d(width),
                 nn.Linear(width, width, bias=False),
+                _get_activation("prelu", width),
             )
         if mode == "final_only":
             return nn.Identity()
@@ -539,9 +542,16 @@ class HierCosModel(nn.Module):
                 )
         self.fixed_classifier.weight.requires_grad_(False)
 
-    def parameter_groups(self, base_lr: float, backbone_lr_scale: Optional[float] = None):
-        scale = self.backbone_lr_scale if backbone_lr_scale is None else float(backbone_lr_scale)
-        backbone_lr = float(base_lr) * float(scale)
+    def parameter_groups(
+        self,
+        base_lr: float,
+        backbone_lr_scale: Optional[float] = None,
+        transform_lr_scale: Optional[float] = None,
+    ):
+        backbone_scale = self.backbone_lr_scale if backbone_lr_scale is None else float(backbone_lr_scale)
+        transform_scale = self.transform_lr_scale if transform_lr_scale is None else float(transform_lr_scale)
+        backbone_lr = float(base_lr) * float(backbone_scale)
+        transform_lr = float(base_lr) * float(transform_scale)
 
         backbone_params = [p for p in self.backbone.parameters() if p.requires_grad]
         transform_params = (
@@ -557,11 +567,13 @@ class HierCosModel(nn.Module):
             other_params = classifier_params
             backbone_params = backbone_params + transform_params
         else:
-            other_params = classifier_params + transform_params
+            other_params = classifier_params
 
         groups = []
         if other_params:
             groups.append({"params": other_params, "lr": float(base_lr)})
+        if transform_params and self.variant != "haframe_wide_resnet":
+            groups.append({"params": transform_params, "lr": float(transform_lr)})
         if backbone_params:
             groups.append({"params": backbone_params, "lr": float(backbone_lr)})
         return groups

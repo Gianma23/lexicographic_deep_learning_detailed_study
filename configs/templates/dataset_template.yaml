@@ -1,6 +1,6 @@
 # Template for the `dataset:` section in experiment configs.
 dataset:
-  name: cifar-100                    # Dataset id (strict): cifar-100 | cub-200-2011 | fgvc-aircraft | inat21-mini
+  name: cifar-100                    # Dataset id (strict): cifar-100 | cub-200-2011 | fgvc-aircraft | inat19
   root: ./data/cifar100              # Root folder where images/annotations are stored
   hierarchy_depth: 3                 # Number of hierarchy levels expected in labels
   image_size: 32                     # Target input size (single int; square image)
@@ -8,6 +8,7 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]      # Channel std (used when normalization=torchvision)
   levels: [coarse1, coarse2, fine]   # Human-readable hierarchy level names
   download: true                     # Adapter-specific auto-download toggle (if supported)
+  split_policy: default              # iNat19: explicit uses annotations.{train,val,test}; default keeps adapter fallback policy
   val_split_ratio: 0.2               # Train->val split ratio when no explicit val split is provided
   split_seed: null                   # Split seed; null means fallback to train.seed
 

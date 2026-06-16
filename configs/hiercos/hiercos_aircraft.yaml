@@ -1,6 +1,6 @@
 model:
   name: hiercos
-  loss: per_level_kl_reg
+  loss: global_softmax_ce_reg
   weight_mode: equal
   variant: haframe_resnet50
   pool: average
@@ -8,7 +8,6 @@ model:
   alpha: 0.1
   backbone_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
-  transform_mode: bn_linear
 
 dataset:
   name: fgvc-aircraft
@@ -20,7 +19,7 @@ dataset:
   levels: [manufacturer, family, variant]
   # Intentional clean-protocol choice: keep repo val split workflow.
   val_split_ratio: 0.2
-  split_seed: null
+  split_seed: 0
   transforms:
     use_timm: false
     normalization: torchvision
@@ -65,11 +64,8 @@ train:
   device: cuda
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft_per_level_kl_reg_equal_bnlinear
+  output_dir: /scratch/g.saggini1/outputs/hiercos_aircraft_global_softmax_ce_reg_baseline_equal
   smoothing: 0.0
-  lexicographic:
-    enabled: true
-    start_epoch: 0
 
 optim:
   name: sgd

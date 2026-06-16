@@ -57,6 +57,12 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
     loss_parts: List[str] = []
     if "total" in metrics:
         loss_parts.append(f"total={metrics['total']:.4f}")
+    if "ce" in metrics:
+        loss_parts.append(f"ce={metrics['ce']:.4f}")
+    if "reg" in metrics:
+        loss_parts.append(f"reg={metrics['reg']:.4f}")
+    if "kl" in metrics:
+        loss_parts.append(f"kl={metrics['kl']:.4f}")
     if "level_ce" in metrics:
         loss_parts.append(f"level_ce={metrics['level_ce']:.4f}")
     if "gk_loss" in metrics:

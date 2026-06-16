@@ -16,6 +16,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         pretrained=bool(model_cfg.get("pretrained", True)),
         pool=model_cfg.get("pool", "max"),
         backbone_lr_scale=float(model_cfg.get("backbone_lr_scale", 0.1)),
+        transform_lr_scale=float(model_cfg.get("transform_lr_scale", 1.0)),
         fixed_frame_mode=model_cfg.get("fixed_frame_mode", "orthonormal_random"),
         wide_depth=int(model_cfg.get("wide_depth", 28)),
         wide_widen_factor=int(model_cfg.get("wide_widen_factor", 8)),

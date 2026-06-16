@@ -12,6 +12,7 @@ data/**
 docs/figures/**
 .VSCodeCounter/
 .codex
+.vscode/
 
 # Distribution / packaging
 .Python

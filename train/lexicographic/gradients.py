@@ -6,6 +6,8 @@ from .types import GradTuple, LevelGradMap, LexicographicUpdateState, TrunkGradS
 
 _GRAD_EPS = 1e-12
 _GRAD_LEVEL_NAMES = ("coarse", "mid", "fine")
+_LEX_PROJECTION_MODES = ("coarse_first", "fine_first", "pairwise_orthogonal")
+_LEX_PROJECTION_RULES = ("orthogonalize_all", "conflict_only")
 
 
 def get_trainable_named_params(model: torch.nn.Module) -> List[Tuple[str, torch.nn.Parameter]]:
@@ -234,7 +236,14 @@ def _project_onto_reference(
     reference_grads: Sequence[Optional[torch.Tensor]],
     include_mask: Sequence[bool],
     eps: float,
+    projection_rule: str = "orthogonalize_all",
 ) -> Tuple[GradTuple, float, bool]:
+    if projection_rule not in _LEX_PROJECTION_RULES:
+        raise ValueError(
+            f"Unsupported lex projection rule '{projection_rule}'. "
+            f"Expected one of {list(_LEX_PROJECTION_RULES)}."
+        )
+
     denom = _dot_from_autograd_grads(reference_grads, reference_grads, include_mask)
     denom_value = float(denom.item())
 
@@ -242,6 +251,11 @@ def _project_onto_reference(
         return tuple(target_grads), 0.0, False
 
     numer = _dot_from_autograd_grads(target_grads, reference_grads, include_mask)
+    numer_value = float(numer.item())
+    conflict = numer_value < -float(eps)
+    if projection_rule == "conflict_only" and not conflict:
+        return tuple(target_grads), 0.0, False
+
     coeff = float((numer / denom).item())
 
     projected: List[Optional[torch.Tensor]] = []
@@ -295,6 +309,30 @@ def _compose_mid_projected_grads(
             composed.append(mid_t1)
         else:
             composed.append(mid_grad)
+    return tuple(composed)
+
+
+def _compose_coarse_projected_grads(
+    coarse_grads: Sequence[Optional[torch.Tensor]],
+    coarse_projected_t2: Sequence[Optional[torch.Tensor]],
+    coarse_projected_t1: Sequence[Optional[torch.Tensor]],
+    t2_mask: Sequence[bool],
+    t1_mask: Sequence[bool],
+) -> GradTuple:
+    composed: List[Optional[torch.Tensor]] = []
+    for coarse_grad, coarse_t2, coarse_t1, is_t2, is_t1 in zip(
+        coarse_grads,
+        coarse_projected_t2,
+        coarse_projected_t1,
+        t2_mask,
+        t1_mask,
+    ):
+        if is_t2:
+            composed.append(coarse_t2)
+        elif is_t1:
+            composed.append(coarse_t1)
+        else:
+            composed.append(coarse_grad)
     return tuple(composed)
 
 
@@ -386,49 +424,168 @@ def _build_lexicographic_grads(
     mid_grads: Sequence[Optional[torch.Tensor]],
     fine_grads: Sequence[Optional[torch.Tensor]],
     trunk_masks: Mapping[str, Sequence[bool]],
+    projection_mode: str = "coarse_first",
+    projection_rule: str = "orthogonalize_all",
     eps: float = _GRAD_EPS,
     include_metrics: bool = True,
 ) -> Tuple[Dict[str, GradTuple], Dict[str, float]]:
+    if projection_mode not in _LEX_PROJECTION_MODES:
+        raise ValueError(
+            f"Unsupported lex projection mode '{projection_mode}'. "
+            f"Expected one of {list(_LEX_PROJECTION_MODES)}."
+        )
+    if projection_rule not in _LEX_PROJECTION_RULES:
+        raise ValueError(
+            f"Unsupported lex projection rule '{projection_rule}'. "
+            f"Expected one of {list(_LEX_PROJECTION_RULES)}."
+        )
+
     t1_mask = list(trunk_masks.get("t1", []))
     t2_mask = list(trunk_masks.get("t2", []))
 
-    mid_projected_t2, _mid_coeff_t2, mid_applied_t2 = _project_onto_reference(
-        target_grads=mid_grads,
-        reference_grads=coarse_grads,
-        include_mask=t2_mask,
-        eps=eps,
-    )
+    projection_flags: Dict[str, bool] = {
+        "mid_off_coarse_t2": False,
+        "mid_off_coarse_t1": False,
+        "fine_off_higher_t1": False,
+        "mid_off_fine_t1": False,
+        "coarse_off_mid_t2": False,
+        "coarse_off_higher_t1": False,
+        "fine_off_coarse_t1": False,
+        "fine_off_mid_t1": False,
+    }
 
-    mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
-        target_grads=mid_grads,
-        reference_grads=coarse_grads,
-        include_mask=t1_mask,
-        eps=eps,
-    )
+    if projection_mode == "coarse_first":
+        mid_projected_t2, _mid_coeff_t2, mid_applied_t2 = _project_onto_reference(
+            target_grads=mid_grads,
+            reference_grads=coarse_grads,
+            include_mask=t2_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
+            target_grads=mid_grads,
+            reference_grads=coarse_grads,
+            include_mask=t1_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        mid_projected = _compose_mid_projected_grads(
+            mid_grads=mid_grads,
+            mid_projected_t2=mid_projected_t2,
+            mid_projected_t1=mid_projected_t1,
+            t2_mask=t2_mask,
+            t1_mask=t1_mask,
+        )
+        higher_t1 = _sum_grad_tuples(
+            coarse_grads,
+            mid_projected_t1,
+            (None,) * len(coarse_grads),
+        )
+        fine_projected, _fine_coeff_higher, fine_applied_higher = _project_onto_reference(
+            target_grads=fine_grads,
+            reference_grads=higher_t1,
+            include_mask=t1_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        coarse_projected = tuple(coarse_grads)
+        projection_flags["mid_off_coarse_t2"] = bool(mid_applied_t2)
+        projection_flags["mid_off_coarse_t1"] = bool(mid_applied_t1)
+        projection_flags["fine_off_higher_t1"] = bool(fine_applied_higher)
+    elif projection_mode == "fine_first":
+        mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
+            target_grads=mid_grads,
+            reference_grads=fine_grads,
+            include_mask=t1_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        mid_projected = _compose_mid_projected_grads(
+            mid_grads=mid_grads,
+            mid_projected_t2=mid_grads,
+            mid_projected_t1=mid_projected_t1,
+            t2_mask=t2_mask,
+            t1_mask=t1_mask,
+        )
 
-    mid_projected = _compose_mid_projected_grads(
-        mid_grads=mid_grads,
-        mid_projected_t2=mid_projected_t2,
-        mid_projected_t1=mid_projected_t1,
-        t2_mask=t2_mask,
-        t1_mask=t1_mask,
-    )
+        coarse_projected_t2, _coarse_coeff_t2, coarse_applied_t2 = _project_onto_reference(
+            target_grads=coarse_grads,
+            reference_grads=mid_grads,
+            include_mask=t2_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        higher_t1 = _sum_grad_tuples(
+            fine_grads,
+            mid_projected_t1,
+            (None,) * len(coarse_grads),
+        )
+        coarse_projected_t1, _coarse_coeff_t1, coarse_applied_t1 = _project_onto_reference(
+            target_grads=coarse_grads,
+            reference_grads=higher_t1,
+            include_mask=t1_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        coarse_projected = _compose_coarse_projected_grads(
+            coarse_grads=coarse_grads,
+            coarse_projected_t2=coarse_projected_t2,
+            coarse_projected_t1=coarse_projected_t1,
+            t2_mask=t2_mask,
+            t1_mask=t1_mask,
+        )
+        fine_projected = tuple(fine_grads)
 
-    higher_t1 = _sum_grad_tuples(
-        coarse_grads,
-        mid_projected_t1,
-        (None,) * len(coarse_grads),
-    )
-    fine_projected, _fine_coeff_higher, fine_applied_higher = _project_onto_reference(
-        target_grads=fine_grads,
-        reference_grads=higher_t1,
-        include_mask=t1_mask,
-        eps=eps,
-    )
+        projection_flags["mid_off_fine_t1"] = bool(mid_applied_t1)
+        projection_flags["coarse_off_mid_t2"] = bool(coarse_applied_t2)
+        projection_flags["coarse_off_higher_t1"] = bool(coarse_applied_t1)
+    else:
+        mid_projected_t2, _mid_coeff_t2, mid_applied_t2 = _project_onto_reference(
+            target_grads=mid_grads,
+            reference_grads=coarse_grads,
+            include_mask=t2_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
+            target_grads=mid_grads,
+            reference_grads=coarse_grads,
+            include_mask=t1_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        mid_projected = _compose_mid_projected_grads(
+            mid_grads=mid_grads,
+            mid_projected_t2=mid_projected_t2,
+            mid_projected_t1=mid_projected_t1,
+            t2_mask=t2_mask,
+            t1_mask=t1_mask,
+        )
 
-    total_grads = _sum_grad_tuples(coarse_grads, mid_projected, fine_projected)
+        fine_projected_coarse_t1, _fine_coeff_coarse, fine_applied_coarse = _project_onto_reference(
+            target_grads=fine_grads,
+            reference_grads=coarse_grads,
+            include_mask=t1_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        fine_projected, _fine_coeff_mid, fine_applied_mid = _project_onto_reference(
+            target_grads=fine_projected_coarse_t1,
+            reference_grads=mid_projected_t1,
+            include_mask=t1_mask,
+            eps=eps,
+            projection_rule=projection_rule,
+        )
+        coarse_projected = tuple(coarse_grads)
+
+        projection_flags["mid_off_coarse_t2"] = bool(mid_applied_t2)
+        projection_flags["mid_off_coarse_t1"] = bool(mid_applied_t1)
+        projection_flags["fine_off_coarse_t1"] = bool(fine_applied_coarse)
+        projection_flags["fine_off_mid_t1"] = bool(fine_applied_mid)
+
+    total_grads = _sum_grad_tuples(coarse_projected, mid_projected, fine_projected)
     grad_pack: Dict[str, GradTuple] = {
-        "coarse": tuple(coarse_grads),
+        "coarse": coarse_projected,
         "mid_projected": mid_projected,
         "fine_projected": fine_projected,
         "total": total_grads,
@@ -438,26 +595,39 @@ def _build_lexicographic_grads(
         return grad_pack, {}
 
     t2t1_mask = _merge_masks(t2_mask, t1_mask)
+    higher_t1 = _sum_grad_tuples(
+        coarse_projected,
+        mid_projected,
+        (None,) * len(coarse_projected),
+    )
     metrics: Dict[str, float] = {
-        "post_projection_applied_t2_mid_coarse": 1.0 if mid_applied_t2 else 0.0,
-        "post_projection_applied_t1_mid_coarse": 1.0 if mid_applied_t1 else 0.0,
-        "post_projection_applied_t1_fine_higher": 1.0 if fine_applied_higher else 0.0,
+        "lex_projection_mode_coarse_first": 1.0 if projection_mode == "coarse_first" else 0.0,
+        "lex_projection_mode_fine_first": 1.0 if projection_mode == "fine_first" else 0.0,
+        "lex_projection_mode_pairwise_orthogonal": 1.0 if projection_mode == "pairwise_orthogonal" else 0.0,
+        "post_projection_applied_t2_mid_coarse": 1.0 if projection_flags["mid_off_coarse_t2"] else 0.0,
+        "post_projection_applied_t1_mid_coarse": 1.0 if projection_flags["mid_off_coarse_t1"] else 0.0,
+        "post_projection_applied_t1_fine_higher": 1.0 if projection_flags["fine_off_higher_t1"] else 0.0,
+        "post_projection_applied_t1_mid_fine": 1.0 if projection_flags["mid_off_fine_t1"] else 0.0,
+        "post_projection_applied_t2_coarse_mid": 1.0 if projection_flags["coarse_off_mid_t2"] else 0.0,
+        "post_projection_applied_t1_coarse_higher": 1.0 if projection_flags["coarse_off_higher_t1"] else 0.0,
+        "post_projection_applied_t1_fine_coarse": 1.0 if projection_flags["fine_off_coarse_t1"] else 0.0,
+        "post_projection_applied_t1_fine_mid_proj": 1.0 if projection_flags["fine_off_mid_t1"] else 0.0,
     }
     metrics["post_cos_t2_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
         mid_projected,
-        coarse_grads,
+        coarse_projected,
         t2_mask,
         eps=eps,
     )
     metrics["post_cos_t1_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
         mid_projected,
-        coarse_grads,
+        coarse_projected,
         t1_mask,
         eps=eps,
     )
     metrics["post_cos_t2t1_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
         mid_projected,
-        coarse_grads,
+        coarse_projected,
         t2t1_mask,
         eps=eps,
     )
@@ -469,7 +639,7 @@ def _build_lexicographic_grads(
     )
     metrics["post_cos_t1_fine_proj_coarse"] = _grad_cosine_from_autograd_grads(
         fine_projected,
-        coarse_grads,
+        coarse_projected,
         t1_mask,
         eps=eps,
     )
@@ -514,6 +684,8 @@ def prepare_lexicographic_update(
     eps: float = _GRAD_EPS,
     include_metrics: bool = True,
     grad_scale: float = 1.0,
+    projection_mode: str = "coarse_first",
+    projection_rule: str = "orthogonalize_all",
     precomputed_level_grad_map: Optional[Any] = None,
 ) -> Tuple[Optional[LexicographicUpdateState], Dict[str, float]]:
     """Build lexicographic grads in unscaled units, optionally scaling returned grads.
@@ -545,22 +717,26 @@ def prepare_lexicographic_update(
         fine_grads=fine_grads,
     )
 
+    metrics: Dict[str, float] = {}
     projected_grads, _ = _build_lexicographic_grads(
         coarse_grads=coarse_grads,
         mid_grads=mid_grads,
         fine_grads=fine_grads,
         trunk_masks=trunk_masks,
+        projection_mode=projection_mode,
+        projection_rule=projection_rule,
         eps=eps,
         include_metrics=False,
     )
 
-    metrics: Dict[str, float] = {}
     if include_metrics:
         projected_for_log, lex_metrics = _build_lexicographic_grads(
             coarse_grads=coarse_grads,
             mid_grads=mid_grads,
             fine_grads=fine_grads,
             trunk_masks=trunk_masks,
+            projection_mode=projection_mode,
+            projection_rule=projection_rule,
             eps=eps,
             include_metrics=True,
         )

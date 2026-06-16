@@ -35,7 +35,7 @@ _DATASET_IDS = {
     "cifar-100",
     "cub-200-2011",
     "fgvc-aircraft",
-    "inat21-mini",
+    "inat19",
 }
 
 _DATASET_CANONICAL_ALIASES = {
@@ -48,16 +48,17 @@ _DATASET_CANONICAL_ALIASES = {
     "fgvc-aircraft": "fgvc-aircraft",
     "fgvcaircraft": "fgvc-aircraft",
     "aircraft": "fgvc-aircraft",
-    "inat21-mini": "inat21-mini",
-    "inat21mini": "inat21-mini",
-    "inat21": "inat21-mini",
+    "inat19": "inat19",
+    "inat-19": "inat19",
+    "inat2019": "inat19",
+    "inaturalist-2019": "inat19",
 }
 
 _DATASET_DISPLAY = {
     "cifar-100": "CIFAR-100",
     "cub-200-2011": "CUB-200-2011",
     "fgvc-aircraft": "FGVC-Aircraft",
-    "inat21-mini": "iNat21-Mini",
+    "inat19": "iNat19",
 }
 
 _MODEL_IDS = {
@@ -106,7 +107,7 @@ _DATASET_RUN_NAME_TOKENS = {
     "cifar-100": ("cifar100", "cifar-100"),
     "cub-200-2011": ("cub200", "cub-200-2011", "cub2002011"),
     "fgvc-aircraft": ("aircraft", "fgvc-aircraft", "fgvcaircraft"),
-    "inat21-mini": ("inat21-mini", "inat21mini"),
+    "inat19": ("inat19", "inat-19", "inaturalist-2019"),
 }
 
 
@@ -161,7 +162,7 @@ def canonical_dataset_name(name: Optional[str]) -> str:
         return alias
     raise ValueError(
         f"Unsupported dataset_name '{name}'. "
-        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat21-mini']."
+        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat19']."
     )
 
 
@@ -953,7 +954,7 @@ class ModelComparisonConfig:
     require_model_dataset_run_name_format: bool = False
 
     preferred_dataset_order: List[str] = field(
-        default_factory=lambda: ["cifar-100", "cub-200-2011", "fgvc-aircraft", "inat21-mini"]
+        default_factory=lambda: ["cifar-100", "cub-200-2011", "fgvc-aircraft", "inat19"]
     )
     preferred_model_order: List[str] = field(
         default_factory=lambda: ["hcast", "lhdnn", "hrn", "ht_capsnet", "hiercos"]
@@ -1212,7 +1213,7 @@ class ModelComparisonAnalysis:
             plt.show()
 
     def plot_training_losses_per_dataset(self, aggregate_loss_keys: Optional[Sequence[str]] = None) -> None:
-        aggregate_loss_keys = list(aggregate_loss_keys or ["total", "level_ce", "gk_loss"])
+        aggregate_loss_keys = list(aggregate_loss_keys or ["total", "ce", "reg", "kl", "level_ce", "gk_loss"])
 
         for dataset_name in self.dataset_keys:
             dataset_runs = self.runs_by_dataset[dataset_name]
@@ -1285,7 +1286,9 @@ class ModelComparisonAnalysis:
         self,
         preferred_aggregate: Optional[Sequence[str]] = None,
     ) -> None:
-        preferred_aggregate = list(preferred_aggregate or ["total", "level_ce", "gk_loss", "margin", "consistency"])
+        preferred_aggregate = list(
+            preferred_aggregate or ["total", "ce", "reg", "kl", "level_ce", "gk_loss", "margin", "consistency"]
+        )
 
         for model_name in self.model_keys:
             model_runs = list(self.runs_by_model.get(model_name, []))

@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 HierCosTargets = Union[torch.Tensor, Dict[str, Any]]
 _EPS = 1e-12
-_LOSS_MODES = ("kl_reg", "per_level_kl_reg", "per_level_ce")
+_LOSS_MODES = ("kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg")
 _WEIGHT_MODES = ("equal", "kl_leaf", "kl_coarse")
 
 
@@ -64,13 +64,6 @@ def _resolve_loss_mode(cfg: Any, default: str = "kl_reg") -> str:
 
 def _resolve_weight_mode(cfg: Any, default: str = "equal") -> str:
     return _resolve_model_mode(cfg=cfg, key="weight_mode", default=default, valid_modes=_WEIGHT_MODES)
-
-
-def _label_smoothing_from_cfg(cfg: Any) -> float:
-    train_cfg = getattr(cfg, "train", None)
-    if train_cfg is None or not hasattr(train_cfg, "get"):
-        return 0.0
-    return min(max(float(train_cfg.get("smoothing", 0.0)), 0.0), 1.0)
 
 
 def _resolve_leaf_targets(hard_targets: torch.Tensor) -> torch.Tensor:
@@ -196,28 +189,41 @@ def _level_regularization_loss(
     return reg, level_losses
 
 
-def _per_level_ce_losses(
-    node_logits: torch.Tensor,
+def _weighted_target_ce_level_losses(
+    abs_node_logits: torch.Tensor,
     level_node_ids: List[torch.Tensor],
-    hard_targets: torch.Tensor,
-    smoothing: float,
+    leaf_targets: torch.Tensor,
+    leaf_to_level_local: torch.Tensor,
+    level_weights: torch.Tensor,
+    softmax_scope: str,
 ) -> List[torch.Tensor]:
-    abs_logits = node_logits.abs()
+    if softmax_scope not in {"global", "level"}:
+        raise ValueError(f"Unsupported Hier-COS softmax scope '{softmax_scope}'.")
+
+    weights = level_weights / level_weights.sum().clamp_min(_EPS)
+    row_ids = torch.arange(int(leaf_targets.size(0)), device=abs_node_logits.device, dtype=torch.long)
+    global_log_probs = F.log_softmax(abs_node_logits, dim=1) if softmax_scope == "global" else None
     level_losses: List[torch.Tensor] = []
     for level, level_nodes in enumerate(level_node_ids):
-        level_nodes = level_nodes.to(device=node_logits.device, dtype=torch.long)
+        level_nodes = level_nodes.to(device=abs_node_logits.device, dtype=torch.long)
         level_size = int(level_nodes.numel())
         if level_size <= 0:
             raise ValueError(f"Hier-COS level {level} has no node ids.")
 
-        level_logits = abs_logits.index_select(dim=1, index=level_nodes)
-        level_targets = hard_targets[:, level].to(device=node_logits.device, dtype=torch.long)
+        level_targets = leaf_to_level_local[leaf_targets, level].to(device=abs_node_logits.device, dtype=torch.long)
         _check_index_range(
             level_targets,
             level_size,
-            f"Hier-COS invalid target labels for per_level_ce at level {level}: expected [0, {level_size}).",
+            f"Hier-COS invalid target labels for CE at level {level}: expected [0, {level_size}).",
         )
-        level_losses.append(F.cross_entropy(level_logits, level_targets, label_smoothing=float(smoothing)))
+
+        if global_log_probs is not None:
+            target_log_probs = global_log_probs[row_ids, level_nodes[level_targets]]
+        else:
+            level_logits = abs_node_logits.index_select(dim=1, index=level_nodes)
+            level_log_probs = F.log_softmax(level_logits, dim=1)
+            target_log_probs = level_log_probs[row_ids, level_targets]
+        level_losses.append(-(weights[level] * target_log_probs).mean())
     return level_losses
 
 
@@ -273,31 +279,6 @@ def compute_loss(
     loss_mode = _resolve_loss_mode(cfg)
     hard_targets = _hard_targets_from_input(targets, num_levels=num_levels).to(device=logits_per_level[-1].device, dtype=torch.long)
 
-    if loss_mode == "per_level_ce":
-        node_logits, level_node_ids = _validate_hiercos_node_slice_output(output=output, num_levels=num_levels)
-        hard_targets = hard_targets.to(device=node_logits.device, dtype=torch.long)
-        raw_level_losses = _per_level_ce_losses(
-            node_logits=node_logits,
-            level_node_ids=level_node_ids,
-            hard_targets=hard_targets,
-            smoothing=_label_smoothing_from_cfg(cfg),
-        )
-        weights = _shared_level_weights(
-            output=output,
-            cfg=cfg,
-            num_levels=num_levels,
-            device=raw_level_losses[0].device,
-            dtype=raw_level_losses[0].dtype,
-        )
-        level_losses = [level_loss * weights[level] for level, level_loss in enumerate(raw_level_losses)]
-        total = torch.stack(level_losses).sum()
-        metrics = {"total": _to_scalar(total), "level_ce": _to_scalar(total)}
-        for level, level_loss in enumerate(raw_level_losses):
-            metrics[f"loss_level_{level}"] = _to_scalar(level_loss)
-        if not return_aux:
-            return total, metrics
-        return total, metrics, {"level_losses": level_losses}
-
     node_logits, level_node_ids, leaf_to_level_local = _validate_hiercos_output(output=output, num_levels=num_levels)
     hard_targets = hard_targets.to(device=node_logits.device, dtype=torch.long)
     leaf_targets = _resolve_leaf_targets(hard_targets)
@@ -316,18 +297,7 @@ def compute_loss(
         device=node_logits.device,
         dtype=node_logits.dtype,
     )
-    node_targets = _build_node_targets(
-        leaf_targets=leaf_targets,
-        level_node_ids=level_node_ids,
-        leaf_to_level_local=leaf_to_level_local,
-        level_weights=level_weights,
-        total_nodes=int(node_logits.size(1)),
-        dtype=node_logits.dtype,
-    )
-
     abs_node_logits = node_logits.abs()
-    log_probs = F.log_softmax(abs_node_logits, dim=1)
-    kl = F.kl_div(log_probs, node_targets, reduction="batchmean")
     reg, level_reg_losses = _level_regularization_loss(
         abs_node_logits=abs_node_logits,
         leaf_targets=leaf_targets,
@@ -336,43 +306,51 @@ def compute_loss(
     )
 
     alpha = _resolve_model_alpha(cfg, default=1.0)
-    total = kl + float(alpha) * reg
-    metrics = {"total": _to_scalar(total), "kl": _to_scalar(kl), "reg": _to_scalar(reg)}
-
-    if loss_mode == "per_level_kl_reg":
-        row_ids = torch.arange(int(leaf_targets.size(0)), device=node_logits.device, dtype=torch.long)
-        path_global_node_ids = _path_global_node_ids(
-            leaf_targets=leaf_targets,
+    if loss_mode in {"global_softmax_ce_reg", "level_softmax_ce_reg"}:
+        ce_level_losses = _weighted_target_ce_level_losses(
+            abs_node_logits=abs_node_logits,
             level_node_ids=level_node_ids,
+            leaf_targets=leaf_targets,
             leaf_to_level_local=leaf_to_level_local,
-            device=node_logits.device,
+            level_weights=level_weights,
+            softmax_scope="global" if loss_mode == "global_softmax_ce_reg" else "level",
         )
-
-        kl_level_losses: List[torch.Tensor] = []
-        level_losses: List[torch.Tensor] = []
-        for level, (global_node_ids, reg_level_loss) in enumerate(zip(path_global_node_ids, level_reg_losses)):
-            q_level = node_targets[row_ids, global_node_ids]
-            log_p_level = log_probs[row_ids, global_node_ids]
-            kl_level_loss = (-(q_level * log_p_level)).mean()
-            level_loss = kl_level_loss + float(alpha) * reg_level_loss
-
-            kl_level_losses.append(kl_level_loss)
-            level_losses.append(level_loss)
-            metrics[f"kl_level_{level}"] = _to_scalar(kl_level_loss)
+        ce = torch.stack(ce_level_losses).sum()
+        level_losses = [
+            ce_level_loss + float(alpha) * reg_level_loss
+            for ce_level_loss, reg_level_loss in zip(ce_level_losses, level_reg_losses)
+        ]
+        total = torch.stack(level_losses).sum()
+        metrics = {"total": _to_scalar(total), "ce": _to_scalar(ce), "reg": _to_scalar(reg)}
+        for level, (ce_level_loss, reg_level_loss, level_loss) in enumerate(
+            zip(ce_level_losses, level_reg_losses, level_losses)
+        ):
+            metrics[f"ce_level_{level}"] = _to_scalar(ce_level_loss)
             metrics[f"reg_level_{level}"] = _to_scalar(reg_level_loss)
             metrics[f"loss_level_{level}"] = _to_scalar(level_loss)
 
-        total = torch.stack(level_losses).sum()
-        metrics["total"] = _to_scalar(total)
         if not return_aux:
             return total, metrics
         return total, metrics, {
             "level_losses": level_losses,
-            "kl_loss": kl,
+            "ce_loss": ce,
             "reg_loss": reg,
-            "kl_level_losses": kl_level_losses,
+            "ce_level_losses": ce_level_losses,
             "level_reg_losses": level_reg_losses,
         }
+
+    node_targets = _build_node_targets(
+        leaf_targets=leaf_targets,
+        level_node_ids=level_node_ids,
+        leaf_to_level_local=leaf_to_level_local,
+        level_weights=level_weights,
+        total_nodes=int(node_logits.size(1)),
+        dtype=node_logits.dtype,
+    )
+    log_probs = F.log_softmax(abs_node_logits, dim=1)
+    kl = F.kl_div(log_probs, node_targets, reduction="batchmean")
+    total = kl + float(alpha) * reg
+    metrics = {"total": _to_scalar(total), "kl": _to_scalar(kl), "reg": _to_scalar(reg)}
 
     if not return_aux:
         return total, metrics

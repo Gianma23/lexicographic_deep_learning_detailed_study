@@ -19,11 +19,11 @@ def _as_float_dict(metrics: Mapping[str, Any]) -> Dict[str, float]:
     return converted
 
 
-def _required_loss_keys(train_outputs: Mapping[str, Any]) -> Set[str]:
-    if LOSS_KEYS_HINT_FIELD not in train_outputs:
-        raise KeyError(f"Missing required '{LOSS_KEYS_HINT_FIELD}' in train outputs.")
+def _required_loss_keys(outputs: Mapping[str, Any]) -> Set[str]:
+    if LOSS_KEYS_HINT_FIELD not in outputs:
+        raise KeyError(f"Missing required '{LOSS_KEYS_HINT_FIELD}' in outputs.")
 
-    raw_keys = train_outputs[LOSS_KEYS_HINT_FIELD]
+    raw_keys = outputs[LOSS_KEYS_HINT_FIELD]
     if not isinstance(raw_keys, (list, tuple, set, frozenset)):
         raise TypeError(
             f"'{LOSS_KEYS_HINT_FIELD}' must be a list/tuple/set of metric keys, got {type(raw_keys).__name__}."
@@ -31,13 +31,13 @@ def _required_loss_keys(train_outputs: Mapping[str, Any]) -> Set[str]:
     return {str(key) for key in raw_keys}
 
 
-def _split_train_outputs(train_outputs: Mapping[str, Any]) -> Tuple[Dict[str, float], Dict[str, float]]:
-    hinted_loss_keys = _required_loss_keys(train_outputs)
-    train_outputs_float = _as_float_dict(train_outputs)
+def _split_outputs(outputs: Mapping[str, Any]) -> Tuple[Dict[str, float], Dict[str, float]]:
+    hinted_loss_keys = _required_loss_keys(outputs)
+    outputs_float = _as_float_dict(outputs)
 
     losses: Dict[str, float] = {}
     metrics: Dict[str, float] = {}
-    for key, value in train_outputs_float.items():
+    for key, value in outputs_float.items():
         if key in hinted_loss_keys:
             losses[key] = value
         else:
@@ -73,10 +73,10 @@ class TrainingLogger:
         lr: float,
         best_metrics: Mapping[str, Any],
         train_outputs: Mapping[str, Any],
-        val_metrics: Mapping[str, Any],
+        val_outputs: Mapping[str, Any],
     ) -> Dict[str, Any]:
-        train_losses, train_metrics = _split_train_outputs(train_outputs)
-        val_metrics_float = _as_float_dict(val_metrics)
+        train_losses, train_metrics = _split_outputs(train_outputs)
+        val_losses, val_metrics = _split_outputs(val_outputs)
         best_metrics_float = _as_float_dict(best_metrics)
         event = {
             "event": "epoch",
@@ -85,7 +85,8 @@ class TrainingLogger:
             "best_metrics": best_metrics_float,
             "train_losses": train_losses,
             "train_metrics": train_metrics,
-            "val_metrics": val_metrics_float,
+            "val_losses": val_losses,
+            "val_metrics": val_metrics,
         }
         self._append_event(event)
         return event
