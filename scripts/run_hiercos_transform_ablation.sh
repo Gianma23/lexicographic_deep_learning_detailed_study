@@ -48,7 +48,7 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_transform_ablation.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
 
-DATASETS=(cifar100 cub200 aircraft inat19)
+DATASETS=(cub200 aircraft cifar100)
 TRANSFORM_MODES=(bn_linear final_only)
 
 config_for_dataset() {
@@ -117,7 +117,7 @@ run_train() {
 run_output_dir() {
   local ds="$1"
   local transform_mode="$2"
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_global_softmax_ce_reg_lex_orthogonalize_all_coarse_first_transform_${transform_mode}"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_global_softmax_ce_reg_lex_orthogonalize_all_coarse_first_${transform_mode}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"

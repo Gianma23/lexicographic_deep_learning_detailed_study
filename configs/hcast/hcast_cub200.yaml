@@ -17,7 +17,7 @@ model:
     # for grid mode
     patch_size: 8
   loss:
-    globalkl: false
+    globalkl: true
     gk_weight: 0.5
 
 dataset:
@@ -29,7 +29,7 @@ dataset:
   std: [0.229, 0.224, 0.225]
   levels: [order, family, species]
   download: false
-  val_split_ratio: 0.2
+  val_split_ratio: 0.15
   split_seed: null
   transforms:
     use_timm: true
@@ -77,7 +77,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hcast_cub200_nokl
+  output_dir: /scratch/g.saggini1/outputs/hcast_cub200
   smoothing: 0.1
 
 optim:
