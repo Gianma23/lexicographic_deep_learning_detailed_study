@@ -48,7 +48,8 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_transform_ablation.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
 
-DATASETS=(cub200 aircraft cifar100)
+#DATASETS=(cub200 aircraft cifar100)
+DATASETS=(aircraft cifar100)
 TRANSFORM_MODES=(bn_linear final_only)
 
 config_for_dataset() {
