@@ -13,6 +13,7 @@ docs/figures/**
 .VSCodeCounter/
 .codex
 .vscode/
+AGENTS.md
 
 # Distribution / packaging
 .Python

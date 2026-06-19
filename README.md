@@ -19,17 +19,51 @@ The main user-facing entrypoint is `python -m train.train`. It handles config lo
 
 ## Setup
 
-Install a compatible `torch` and `torchvision` build for your machine first, then install the repo dependencies:
+The current development and experiment environment uses:
+
+- Python `3.10.12`
+- PyTorch `2.10.0` and torchvision `0.25.0`
+- CUDA `12.8` PyTorch wheels on the GPU machine
+
+Other Python and PyTorch versions have not been systematically tested. The virtual environment itself is not committed; it is created with Python's standard `venv` module in the ignored `.venv/` directory.
+
+Create and activate the environment from the repository root:
 
 ```bash
-pip install torch torchvision
-pip install -r requirements.txt
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 ```
+
+Install the same CUDA build used for the experiments, then install the remaining dependencies:
+
+```bash
+python -m pip install torch==2.10.0 torchvision==0.25.0 \
+  --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements.txt
+```
+
+For a CPU-only environment, replace the PyTorch command with:
+
+```bash
+python -m pip install torch==2.10.0 torchvision==0.25.0 \
+  --index-url https://download.pytorch.org/whl/cpu
+```
+
+Verify that the expected interpreter and core packages are active:
+
+```bash
+python --version
+python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__)"
+```
+
+The expected output starts with `Python 3.10.12` and reports PyTorch `2.10.0` and torchvision `0.25.0` (with a platform-specific build suffix such as `+cu128` or `+cpu`). When using the shell runners under `scripts/`, set `PYTHON_BIN=.venv/bin/python` in `.env` so they use this environment even when it is not activated.
 
 Notes:
 
 - `timm` is required for H-CAST and timm-backed schedulers.
 - `opencv-contrib-python` is required for H-CAST `segments.mode: seeds`.
+- `requirements.txt` currently specifies compatible version ranges rather than a fully frozen cross-platform lock file. Record `python -m pip freeze` with archived experiment artifacts when exact package-level reconstruction is required.
 
 ### Local Environment
 
