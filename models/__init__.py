@@ -10,24 +10,37 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
     if name == "hcast":
         from .hcast.factory import build_model as build_hcast
 
-        return build_hcast(cfg, num_classes_per_level, taxonomy)
-    if name == "lhdnn":
+        model = build_hcast(cfg, num_classes_per_level, taxonomy)
+    elif name == "lhdnn":
         from .lhdnn.factory import build_model as build_lhdnn
 
-        return build_lhdnn(cfg, num_classes_per_level, taxonomy)
-    if name == "ht_capsnet":
+        model = build_lhdnn(cfg, num_classes_per_level, taxonomy)
+    elif name == "ht_capsnet":
         from .ht_capsnet.factory import build_model as build_caps
 
-        return build_caps(cfg, num_classes_per_level, taxonomy)
-    if name == "hrn":
+        model = build_caps(cfg, num_classes_per_level, taxonomy)
+    elif name == "hrn":
         from .hrn.factory import build_model as build_hrn
 
-        return build_hrn(cfg, num_classes_per_level, taxonomy)
-    if name == "hiercos":
+        model = build_hrn(cfg, num_classes_per_level, taxonomy)
+    elif name == "hiercos":
         from .hiercos.factory import build_model as build_hiercos
 
-        return build_hiercos(cfg, num_classes_per_level, taxonomy)
-    raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'lhdnn', 'ht_capsnet', 'hrn', 'hiercos']")
+        model = build_hiercos(cfg, num_classes_per_level, taxonomy)
+    else:
+        raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'lhdnn', 'ht_capsnet', 'hrn', 'hiercos']")
+
+    if name != "hiercos":
+        from .orthonormal_plugin import OrthonormalPluginWrapper, is_enabled
+
+        if is_enabled(cfg):
+            return OrthonormalPluginWrapper(
+                base_model=model,
+                cfg=cfg,
+                num_classes_per_level=num_classes_per_level,
+                taxonomy=taxonomy,
+            )
+    return model
 
 
 def compute_loss(
@@ -43,6 +56,13 @@ def compute_loss(
     name = cfg.model.name
     if not isinstance(name, str):
         raise ValueError("model.name must be a string.")
+    from .orthonormal_plugin import is_enabled as orthonormal_plugin_enabled
+
+    if orthonormal_plugin_enabled(cfg):
+        from .orthonormal_plugin.losses import compute_loss as loss_orthonormal
+
+        return loss_orthonormal(output, targets, cfg, taxonomy, return_aux=return_aux)
+
     if name == "hcast":
         from .hcast.losses import compute_loss as loss_hcast
 

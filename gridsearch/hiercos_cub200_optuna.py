@@ -10,12 +10,26 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence
 
 import yaml
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from dotenv import load_dotenv  # noqa: E402
+
+
+load_dotenv(
+    Path(os.environ.get("PROJECT_ENV_FILE", REPO_ROOT / ".env")).expanduser(),
+    override=False,
+)
 
 
 ALPHAS = [0.001, 0.003, 0.01, 0.03, 0.1]
@@ -25,9 +39,11 @@ SELECTION_MODES = ("topdown", "independent")
 OBJECTIVE_MODES = ("selection_score", "fpa_tice_pareto")
 
 DEFAULT_CONFIG = "configs/hiercos/hiercos_cub200.yaml"
-DEFAULT_OUTPUT_ROOT = "/scratch/g.saggini1/outputs/gridsearch/hiercos_cub200_optuna"
+DEFAULT_OUTPUT_ROOT = str(
+    Path(os.environ.get("OUTPUTS_ROOT", "/scratch/g.saggini1/outputs"))
+    / "gridsearch/hiercos_cub200_optuna"
+)
 DEFAULT_STUDY_NAME = "hiercos_cub200_baseline"
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 FROZEN_CONFIG_DEFAULTS: Dict[str, Any] = {

@@ -11,8 +11,10 @@ set -euo pipefail
 # - train.lexicographic.projection_rule=conflict_only
 # for: cifar100, cub200, aircraft, inat19.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/load_env.sh"
+load_project_env "$ROOT_DIR"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -43,8 +45,8 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_lex_conflict_only.sh
-OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_lex_conflict_only.sh
+OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
 DATASETS=(cifar100 cub200 aircraft inat19)
 LEX_PROJECTION_MODES=(coarse_first fine_first)

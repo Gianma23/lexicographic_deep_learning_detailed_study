@@ -1,9 +1,13 @@
 import math
 import warnings
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
+
+from models.orthonormal_plugin.head import init_fixed_classifier
+from models.orthonormal_plugin.topology import build_topology
+from models.orthonormal_plugin.transforms import build_transformation_module
 
 
 def _build_resnet50_backbone(pretrained: bool):
@@ -31,138 +35,6 @@ def _build_resnet50_backbone(pretrained: bool):
                 return resnet50(weights=None)
             except TypeError:
                 return resnet50(pretrained=False)
-
-
-def _normalize_parent_of(taxonomy: Dict[str, Any]) -> Dict[int, Dict[int, int]]:
-    if not taxonomy or "parent_of" not in taxonomy:
-        raise ValueError("Hier-COS requires taxonomy with `parent_of` mappings.")
-
-    parent_of_raw = taxonomy["parent_of"]
-    if not isinstance(parent_of_raw, Mapping):
-        raise ValueError("`taxonomy['parent_of']` must be a mapping of level -> (child -> parent).")
-
-    normalized: Dict[int, Dict[int, int]] = {}
-    for level_key, mapping in parent_of_raw.items():
-        if not isinstance(mapping, Mapping):
-            raise ValueError(f"`taxonomy['parent_of'][{level_key}]` must be a child -> parent mapping.")
-        level = int(level_key)
-        normalized[level] = {int(child): int(parent) for child, parent in mapping.items()}
-    return normalized
-
-
-def _level_offsets(num_classes_per_level: Sequence[int]) -> List[int]:
-    offsets = [0]
-    for classes in num_classes_per_level[:-1]:
-        offsets.append(offsets[-1] + int(classes))
-    return offsets
-
-
-def _build_topology(
-    num_classes_per_level: Sequence[int],
-    taxonomy: Dict[str, Any],
-) -> Dict[str, Any]:
-    num_classes = [int(v) for v in num_classes_per_level]
-    if len(num_classes) < 2:
-        raise ValueError("Hier-COS requires hierarchy depth >= 2.")
-    if any(v <= 0 for v in num_classes):
-        raise ValueError(f"All class counts must be > 0, got {num_classes}.")
-
-    parent_of = _normalize_parent_of(taxonomy)
-    depth = len(num_classes)
-    offsets = _level_offsets(num_classes)
-    total_nodes = int(sum(num_classes))
-
-    parent_global = [-1 for _ in range(total_nodes)]
-    children_global: List[List[int]] = [[] for _ in range(total_nodes)]
-
-    for level in range(1, depth):
-        mapping = parent_of.get(level)
-        if mapping is None:
-            raise ValueError(
-                f"Missing taxonomy mapping for level transition {level - 1}->{level}. "
-                f"Expected `taxonomy['parent_of'][{level}]`."
-            )
-        num_children = int(num_classes[level])
-        num_parents = int(num_classes[level - 1])
-        expected_children = set(range(num_children))
-        if set(mapping.keys()) != expected_children:
-            missing = sorted(expected_children - set(mapping.keys()))
-            extra = sorted(set(mapping.keys()) - expected_children)
-            raise ValueError(
-                f"Invalid taxonomy mapping at level={level}. "
-                f"Missing children: {missing[:10]}, extra children: {extra[:10]}."
-            )
-
-        for child_local in range(num_children):
-            parent_local = int(mapping[child_local])
-            if parent_local < 0 or parent_local >= num_parents:
-                raise ValueError(
-                    f"Invalid parent id={parent_local} for child={child_local} at level={level}; "
-                    f"expected [0, {num_parents})."
-                )
-            child_global = int(offsets[level] + child_local)
-            parent_global_idx = int(offsets[level - 1] + parent_local)
-            parent_global[child_global] = parent_global_idx
-            children_global[parent_global_idx].append(child_global)
-
-    descendants: List[set] = [set() for _ in range(total_nodes)]
-    for node in range(total_nodes - 1, -1, -1):
-        for child in children_global[node]:
-            descendants[node].add(int(child))
-            descendants[node].update(descendants[child])
-
-    ancestors: List[List[int]] = [[] for _ in range(total_nodes)]
-    for node in range(total_nodes):
-        p = parent_global[node]
-        anc: List[int] = []
-        while p >= 0:
-            anc.append(int(p))
-            p = parent_global[p]
-        ancestors[node] = anc
-
-    level_node_ids: List[torch.Tensor] = []
-    level_subspace_masks: List[torch.Tensor] = []
-    for level, classes in enumerate(num_classes):
-        node_ids = torch.arange(offsets[level], offsets[level] + classes, dtype=torch.long)
-        level_node_ids.append(node_ids)
-
-        mask = torch.zeros((classes, total_nodes), dtype=torch.bool)
-        for local_id in range(classes):
-            global_id = int(offsets[level] + local_id)
-            indices = set(ancestors[global_id])
-            indices.add(global_id)
-            indices.update(descendants[global_id])
-            mask[local_id, list(sorted(indices))] = True
-        level_subspace_masks.append(mask)
-
-    num_leaf = int(num_classes[-1])
-    leaf_to_level_local = torch.full((num_leaf, depth), -1, dtype=torch.long)
-    for leaf_local in range(num_leaf):
-        g = int(offsets[-1] + leaf_local)
-        cur = g
-        for level in range(depth - 1, -1, -1):
-            leaf_to_level_local[leaf_local, level] = int(cur - offsets[level])
-            if level > 0:
-                cur_parent = parent_global[cur]
-                if cur_parent < 0:
-                    raise ValueError(
-                        f"Leaf node id={leaf_local} has no valid ancestor at level={level - 1}."
-                    )
-                cur = cur_parent
-
-    level_weights = torch.arange(depth, 0, -1, dtype=torch.float32)
-    level_weights = torch.exp(1.0 / level_weights)
-    level_weights = level_weights / torch.norm(level_weights, p=2).clamp_min(1e-12)
-    level_weights = level_weights.pow(2)
-
-    return {
-        "depth": depth,
-        "total_nodes": total_nodes,
-        "level_node_ids": level_node_ids,
-        "level_subspace_masks": level_subspace_masks,
-        "leaf_to_level_local": leaf_to_level_local,
-        "node_prob_weights": level_weights,
-    }
 
 
 class _WideBasicBlock(nn.Module):
@@ -250,74 +122,6 @@ class _WideNetworkBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.layer(x)
-
-
-def _get_activation(name: str, channels: int) -> nn.Module:
-    if not isinstance(name, str):
-        raise ValueError("Hier-COS activation name must be a string.")
-    mode = name
-    if mode == "relu":
-        return nn.ReLU()
-    if mode == "elu":
-        return nn.ELU()
-    if mode == "tanh":
-        return nn.Tanh()
-    if mode == "prelu":
-        return nn.PReLU(num_parameters=int(channels))
-    raise ValueError(f"Unsupported activation '{name}'.")
-
-
-class _PointResidualTransformationLayer(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        hidden_channels: int,
-        out_channels: int,
-        activation: str = "prelu",
-    ):
-        super().__init__()
-        self.linear1 = nn.Linear(in_channels, hidden_channels, bias=False)
-        self.bn1 = nn.BatchNorm1d(hidden_channels)
-        self.act1 = _get_activation(activation, hidden_channels)
-        self.linear2 = nn.Linear(hidden_channels, out_channels, bias=False)
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        self.act2 = _get_activation(activation, out_channels)
-        if int(in_channels) == int(out_channels):
-            self.residual = nn.Identity()
-        else:
-            self.residual = nn.Linear(in_channels, out_channels, bias=False)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        residual = self.residual(x)
-        x = self.linear1(x)
-        x = self.bn1(x)
-        x = self.act1(x)
-        x = self.linear2(x)
-        x = self.bn2(x)
-        x = self.act2(x)
-        return x + residual
-
-
-class _NarrowResidualTransformationHead(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, activation: str = "prelu"):
-        super().__init__()
-        self.layer1 = _PointResidualTransformationLayer(
-            in_channels=in_channels,
-            hidden_channels=out_channels,
-            out_channels=out_channels,
-            activation=activation,
-        )
-        self.layer2 = _PointResidualTransformationLayer(
-            in_channels=out_channels,
-            hidden_channels=out_channels,
-            out_channels=out_channels,
-            activation=activation,
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.layer1(x)
-        x = self.layer2(x)
-        return x
 
 
 class _WideResNetNodeBackbone(nn.Module):
@@ -444,7 +248,11 @@ class HierCosModel(nn.Module):
             raise ValueError("Hier-COS requires taxonomy with parent-child mappings.")
 
         self.num_classes_per_level = [int(v) for v in num_classes_per_level]
-        topology = _build_topology(self.num_classes_per_level, taxonomy=taxonomy)
+        topology = build_topology(
+            self.num_classes_per_level,
+            taxonomy=taxonomy,
+            owner="Hier-COS",
+        )
 
         self.depth = int(topology["depth"])
         self.total_nodes = int(topology["total_nodes"])
@@ -496,51 +304,18 @@ class HierCosModel(nn.Module):
                 "Expected one of ['haframe_wide_resnet', 'haframe_resnet50']."
             )
 
-        self.f_theta = self._build_transformation_module(self.total_nodes, mode=self.transform_mode)
-        self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
-        self._init_fixed_frame(mode=fixed_frame_mode)
-
-    @staticmethod
-    def _build_transformation_module(width: int, mode: str) -> nn.Module:
-        if mode == "full":
-            return nn.Sequential(
-                nn.BatchNorm1d(width),
-                _NarrowResidualTransformationHead(
-                    in_channels=width,
-                    out_channels=width,
-                    activation="prelu",
-                ),
-            )
-        if mode == "bn_linear":
-            return nn.Sequential(
-                nn.BatchNorm1d(width),
-                nn.Linear(width, width, bias=False),
-                _get_activation("prelu", width),
-            )
-        if mode == "final_only":
-            return nn.Identity()
-        raise ValueError(
-            f"Unsupported Hier-COS model.transform_mode '{mode}'. "
-            "Expected one of ['full', 'bn_linear', 'final_only']."
+        self.f_theta = build_transformation_module(
+            self.total_nodes,
+            mode=self.transform_mode,
+            owner="Hier-COS model",
         )
-
-    def _init_fixed_frame(self, mode: str = "identity") -> None:
-        if not isinstance(mode, str):
-            raise ValueError("Hier-COS `model.fixed_frame_mode` must be a string.")
-        frame_mode = mode
-        with torch.no_grad():
-            if frame_mode == "orthonormal_random":
-                random_matrix = torch.randn(self.total_nodes, self.total_nodes)
-                q, _ = torch.linalg.qr(random_matrix, mode="reduced")
-                self.fixed_classifier.weight.copy_(q)
-            elif frame_mode == "identity":
-                self.fixed_classifier.weight.copy_(torch.eye(self.total_nodes))
-            else:
-                raise ValueError(
-                    f"Unsupported Hier-COS model.fixed_frame_mode '{frame_mode}'. "
-                    "Expected one of ['orthonormal_random', 'identity']."
-                )
-        self.fixed_classifier.weight.requires_grad_(False)
+        self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
+        init_fixed_classifier(
+            classifier=self.fixed_classifier,
+            width=self.total_nodes,
+            mode=fixed_frame_mode,
+            owner="Hier-COS model",
+        )
 
     def parameter_groups(
         self,
@@ -597,12 +372,17 @@ class HierCosModel(nn.Module):
         logits_per_level = self._level_subspace_scores(node_logits)
         effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
 
+        level_node_ids = self._level_node_ids()
         return {
             "logits_per_level": logits_per_level,
             "effective_probs_per_level": effective_probs_per_level,
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,
-            "hiercos_level_node_ids": self._level_node_ids(),
+            "orthonormal_plugin_node_logits": node_logits,
+            "hiercos_level_node_ids": level_node_ids,
+            "orthonormal_plugin_level_node_ids": level_node_ids,
             "leaf_to_level_local": self.leaf_to_level_local,
+            "orthonormal_plugin_leaf_to_level_local": self.leaf_to_level_local,
             "node_prob_weights": self.node_prob_weights,
+            "orthonormal_plugin_node_prob_weights": self.node_prob_weights,
         }

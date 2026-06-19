@@ -6,7 +6,7 @@ model:
 
 dataset:
   name: cifar-100
-  root: /scratch/g.saggini1/datasets/cifar100
+  root: ${oc.env:CIFAR100_ROOT,/scratch/g.saggini1/datasets/cifar100}
   hierarchy_depth: 3
   image_size: 32
   in_channels: 3
@@ -59,10 +59,10 @@ train:
   # Direct from LH-DNN paper for large LH-DNN on CIFAR-100.
   epochs: 30
   seed: 42
-  device: cuda
+  device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/lhdnn_cifar100_v2
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/lhdnn_cifar100_v2
   # Paper-faithful default CE behavior (label smoothing not specified in paper).
   smoothing: 0.0
 

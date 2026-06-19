@@ -3,11 +3,11 @@
 train:
   epochs: 100                       # Total training epochs
   seed: 0                           # Global RNG seed
-  device: cuda                      # cuda | cpu
+  device: ${oc.env:TRAIN_DEVICE,cuda} # cuda | cpu
   amp: true                         # Enable automatic mixed precision on CUDA
   progress_bar: true                # Enable tqdm progress bar when available
   resume: ""                        # Optional checkpoint path to resume from
-  output_dir: /scratch/g.saggini1/outputs/<run_name> # Run artifact directory
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/<run_name> # Run artifact directory
   smoothing: 0.1                    # Label smoothing in CE-based losses
   stop_epoch: 100                   # Optional early stop epoch; must satisfy 1 <= stop_epoch <= epochs
 

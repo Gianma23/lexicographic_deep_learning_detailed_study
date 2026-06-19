@@ -49,6 +49,30 @@ def _resolve_hiercos_loss_mode(model_cfg) -> str:
     )
 
 
+def _resolve_orthonormal_plugin_loss_mode(cfg: Any) -> Any:
+    plugin_cfg = section_to_dict(getattr(cfg, "orthonormal_plugin", None))
+    if not plugin_cfg and hasattr(cfg, "get"):
+        plugin_cfg = section_to_dict(cfg.get("orthonormal_plugin", None))
+    if not bool(plugin_cfg.get("enabled", False)):
+        return None
+
+    raw_mode = plugin_cfg.get("loss", "global_softmax_ce_reg")
+    if raw_mode is None:
+        raw_mode = "global_softmax_ce_reg"
+    if not isinstance(raw_mode, str):
+        raise ValueError(
+            "train.lexicographic.enabled=true with orthonormal_plugin.enabled=true requires "
+            "scalar `orthonormal_plugin.loss` set to one of "
+            "['global_softmax_ce_reg', 'level_softmax_ce_reg']."
+        )
+    if raw_mode in {"kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg"}:
+        return raw_mode
+    raise ValueError(
+        f"Unsupported orthonormal_plugin.loss '{raw_mode}'. "
+        "Expected one of ['kl_reg', 'global_softmax_ce_reg', 'level_softmax_ce_reg']."
+    )
+
+
 def _resolve_lex_projection_mode(value: Any, default: str = "coarse_first") -> str:
     raw_mode = default if value is None else value
     if not isinstance(raw_mode, str):
@@ -104,13 +128,25 @@ def validate_lexicographic_requirements(cfg: Any, level_losses: List[torch.Tenso
     model_name = model_cfg.get("name", "")
     if not isinstance(model_name, str):
         raise ValueError("model.name must be a string.")
-    if model_name not in {"hcast", "hiercos"}:
+    plugin_loss_mode = _resolve_orthonormal_plugin_loss_mode(cfg)
+    if plugin_loss_mode is None and model_name not in {"hcast", "hiercos"}:
         raise ValueError(
             "train.lexicographic.enabled=true is currently supported only for "
-            "model.name in ['hcast', 'hiercos']."
+            "model.name in ['hcast', 'hiercos'] or orthonormal_plugin.enabled=true."
         )
 
-    if model_name == "hcast":
+    if plugin_loss_mode is not None and plugin_loss_mode not in {
+        "global_softmax_ce_reg",
+        "level_softmax_ce_reg",
+    }:
+        raise ValueError(
+            "train.lexicographic.enabled=true with orthonormal_plugin.enabled=true requires "
+            "`orthonormal_plugin.loss: global_softmax_ce_reg` or "
+            "`orthonormal_plugin.loss: level_softmax_ce_reg`; plain `kl_reg` does not expose "
+            "differentiable per-level losses."
+        )
+
+    if plugin_loss_mode is None and model_name == "hcast":
         loss_cfg = section_to_dict(model_cfg.get("loss", None))
         if bool(loss_cfg.get("globalkl", False)):
             raise ValueError(
@@ -118,7 +154,7 @@ def validate_lexicographic_requirements(cfg: Any, level_losses: List[torch.Tenso
                 "(pure level-loss lexicographic mode)."
             )
 
-    if model_name == "hiercos" and _resolve_hiercos_loss_mode(model_cfg) not in {
+    if plugin_loss_mode is None and model_name == "hiercos" and _resolve_hiercos_loss_mode(model_cfg) not in {
         "global_softmax_ce_reg",
         "level_softmax_ce_reg",
     }:

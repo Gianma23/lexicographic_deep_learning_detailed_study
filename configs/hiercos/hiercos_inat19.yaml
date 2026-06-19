@@ -15,7 +15,7 @@ model:
 
 dataset:
   name: inat19
-  root: /scratch/g.saggini1/datasets/inat19
+  root: ${oc.env:INAT19_ROOT,/scratch/g.saggini1/datasets/inat19}
   hierarchy_depth: 3
   image_size: 224
   mean: [0.454, 0.474, 0.367]
@@ -62,10 +62,10 @@ dataloader:
 train:
   epochs: 100
   seed: 0
-  device: cuda
+  device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_inat19_global_softmax_ce_reg_baseline_kl_leaf
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hiercos_inat19_global_softmax_ce_reg_baseline_kl_leaf
   smoothing: 0.0
 
 optim:

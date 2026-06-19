@@ -379,6 +379,7 @@ class HCASTModel(nn.Module):
 
         return {
             "logits_per_level": logits_per_level,
+            "orthonormal_plugin_scores_per_level": logits_per_level,
             "projected_logits_per_level": projected_logits_per_level,
             "effective_logits_per_level": effective_logits_per_level,
             "hcc_diagnostics": hcc_diagnostics,

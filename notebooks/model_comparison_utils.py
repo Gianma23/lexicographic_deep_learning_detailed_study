@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +12,18 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from dotenv import load_dotenv
+
+
+load_dotenv(
+    Path(os.environ.get("PROJECT_ENV_FILE", REPO_ROOT / ".env")).expanduser(),
+    override=False,
+)
 
 try:
     from IPython.display import Markdown, display
@@ -942,7 +956,7 @@ def _edges_or_na(value: float) -> str:
 
 @dataclass
 class ModelComparisonConfig:
-    output_root: Path = Path("/scratch/g.saggini1/outputs")
+    output_root: Path = Path(os.environ.get("OUTPUTS_ROOT", "/scratch/g.saggini1/outputs"))
     auto_discover: bool = True
     manual_runs: List[RunSpec] = field(default_factory=list)
     manual_run_dirs: List[Union[str, Path]] = field(default_factory=list)

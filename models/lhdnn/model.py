@@ -273,7 +273,10 @@ class LHDNNModel(nn.Module):
                     logits_level = logits_level + baseline
                 logits_per_level.append(logits_level)
 
-        output: Dict[str, Any] = {"logits_per_level": logits_per_level}
+        output: Dict[str, Any] = {
+            "logits_per_level": logits_per_level,
+            "orthonormal_plugin_scores_per_level": logits_per_level,
+        }
         if return_projection_debug:
             output["projection_debug"] = projection_debug
             output["shared_embedding"] = z

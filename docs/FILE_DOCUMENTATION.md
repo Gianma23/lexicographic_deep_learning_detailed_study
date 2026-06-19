@@ -4,13 +4,20 @@ This document is a concise map of the tracked repository files. It describes wha
 
 ## Root
 
+- `.env.example`: Versioned template for machine-local dataset paths, output storage, device, and launcher defaults; copy it to the ignored `.env`.
 - `README.md`: Project overview, setup, usage, datasets, metrics, and outputs.
 - `requirements.txt`: Python dependencies other than the user-installed `torch` and `torchvision`.
 - `TODO.md`: Local project notes.
 
+## Environment Loading
+
+- `python-dotenv`: Loads the ignored root `.env` for Python entrypoints; existing process variables take precedence.
+- `scripts/load_env.sh`: Equivalent shared loader sourced by shell experiment runners.
+
 ## Configs
 
 All experiment configs follow the same top-level sections: `model`, `dataset`, `dataloader`, `train`, `optim`, `scheduler`, and `runtime`.
+Dataset, output, and device fields resolve from the repository `.env` through OmegaConf environment interpolation.
 
 ### H-CAST presets
 
@@ -64,6 +71,7 @@ These presets use the single Hier-COS implementation with a fixed orthonormal fr
 - `configs/templates/ht_capsnet_template.yaml`: Commented template for HT-CapsNet-specific model options.
 - `configs/templates/hrn_template.yaml`: Commented template for HRN-specific model options.
 - `configs/templates/hiercos_template.yaml`: Commented template for Hier-COS-specific model options.
+- `configs/templates/orthonormal_plugin_template.yaml`: Optional post-logit orthonormal taxonomy-frame plugin shared by Hier-COS-style losses and non-Hier-COS model adapters.
 - `configs/templates/training_template.yaml`: Shared template for train/optim/scheduler/runtime sections.
 
 ## Datasets
@@ -126,8 +134,12 @@ These files are the closest local equivalents of the upstream CAST internals and
 
 - `models/hiercos/__init__.py`: Public Hier-COS exports.
 - `models/hiercos/factory.py`: Builds `HierCosModel` from config and taxonomy metadata.
-- `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces and an upstream-style fixed random orthonormal frame.
-- `models/hiercos/losses.py`: Hier-COS loss selection between paper-aligned exact KL + level regularization (`kl_reg`) and two lex-ready weighted target-CE + regularization decompositions that differ only by global-taxonomy versus per-level softmax normalization (`global_softmax_ce_reg`, `level_softmax_ce_reg`).
+- `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces and an upstream-style fixed random orthonormal frame, now using shared orthonormal-plugin topology/transform helpers.
+- `models/hiercos/losses.py`: Compatibility export for the shared orthonormal-plugin loss.
+
+### Orthonormal plugin
+
+- `models/orthonormal_plugin/`: Shared post-logit taxonomy-frame topology, transform/fixed-frame head, wrapper, config helpers, and Hier-COS-style loss used by Hier-COS and optional non-Hier-COS adapters.
 
 ## Training
 
@@ -143,9 +155,17 @@ These files are the closest local equivalents of the upstream CAST internals and
 - `train/lexicographic/`: Lexicographic config/types, trunk-gradient diagnostics, and projection utilities.
 - `train/runtime/`: Runtime concerns split by responsibility (optimization, finetune loading, checkpoint/resume, best-checkpoint selection), imported directly from concrete modules.
 
+## Scripts
+
+- `scripts/hcast/`: H-CAST runner scripts, including full/lex grids and the orthonormal-plugin runner.
+- `scripts/hrn/`: HRN baseline and orthonormal-plugin runner scripts.
+- `scripts/hiercos/`: Hier-COS baseline, lexicographic, and transform-ablation runner scripts.
+- `scripts/data/`: Dataset preparation utilities such as the iNat19 Making Better Mistakes split converter.
+
 ## Notebooks
 
 - `notebooks/hcast_analysis.ipynb`: H-CAST result analysis notebook.
+- `notebooks/hrn_analysis.ipynb`: HRN baseline-versus-orthonormal-plugin analysis notebook.
 - `notebooks/hcast_analysis_utils.py`: Shared loaders, run selection, plotting, and table utilities used by `hcast_analysis.ipynb`.
 - `notebooks/hcc_internal_diagnostics.ipynb`: HCC diagnostics notebook over `run_log.jsonl` with switch-focused plots/tables.
 - `notebooks/hcc_failure_examples.ipynb`: CUB/Aircraft qualitative notebook for cases where independent fails and top-down succeeds.

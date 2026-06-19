@@ -200,6 +200,7 @@ class HRNModel(nn.Module):
 
         return {
             "logits_per_level": logits_per_level,
+            "orthonormal_plugin_scores_per_level": [order_logits, family_logits, species_ce_logits],
             "effective_probs_per_level": effective_probs_per_level,
             "tree_scores_per_level": [order_sig, family_sig, species_sig],
             "species_ce_logits": species_ce_logits,

@@ -1,7 +1,7 @@
 # Template for the `dataset:` section in experiment configs.
 dataset:
   name: cifar-100                    # Dataset id (strict): cifar-100 | cub-200-2011 | fgvc-aircraft | inat19
-  root: ./data/cifar100              # Root folder where images/annotations are stored
+  root: ${oc.env:CIFAR100_ROOT,./data/cifar100} # Select the matching dataset env variable
   hierarchy_depth: 3                 # Number of hierarchy levels expected in labels
   image_size: 32                     # Target input size (single int; square image)
   mean: [0.5071, 0.4867, 0.4408]     # Channel mean (used when normalization=torchvision)

@@ -3,11 +3,26 @@
 
 import argparse
 import json
+import os
+import sys
 import tarfile
 import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from dotenv import load_dotenv  # noqa: E402
+
+
+load_dotenv(
+    Path(os.environ.get("PROJECT_ENV_FILE", REPO_ROOT / ".env")).expanduser(),
+    override=False,
+)
 
 
 EXPECTED_MBM_COUNTS = {
@@ -28,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path("/scratch/g.saggini1/datasets/inat19"),
+        default=Path(os.environ.get("INAT19_ROOT", "/scratch/g.saggini1/datasets/inat19")),
         help="iNat19 root containing train_val2019/, train2019.json, val2019.json, and splits_inat19.zip.",
     )
     parser.add_argument(

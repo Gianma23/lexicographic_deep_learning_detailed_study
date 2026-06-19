@@ -6,7 +6,7 @@ model:
 
 dataset:
   name: cub-200-2011
-  root: /scratch/g.saggini1/datasets/CUB_200_2011
+  root: ${oc.env:CUB200_ROOT,/scratch/g.saggini1/datasets/CUB_200_2011}
   hierarchy_depth: 3
   image_size: 224
   mean: [0.485, 0.456, 0.406]
@@ -57,10 +57,10 @@ train:
   # Extrapolation choice for CUB: short LH-DNN horizon, consistent with paper style.
   epochs: 20
   seed: 42
-  device: cuda
+  device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: true
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/lhdnn_cub200
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/lhdnn_cub200
   smoothing: 0.0
 
 optim:

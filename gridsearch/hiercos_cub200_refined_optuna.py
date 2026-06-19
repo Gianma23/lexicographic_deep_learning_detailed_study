@@ -16,9 +16,16 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from gridsearch import hiercos_cub200_optuna as base
 
@@ -29,7 +36,10 @@ SELECTION_MODES = base.SELECTION_MODES
 OBJECTIVE_MODES = base.OBJECTIVE_MODES
 
 DEFAULT_CONFIG = "configs/hiercos/hiercos_cub200.yaml"
-DEFAULT_OUTPUT_ROOT = "/scratch/g.saggini1/outputs/gridsearch/hiercos_cub200_refined_optuna"
+DEFAULT_OUTPUT_ROOT = str(
+    Path(os.environ.get("OUTPUTS_ROOT", "/scratch/g.saggini1/outputs"))
+    / "gridsearch/hiercos_cub200_refined_optuna"
+)
 DEFAULT_STUDY_NAME = "hiercos_cub200_refined"
 
 

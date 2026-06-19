@@ -13,7 +13,7 @@ model:
 
 dataset:
   name: cifar-100
-  root: /scratch/g.saggini1/datasets/cifar100
+  root: ${oc.env:CIFAR100_ROOT,/scratch/g.saggini1/datasets/cifar100}
   hierarchy_depth: 3
   image_size: 32
   mean: [0.5071, 0.4867, 0.4408]
@@ -59,10 +59,10 @@ dataloader:
 train:
   epochs: 100
   seed: 0
-  device: cuda
+  device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hiercos_cifar100_global_softmax_ce_reg_baseline_equal
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hiercos_cifar100_global_softmax_ce_reg_baseline_equal
   smoothing: 0.0
 
 optim:

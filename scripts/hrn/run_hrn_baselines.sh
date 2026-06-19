@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS global-softmax CE+regularization baselines:
-# - model.loss=global_softmax_ce_reg
-# - model.weight_mode in {equal, kl_leaf}
-# - model.transform_mode=full
-# - train.lexicographic.enabled=false
-# for: cifar100, cub200, aircraft, inat19.
+# Runs HRN baselines:
+# - hrn_<dataset>
+# for: cifar100, cub200, aircraft.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/load_env.sh"
+load_project_env "$ROOT_DIR"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
+OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -38,19 +38,13 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-# Notebook-compatible outputs root.
-# Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hiercos_baselines.sh
-OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
-
-DATASETS=(cifar100 cub200 aircraft inat19)
+DATASETS=(cifar100 cub200 aircraft)
 
 config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
-    cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
-    aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
-    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
+    cifar100) echo "configs/hrn/hrn_cifar100.yaml" ;;
+    cub200) echo "configs/hrn/hrn_cub200.yaml" ;;
+    aircraft) echo "configs/hrn/hrn_aircraft.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -108,30 +102,31 @@ run_train() {
   fi
 }
 
+hard_target_overrides=(
+  "dataset.transforms.mixup=0.0"
+  "dataset.transforms.cutmix=0.0"
+  "dataset.transforms.cutmix_minmax=null"
+  "dataset.transforms.mixup_prob=0.0"
+  "dataset.transforms.mixup_switch_prob=0.0"
+  "train.smoothing=0.0"
+)
+
 run_output_dir() {
   local ds="$1"
-  local weight_mode="$2"
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_global_softmax_ce_reg_baseline_${weight_mode}"
+  echo "$OUTPUTS_ROOT/hrn_${ds}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
-printf 'Loss: global_softmax_ce_reg\n'
-printf 'Transform mode: full\n'
-printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
-
-  for weight_mode in equal kl_leaf; do
-    run_train "$cfg" "$(run_output_dir "$ds" "$weight_mode")" \
-      "model.loss=global_softmax_ce_reg" \
-      "model.weight_mode=$weight_mode" \
-      "model.transform_mode=full" \
-      "train.lexicographic.enabled=false"
-  done
+  run_train "$cfg" "$(run_output_dir "$ds")" \
+    "${hard_target_overrides[@]}" \
+    "orthonormal_plugin.enabled=false" \
+    "train.lexicographic.enabled=false"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -145,4 +140,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS baseline runs.\n'
+printf 'Completed all requested HRN baseline runs.\n'

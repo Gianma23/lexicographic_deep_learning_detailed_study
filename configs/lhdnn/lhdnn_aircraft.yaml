@@ -6,7 +6,7 @@ model:
 
 dataset:
   name: fgvc-aircraft
-  root: /scratch/g.saggini1/datasets/fgvc-aircraft-2013b
+  root: ${oc.env:AIRCRAFT_ROOT,/scratch/g.saggini1/datasets/fgvc-aircraft-2013b}
   hierarchy_depth: 3
   image_size: 224
   mean: [0.485, 0.456, 0.406]
@@ -57,10 +57,10 @@ train:
   # Extrapolation choice for Aircraft: short LH-DNN horizon, consistent with paper style.
   epochs: 20
   seed: 0
-  device: cuda
+  device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: true
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/lhdnn_aircraft
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/lhdnn_aircraft
   smoothing: 0.0
 
 optim:

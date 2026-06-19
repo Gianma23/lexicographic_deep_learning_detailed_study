@@ -30,12 +30,29 @@ Notes:
 
 - `timm` is required for H-CAST and timm-backed schedulers.
 - `opencv-contrib-python` is required for H-CAST `segments.mode: seeds`.
-- Preset configs in `configs/` use machine-specific dataset/output paths. Update them before running.
+
+### Local Environment
+
+Create the ignored, machine-local settings file once:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` when dataset or output storage moves. The active presets and runner scripts share these values:
+
+- `CIFAR100_ROOT`, `CUB200_ROOT`, `AIRCRAFT_ROOT`, `INAT19_ROOT`: complete dataset paths
+- `OUTPUTS_ROOT`: parent directory for run artifacts, grid searches, and analysis outputs
+- `PYTHON_BIN`: Python executable used by shell runners
+- `MAX_PARALLEL`, `MAX_RESUME_RETRIES`: shared runner resource/retry defaults
+- `TRAIN_DEVICE`: default config device (`cuda` or `cpu`)
+
+The Python config loader reads `.env` automatically. Shell runners load it through `scripts/load_env.sh`. Variables already exported by the calling process take precedence, and `PROJECT_ENV_FILE=/path/to/file` selects a different env file.
 
 ## Quick Start
 
-1. Pick a preset config from `configs/`.
-2. Edit at least `dataset.root` and `train.output_dir`.
+1. Configure `.env` as described above.
+2. Pick a preset config from `configs/`.
 3. Run training:
 
 ```bash
@@ -95,6 +112,7 @@ Reusable templates:
 - `configs/templates/ht_capsnet_template.yaml`
 - `configs/templates/hrn_template.yaml`
 - `configs/templates/hiercos_template.yaml`
+- `configs/templates/orthonormal_plugin_template.yaml`
 - `configs/templates/training_template.yaml`
 
 ## Config Structure
@@ -102,6 +120,7 @@ Reusable templates:
 Experiment YAMLs use the same top-level sections:
 
 - `model`
+- `orthonormal_plugin` (optional)
 - `dataset`
 - `dataloader`
 - `train`
@@ -133,13 +152,22 @@ Lexicographic upper-bound mode (3-level):
 - `train.lexicographic.log_metrics`: logs projection diagnostics under `train_metrics`
 - H-CAST requires exactly 3 level losses and `model.loss.globalkl: false`
 - Hier-COS lexicographic mode requires per-level losses (`model.loss: global_softmax_ce_reg` or `level_softmax_ce_reg`); plain `model.loss: kl_reg` does not expose differentiable per-level losses. Lexicographic updates honor the configured `model.weight_mode`.
+- `orthonormal_plugin.enabled: true` uses the shared post-logit orthonormal taxonomy-frame loss for any model that emits `orthonormal_plugin_scores_per_level`; lexicographic mode requires `orthonormal_plugin.loss` to be `global_softmax_ce_reg` or `level_softmax_ce_reg`.
 
 The config loader supports positional dotlist overrides such as `train.epochs=10` or `optim.lr=1e-4`.
 
 The Hier-COS orthogonalize-all runner defaults to `global_softmax_ce_reg`. Use the same experiment matrix with level-local softmax normalization via:
 
 ```bash
-LOSS_MODE=level_softmax_ce_reg ./scripts/run_hiercos_lex_orthogonalize_all.sh
+LOSS_MODE=level_softmax_ce_reg ./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
+```
+
+Runner scripts are grouped by family under `scripts/hcast/`, `scripts/hrn/`, `scripts/hiercos/`, and `scripts/data/`. Plugin runs use hard targets, so the runners disable MixUp/CutMix and smoothing:
+
+```bash
+DRY_RUN=1 ./scripts/hcast/run_hcast_orthonormal_plugin.sh
+DRY_RUN=1 ./scripts/hrn/run_hrn_baselines.sh
+DRY_RUN=1 ./scripts/hrn/run_hrn_orthonormal_plugin.sh
 ```
 
 ## Supported Datasets
@@ -158,7 +186,7 @@ Adapter behavior:
 - FGVC-Aircraft reads the official `images_variant_{train,val,test,trainval}.txt` files under `data/`-style roots.
 - iNat19 uses official iNaturalist 2019 COCO-style JSON or JSON-in-tar annotations with a local 3-level `family -> genus -> species` projection. The active iNat19 configs use fixed Making Better Mistakes / Hier-COS train/val/test manifests over the labeled official `train_val2019` image pool.
 
-Default dataset roots in shipped configs:
+Default dataset roots in `.env.example`:
 
 ```text
 /scratch/g.saggini1/datasets/cifar100
@@ -167,13 +195,17 @@ Default dataset roots in shipped configs:
 /scratch/g.saggini1/datasets/inat19
 ```
 
-To prepare CIFAR-100 from the official Toronto download through torchvision:
+To prepare CIFAR-100 from the official Toronto download through torchvision, export the local paths first:
 
 ```bash
-mkdir -p /scratch/g.saggini1/datasets/cifar100
+set -a
+source .env
+set +a
+mkdir -p "$CIFAR100_ROOT"
 python - <<'PY'
+import os
 from torchvision.datasets import CIFAR100
-root = "/scratch/g.saggini1/datasets/cifar100"
+root = os.environ["CIFAR100_ROOT"]
 CIFAR100(root=root, train=True, download=True)
 CIFAR100(root=root, train=False, download=True)
 PY
@@ -182,8 +214,9 @@ PY
 To prepare CUB-200-2011 from CaltechDATA:
 
 ```bash
-mkdir -p /scratch/g.saggini1/datasets
-cd /scratch/g.saggini1/datasets
+set -a; source .env; set +a
+mkdir -p "$(dirname "$CUB200_ROOT")"
+cd "$(dirname "$CUB200_ROOT")"
 curl -L -o CUB_200_2011.tgz "https://data.caltech.edu/records/65de6-vp158/files/CUB_200_2011.tgz?download=1"
 tar -xzf CUB_200_2011.tgz
 ```
@@ -191,7 +224,7 @@ tar -xzf CUB_200_2011.tgz
 Expected layout:
 
 ```text
-/scratch/g.saggini1/datasets/CUB_200_2011/
+<CUB200_ROOT>/
   images/
   images.txt
   image_class_labels.txt
@@ -201,8 +234,9 @@ Expected layout:
 To prepare FGVC-Aircraft from Oxford VGG:
 
 ```bash
-mkdir -p /scratch/g.saggini1/datasets
-cd /scratch/g.saggini1/datasets
+set -a; source .env; set +a
+mkdir -p "$(dirname "$AIRCRAFT_ROOT")"
+cd "$(dirname "$AIRCRAFT_ROOT")"
 curl -L -O https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/archives/fgvc-aircraft-2013b.tar.gz
 tar -xzf fgvc-aircraft-2013b.tar.gz
 ```
@@ -210,7 +244,7 @@ tar -xzf fgvc-aircraft-2013b.tar.gz
 Expected layout:
 
 ```text
-/scratch/g.saggini1/datasets/fgvc-aircraft-2013b/
+<AIRCRAFT_ROOT>/
   data/
     images/
     images_variant_train.txt
@@ -222,8 +256,9 @@ Expected layout:
 To prepare iNaturalist 2019 with the Making Better Mistakes / Hier-COS fixed split:
 
 ```bash
-mkdir -p /scratch/g.saggini1/datasets/inat19
-cd /scratch/g.saggini1/datasets/inat19
+set -a; source .env; set +a
+mkdir -p "$INAT19_ROOT"
+cd "$INAT19_ROOT"
 
 curl -L -O https://ml-inat-competition-datasets.s3.amazonaws.com/2019/train_val2019.tar.gz
 curl -L -O https://ml-inat-competition-datasets.s3.amazonaws.com/2019/train2019.json.tar.gz
@@ -234,14 +269,14 @@ tar -xzf train_val2019.tar.gz
 tar -xzf train2019.json.tar.gz
 tar -xzf val2019.json.tar.gz
 
-cd /home/g.saggini1/lexicographic_deep_learning_detailed_study
-python scripts/prepare_inat19_mbm_splits.py --root /scratch/g.saggini1/datasets/inat19
+cd -
+python scripts/data/prepare_inat19_mbm_splits.py
 ```
 
 Expected layout:
 
 ```text
-/scratch/g.saggini1/datasets/inat19/
+<INAT19_ROOT>/
   train_val2019/
   train2019.json
   val2019.json
@@ -288,6 +323,7 @@ Optional normalized JSON annotations are also supported for all datasets:
 - `hiercos` requires taxonomy (`taxonomy.parent_of`) and at least 2 levels.
 - `hiercos` does not support mixup/cutmix soft targets. Keep `dataset.transforms.mixup/cutmix: 0.0`.
 - `hiercos` uses a single fixed orthonormal Hier-COS frame with taxonomy-driven subspace scores. `model.loss: kl_reg` is the default paper-aligned exact KL + level regularization objective. The lex-ready `global_softmax_ce_reg` and `level_softmax_ce_reg` modes both optimize weighted target CE plus the same level regularizer and use leaf-derived taxonomy paths. They differ only in normalization scope: `global_softmax_ce_reg` uses one softmax across every taxonomy node, while `level_softmax_ce_reg` uses one softmax inside each level. `model.weight_mode` supports `equal` (exact `1/depth` per level), leaf-heavy `kl_leaf`, and reversed/coarse-heavy `kl_coarse`; it defines the target-path distribution for `kl_reg` and weights CE in both decomposed modes. Regularization remains unweighted in every mode. Both decomposed modes log `ce`, `reg`, `ce_level_*`, `reg_level_*`, and exact optimization objectives `loss_level_*`, with `total = sum(loss_level_*) = ce + alpha * reg`. CLI examples: `model.loss=global_softmax_ce_reg`, `model.loss=level_softmax_ce_reg model.weight_mode=equal`. CIFAR-100 uses `haframe_wide_resnet` from scratch; Aircraft, CUB-200, and iNat19 use ImageNet-pretrained `haframe_resnet50`.
+- `orthonormal_plugin` is an optional post-logit reuse of the Hier-COS orthonormal taxonomy-frame head/loss for non-Hier-COS models. Enabled runs require taxonomy, hard targets, disabled MixUp/CutMix, and an explicit model output key `orthonormal_plugin_scores_per_level`.
 - `hiercos_cifar100` keeps this repo CIFAR hierarchy (3-level), not the paper 5-level CIFAR protocol.
 - `hiercos_cub200` is a pragmatic extrapolation preset (paper does not report CUB experiments).
 - `hiercos_inat19` follows the upstream iNaturalist19-224 Hier-COS recipe where compatible (ResNet-50, ImageNet pretraining, average pooling, SGD/cosine, batch size 256, `model.loss: kl_reg`, `model.weight_mode: kl_leaf`, `alpha: 0.001`, low-LR transform/backbone groups, and iNat19 normalization), but uses this repo's local 3-level `family -> genus -> species` projection rather than the upstream full 7-level taxonomy. The Hier-COS runner scripts override the loss mode when launching the local lex-ready CE studies.

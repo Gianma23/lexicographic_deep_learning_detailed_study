@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs H-CAST lexicographic variants on all datasets:
-# - hcast_lex (start epoch 0)
-# - hcast_lex starting from epoch 80
-# for: cifar100, cub200, aircraft.
+# Runs the Hier-COS transformation-layer ablation on all datasets:
+# - model.loss=global_softmax_ce_reg
+# - model.weight_mode=equal
+# - train.lexicographic.enabled=true
+# - train.lexicographic.start_epoch=0
+# - train.lexicographic.projection_mode=coarse_first
+# - train.lexicographic.projection_rule=orthogonalize_all
+# - model.transform_mode in {bn_linear, final_only}
+# The matching full-transform reference is produced by
+# scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh.
+# for: cifar100, cub200, aircraft, inat19.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/load_env.sh"
+load_project_env "$ROOT_DIR"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
-MAX_PARALLEL="${MAX_PARALLEL:-2}"
+MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 
 kill_running_jobs() {
@@ -36,18 +45,21 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-# Notebook-compatible outputs root (run dir names match notebooks/hcast_analysis.ipynb).
+# Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hcast_lex_grid.sh
-OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_transform_ablation.sh
+OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100 cub200 aircraft)
+#DATASETS=(cub200 aircraft cifar100)
+DATASETS=(aircraft cifar100)
+TRANSFORM_MODES=(bn_linear final_only)
 
-lex_config_for_dataset() {
+config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hcast/hcast_lex_cifar100.yaml" ;;
-    cub200) echo "configs/hcast/hcast_lex_cub200.yaml" ;;
-    aircraft) echo "configs/hcast/hcast_lex_aircraft.yaml" ;;
+    cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
+    cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
+    aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
+    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -107,36 +119,31 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local epoch_tag="$2"
-  case "$epoch_tag" in
-    e0) echo "$OUTPUTS_ROOT/hcast_lex_${ds}" ;;
-    e80) echo "$OUTPUTS_ROOT/hcast_lex_${ds}_step_80epoch" ;;
-    *)
-      echo "Unknown lex epoch tag: $epoch_tag" >&2
-      exit 1
-      ;;
-  esac
+  local transform_mode="$2"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_global_softmax_ce_reg_lex_orthogonalize_all_coarse_first_${transform_mode}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Weight mode: equal\n'
+printf 'Projection mode: coarse_first\n'
+printf 'Projection rule: orthogonalize_all\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 
 for ds in "${DATASETS[@]}"; do
-  lex_cfg="$(lex_config_for_dataset "$ds")"
+  cfg="$(config_for_dataset "$ds")"
 
-  # hcast_lex (epoch 0)
-  run_train "$lex_cfg" "$(run_output_dir "$ds" e0)" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0" \
-    "model.loss.globalkl=false"
-
-  # hcast_lex (epoch 80)
-  run_train "$lex_cfg" "$(run_output_dir "$ds" e80)" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=80" \
-    "model.loss.globalkl=false"
+  for transform_mode in "${TRANSFORM_MODES[@]}"; do
+    run_train "$cfg" "$(run_output_dir "$ds" "$transform_mode")" \
+      "model.loss=global_softmax_ce_reg" \
+      "model.weight_mode=equal" \
+      "model.transform_mode=$transform_mode" \
+      "train.lexicographic.enabled=true" \
+      "train.lexicographic.start_epoch=0" \
+      "train.lexicographic.projection_mode=coarse_first" \
+      "train.lexicographic.projection_rule=orthogonalize_all"
+  done
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -150,4 +157,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested lex runs.\n'
+printf 'Completed all requested Hier-COS transform ablation runs.\n'

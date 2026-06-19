@@ -9,8 +9,10 @@ set -euo pipefail
 # - H-CAST + lexicographic (start epoch 80)
 # for all datasets: cifar100, cub200, aircraft.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/load_env.sh"
+load_project_env "$ROOT_DIR"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -41,8 +43,8 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root (run dir names match notebooks/hcast_analysis.ipynb).
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/run_hcast_full_grid.sh
-OUTPUTS_ROOT="${OUTPUTS_ROOT:-/scratch/g.saggini1/outputs}"
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_full_grid.sh
+OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
 # Dataset -> config mapping
 DATASETS=(cifar100 cub200 aircraft)

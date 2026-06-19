@@ -3,13 +3,27 @@ from __future__ import annotations
 import ast
 import html
 import json
+import os
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OUTPUTS_ROOT = Path("/scratch/g.saggini1/outputs")
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from dotenv import load_dotenv
+
+
+load_dotenv(
+    Path(os.environ.get("PROJECT_ENV_FILE", REPO_ROOT / ".env")).expanduser(),
+    override=False,
+)
+
+
+OUTPUTS_ROOT = Path(os.environ.get("OUTPUTS_ROOT", "/scratch/g.saggini1/outputs"))
 FIG_ROOT = REPO_ROOT / "docs" / "figures" / "hcc_internal_insights_slides"
 
 SWITCH_EPOCH = 100

@@ -106,14 +106,15 @@ def load_finetune_checkpoint(cfg: Any, model: torch.nn.Module) -> bool:
     model_name = model_cfg.get("name", "")
     if not isinstance(model_name, str):
         raise ValueError("model.name must be a string.")
+    model_for_loading = getattr(model, "base_model", model)
     if model_name == "hcast":
-        inner = getattr(model, "model", None)
+        inner = getattr(model_for_loading, "model", None)
         if not isinstance(inner, torch.nn.Module):
             print("finetune: skipped (H-CAST timm backend unavailable)")
             return False
         target_model = inner
     else:
-        target_model = model
+        target_model = model_for_loading
 
     checkpoint, resolved_source = _load_external_checkpoint(finetune_path)
     checkpoint_model = _strip_module_prefix(_extract_checkpoint_state_dict(checkpoint))

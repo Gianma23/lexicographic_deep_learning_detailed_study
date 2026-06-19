@@ -27,7 +27,7 @@ model:
 
 dataset:
   name: cifar-100
-  root: /scratch/g.saggini1/datasets/cifar100
+  root: ${oc.env:CIFAR100_ROOT,/scratch/g.saggini1/datasets/cifar100}
   hierarchy_depth: 3
   image_size: 32
   mean: [0.5071, 0.4867, 0.4408]
@@ -76,12 +76,12 @@ train:
   epochs: 100
   # Upstream default seed in main_suppix_hier.py.
   seed: 0
-  device: cuda
+  device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: true
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: /scratch/g.saggini1/outputs/hcast_lex_cifar100
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hcast_lex_cifar100
   smoothing: 0.1
   lexicographic:
     enabled: true

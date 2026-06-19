@@ -126,21 +126,31 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
         return torch.optim.AdamW(model.parameters(), **kwargs)
     if name == "sgd":
         model_cfg = section_to_dict(getattr(cfg, "model", None))
+        plugin_cfg = section_to_dict(getattr(cfg, "orthonormal_plugin", None))
+        if not plugin_cfg and hasattr(cfg, "get"):
+            plugin_cfg = section_to_dict(cfg.get("orthonormal_plugin", None))
+        plugin_enabled = bool(plugin_cfg.get("enabled", False))
         model_name = model_cfg.get("name", "")
         if not isinstance(model_name, str):
             raise ValueError("model.name must be a string.")
-        if model_name in {"hiercos", "hrn"} and hasattr(model, "parameter_groups"):
+        if hasattr(model, "parameter_groups"):
             if model_name == "hrn":
                 lr_scale = float(model_cfg.get("trunk_lr_scale", 0.1))
                 param_groups = model.parameter_groups(base_lr=lr, trunk_lr_scale=lr_scale)
-            else:
+            elif model_name == "hiercos":
                 lr_scale = float(model_cfg.get("backbone_lr_scale", 0.1))
-                transform_lr_scale = float(model_cfg.get("transform_lr_scale", 1.0))
+                transform_lr_scale = float(
+                    plugin_cfg.get("transform_lr_scale", model_cfg.get("transform_lr_scale", 1.0))
+                    if plugin_enabled
+                    else model_cfg.get("transform_lr_scale", 1.0)
+                )
                 param_groups = model.parameter_groups(
                     base_lr=lr,
                     backbone_lr_scale=lr_scale,
                     transform_lr_scale=transform_lr_scale,
                 )
+            else:
+                param_groups = model.parameter_groups(base_lr=lr)
             if not param_groups:
                 raise ValueError(f"{model_name} optimizer parameter_groups() returned no trainable parameters.")
             return torch.optim.SGD(

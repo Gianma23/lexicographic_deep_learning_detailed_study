@@ -505,6 +505,7 @@ class HTCapsNet(nn.Module):
 
         return {
             "logits_per_level": logits_per_level,
+            "orthonormal_plugin_scores_per_level": logits_per_level,
             "secondary_caps": secondary_caps,
             "routing_stats": routing_stats,
         }
