@@ -147,6 +147,42 @@ def _validate_plugin_output(
     return node_logits, level_node_ids, leaf_to_level_local
 
 
+def _validate_node_logits_per_level(
+    output: Dict[str, Any],
+    level_node_ids: List[torch.Tensor],
+    num_levels: int,
+) -> Optional[List[torch.Tensor]]:
+    node_logits_per_level = _get_list(
+        output,
+        "orthonormal_plugin_node_logits_per_level",
+        "node_logits_per_level",
+    )
+    if node_logits_per_level is None:
+        return None
+    if len(node_logits_per_level) != int(num_levels):
+        raise ValueError(
+            "Orthonormal plugin node logits per level must be aligned with hierarchy depth: "
+            f"expected {num_levels}, found {len(node_logits_per_level)}."
+        )
+    validated: List[torch.Tensor] = []
+    batch_size: Optional[int] = None
+    for level, (level_logits, node_ids) in enumerate(zip(node_logits_per_level, level_node_ids)):
+        if not isinstance(level_logits, torch.Tensor) or level_logits.ndim != 2:
+            raise ValueError(f"Orthonormal plugin node logits for level {level} must have shape [B, C].")
+        if batch_size is None:
+            batch_size = int(level_logits.size(0))
+        elif int(level_logits.size(0)) != batch_size:
+            raise ValueError("Orthonormal plugin node logits per level must share one batch size.")
+        expected_width = int(node_ids.numel())
+        if int(level_logits.size(1)) != expected_width:
+            raise ValueError(
+                f"Orthonormal plugin node logits for level {level} have width {int(level_logits.size(1))}; "
+                f"expected {expected_width}."
+            )
+        validated.append(level_logits)
+    return validated
+
+
 def _path_global_node_ids(
     leaf_targets: torch.Tensor,
     level_node_ids: List[torch.Tensor],
@@ -216,6 +252,30 @@ def _level_regularization_loss(
     return reg, level_losses
 
 
+def _level_regularization_loss_from_level_logits(
+    abs_node_logits_per_level: List[torch.Tensor],
+    leaf_targets: torch.Tensor,
+    leaf_to_level_local: torch.Tensor,
+) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    level_losses: List[torch.Tensor] = []
+    for level, level_logits in enumerate(abs_node_logits_per_level):
+        level_size = int(level_logits.size(1))
+        level_logits = level_logits / level_logits.norm(dim=1, keepdim=True).clamp_min(_EPS)
+        level_targets = leaf_to_level_local[leaf_targets, level].to(device=level_logits.device, dtype=torch.long)
+        _check_index_range(
+            level_targets,
+            level_size,
+            f"Orthonormal plugin invalid target labels for regularization at level {level}.",
+        )
+
+        one_hot = F.one_hot(level_targets, num_classes=level_size).to(dtype=level_logits.dtype)
+        level_losses.append((one_hot - level_logits).abs().sum(dim=1).mean())
+
+    if level_losses:
+        return torch.stack(level_losses).sum(), level_losses
+    return leaf_targets.new_zeros((), dtype=torch.float32), level_losses
+
+
 def _weighted_target_ce_level_losses(
     abs_node_logits: torch.Tensor,
     level_node_ids: List[torch.Tensor],
@@ -251,6 +311,30 @@ def _weighted_target_ce_level_losses(
             level_log_probs = F.log_softmax(level_logits, dim=1)
             target_log_probs = level_log_probs[row_ids, level_targets]
         level_losses.append(-(weights[level] * target_log_probs).mean())
+    return level_losses
+
+
+def _weighted_target_ce_level_losses_from_level_logits(
+    abs_node_logits_per_level: List[torch.Tensor],
+    leaf_targets: torch.Tensor,
+    leaf_to_level_local: torch.Tensor,
+    level_weights: torch.Tensor,
+) -> List[torch.Tensor]:
+    weights = level_weights / level_weights.sum().clamp_min(_EPS)
+    level_losses: List[torch.Tensor] = []
+    for level, level_logits in enumerate(abs_node_logits_per_level):
+        level_size = int(level_logits.size(1))
+        level_targets = leaf_to_level_local[leaf_targets, level].to(device=level_logits.device, dtype=torch.long)
+        _check_index_range(
+            level_targets,
+            level_size,
+            f"Orthonormal plugin invalid target labels for CE at level {level}: expected [0, {level_size}).",
+        )
+        row_ids = torch.arange(int(leaf_targets.size(0)), device=level_logits.device, dtype=torch.long)
+        level_log_probs = F.log_softmax(level_logits, dim=1)
+        target_log_probs = level_log_probs[row_ids, level_targets]
+        level_weight = weights[level].to(device=level_logits.device, dtype=level_logits.dtype)
+        level_losses.append(-(level_weight * target_log_probs).mean())
     return level_losses
 
 
@@ -314,6 +398,11 @@ def compute_loss(
     )
 
     node_logits, level_node_ids, leaf_to_level_local = _validate_plugin_output(output=output, num_levels=num_levels)
+    node_logits_per_level = _validate_node_logits_per_level(
+        output=output,
+        level_node_ids=level_node_ids,
+        num_levels=num_levels,
+    )
     hard_targets = hard_targets.to(device=node_logits.device, dtype=torch.long)
     leaf_targets = _resolve_leaf_targets(hard_targets)
     num_leaf = int(leaf_to_level_local.size(0))
@@ -333,23 +422,37 @@ def compute_loss(
         dtype=node_logits.dtype,
     )
     abs_node_logits = node_logits.abs()
-    reg, level_reg_losses = _level_regularization_loss(
-        abs_node_logits=abs_node_logits,
-        leaf_targets=leaf_targets,
-        level_node_ids=level_node_ids,
-        leaf_to_level_local=leaf_to_level_local,
-    )
 
     alpha = _resolve_alpha(cfg)
     if loss_mode in {"global_softmax_ce_reg", "level_softmax_ce_reg"}:
-        ce_level_losses = _weighted_target_ce_level_losses(
-            abs_node_logits=abs_node_logits,
-            level_node_ids=level_node_ids,
-            leaf_targets=leaf_targets,
-            leaf_to_level_local=leaf_to_level_local,
-            level_weights=level_weights,
-            softmax_scope="global" if loss_mode == "global_softmax_ce_reg" else "level",
-        )
+        if loss_mode == "level_softmax_ce_reg" and node_logits_per_level is not None:
+            abs_node_logits_per_level = [level_logits.abs() for level_logits in node_logits_per_level]
+            reg, level_reg_losses = _level_regularization_loss_from_level_logits(
+                abs_node_logits_per_level=abs_node_logits_per_level,
+                leaf_targets=leaf_targets,
+                leaf_to_level_local=leaf_to_level_local,
+            )
+            ce_level_losses = _weighted_target_ce_level_losses_from_level_logits(
+                abs_node_logits_per_level=abs_node_logits_per_level,
+                leaf_targets=leaf_targets,
+                leaf_to_level_local=leaf_to_level_local,
+                level_weights=level_weights,
+            )
+        else:
+            reg, level_reg_losses = _level_regularization_loss(
+                abs_node_logits=abs_node_logits,
+                leaf_targets=leaf_targets,
+                level_node_ids=level_node_ids,
+                leaf_to_level_local=leaf_to_level_local,
+            )
+            ce_level_losses = _weighted_target_ce_level_losses(
+                abs_node_logits=abs_node_logits,
+                level_node_ids=level_node_ids,
+                leaf_targets=leaf_targets,
+                leaf_to_level_local=leaf_to_level_local,
+                level_weights=level_weights,
+                softmax_scope="global" if loss_mode == "global_softmax_ce_reg" else "level",
+            )
         ce = torch.stack(ce_level_losses).sum()
         level_losses = [
             ce_level_loss + float(alpha) * reg_level_loss
@@ -374,6 +477,12 @@ def compute_loss(
             "level_reg_losses": level_reg_losses,
         }
 
+    reg, level_reg_losses = _level_regularization_loss(
+        abs_node_logits=abs_node_logits,
+        leaf_targets=leaf_targets,
+        level_node_ids=level_node_ids,
+        leaf_to_level_local=leaf_to_level_local,
+    )
     node_targets = _build_node_targets(
         leaf_targets=leaf_targets,
         level_node_ids=level_node_ids,

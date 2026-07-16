@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import torch
 import torch.nn as nn
 
-from .config import INPUT_KEY, plugin_section, validate_disabled_mixup
+from .config import INPUT_KEY, parse_bool, plugin_section, validate_disabled_mixup
 from .head import OrthonormalPluginHead
 
 
@@ -28,6 +28,7 @@ class OrthonormalPluginWrapper(nn.Module):
             taxonomy=taxonomy,
             transform_mode=plugin_cfg.get("transform_mode", "full"),
             fixed_frame_mode=plugin_cfg.get("fixed_frame_mode", "orthonormal_random"),
+            fixed_frame_per_level=parse_bool(plugin_cfg.get("fixed_frame_per_level", False), default=False),
         )
 
     def set_epoch(self, epoch: int) -> None:

@@ -8,6 +8,7 @@ model:
   alpha: 0.15
   backbone_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
+  fixed_frame_per_level: false
 
 dataset:
   name: cub-200-2011

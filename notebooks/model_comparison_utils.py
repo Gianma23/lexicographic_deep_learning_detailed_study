@@ -18,6 +18,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from dotenv import load_dotenv
+try:
+    from notebooks.multiseed_utils import (
+        aggregate_parsed_seed_runs,
+        discover_seed_dirs,
+        has_seed_runs,
+        metric_series_with_std,
+    )
+except ModuleNotFoundError:
+    from multiseed_utils import (
+        aggregate_parsed_seed_runs,
+        discover_seed_dirs,
+        has_seed_runs,
+        metric_series_with_std,
+    )
 
 
 load_dotenv(
@@ -566,7 +580,18 @@ def _test_metric_value(run_data: Mapping[str, Any], metric_key: str) -> float:
     return float(metrics.get(metric_key, np.nan))
 
 
-def parse_run(run_dir: Path) -> RunData:
+def _test_metric_stats(run_data: Mapping[str, Any], metric_key: str) -> Tuple[float, float, int]:
+    mode = _mode_from_metric_key(metric_key)
+    section = run_data.get("test_results", {}).get(mode, {})
+    if not isinstance(section, MappingABC):
+        return float("nan"), float("nan"), 0
+    mean = float(section.get("test_metrics", {}).get(metric_key, np.nan))
+    std = float(section.get("test_metrics_std", {}).get(metric_key, np.nan))
+    count = int(section.get("test_metrics_count", {}).get(metric_key, 0))
+    return mean, std, count
+
+
+def _parse_single_run(run_dir: Path) -> RunData:
     run_path = Path(run_dir)
 
     cfg: Dict[str, Any] = {}
@@ -639,6 +664,15 @@ def parse_run(run_dir: Path) -> RunData:
     }
 
 
+def parse_run(run_dir: Path) -> RunData:
+    experiment_dir = Path(run_dir)
+    seed_dirs = discover_seed_dirs(experiment_dir)
+    if not seed_dirs:
+        raise ValueError(f"No completed seed directories found under {experiment_dir}")
+    seed_runs = [_parse_single_run(seed_dir) for seed_dir in seed_dirs]
+    return aggregate_parsed_seed_runs(experiment_dir, seed_runs)
+
+
 def _resolve_run_dir(path_like: Union[str, Path], output_root: Path) -> Path:
     path = Path(path_like)
     if path.is_absolute():
@@ -653,7 +687,7 @@ def _resolve_run_dir(path_like: Union[str, Path], output_root: Path) -> Path:
         matches = sorted(
             candidate
             for candidate in root.rglob(path.name)
-            if candidate.is_dir() and candidate.name == path.name and (candidate / "run_log.jsonl").exists()
+            if candidate.is_dir() and candidate.name == path.name and has_seed_runs(candidate)
         )
         if matches:
             return matches[0]
@@ -807,7 +841,7 @@ def discover_run_dirs(
 
     for item in manual_run_dirs:
         path = _resolve_run_dir(item, output_root)
-        if path.exists() and path.is_dir() and (path / "run_log.jsonl").exists():
+        if path.exists() and path.is_dir() and has_seed_runs(path):
             append_unique(path)
         else:
             print(f"Skipping missing/manual-invalid run: {path}")
@@ -815,7 +849,13 @@ def discover_run_dirs(
     if auto_discover:
         root = Path(output_root)
         if root.exists():
-            for path in sorted({path.parent for path in root.rglob("run_log.jsonl")}):
+            for path in sorted(
+                {
+                    log_path.parent.parent
+                    for log_path in root.rglob("seed_*/run_log.jsonl")
+                    if has_seed_runs(log_path.parent.parent)
+                }
+            ):
                 append_unique(path)
 
     return out
@@ -885,8 +925,21 @@ def _fmt_score(value: Any) -> str:
 def _fmt_epoch_score(event: Optional[Mapping[str, Any]], score: Any) -> str:
     if event is None:
         return f"n/a/{_fmt_score(score)}"
-    epoch = _coerce_int(event.get("epoch"))
-    epoch_text = str(epoch) if epoch is not None else "n/a"
+    try:
+        epoch = float(event.get("epoch"))
+    except (TypeError, ValueError):
+        epoch = float("nan")
+    try:
+        epoch_std = float(event.get("epoch_std"))
+    except (TypeError, ValueError):
+        epoch_std = float("nan")
+    epoch_count = int(event.get("epoch_count", 0))
+    if not np.isfinite(epoch):
+        epoch_text = "n/a"
+    elif epoch_count > 1 and np.isfinite(epoch_std):
+        epoch_text = f"{epoch:.1f}±{epoch_std:.1f}"
+    else:
+        epoch_text = f"{epoch:.0f}"
     return f"{epoch_text}/{_fmt_score(score)}"
 
 
@@ -916,6 +969,13 @@ def _merged_comp_cell(metric_key: str, comp_value: float, base_value: float) -> 
         return comp_txt
     delta_txt = _fmt_delta(metric_key, comp_value - base_value)
     return f"{comp_txt} ({delta_txt})"
+
+
+def _fmt_value_stats(metric_key: str, mean: float, std: float, count: int) -> str:
+    mean_text = _fmt_value(metric_key, mean)
+    if count > 1 and np.isfinite(std):
+        return f"{mean_text} ± {_fmt_value(metric_key, std)}"
+    return mean_text
 
 
 def _best_and_second_best_indices(metric_key: str, values: Sequence[float]) -> Tuple[set[int], set[int]]:
@@ -1144,6 +1204,7 @@ class ModelComparisonAnalysis:
                 test_fpa_independent = float(_test_metrics_for_mode(run, "independent").get("fpa_independent", np.nan))
                 print(
                     f"  - {run['model_label']:<12} | run={run['run_name']:<35} "
+                    f"| seeds={run.get('seeds', [])} "
                     f"| best_td={_fmt_epoch_score(topdown_event, topdown_score):<12} | "
                     f"best_ind={_fmt_epoch_score(independent_event, independent_score):<12} | "
                     f"test_FPA_td={_fmt_pct(test_fpa_topdown)} | "
@@ -1179,7 +1240,9 @@ class ModelComparisonAnalysis:
                 for run_data in dataset_runs:
                     for mode_key, line_style, mode_label, marker in mode_specs:
                         metric_key = f"{metric_prefix}_{mode_key}"
-                        epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
+                        epochs, values, stds, counts = metric_series_with_std(
+                            run_data["epoch_events"], metric_key
+                        )
                         if np.all(~np.isfinite(values)):
                             continue
 
@@ -1192,6 +1255,18 @@ class ModelComparisonAnalysis:
                             linestyle=line_style,
                             linewidth=2.0,
                         )
+                        plot_stds = stds * 100.0 if is_percent else stds
+                        band_mask = np.isfinite(plot_values) & np.isfinite(plot_stds) & (counts > 1)
+                        if np.any(band_mask):
+                            ax.fill_between(
+                                epochs,
+                                plot_values - plot_stds,
+                                plot_values + plot_stds,
+                                where=band_mask,
+                                color=run_data["color"],
+                                alpha=0.14,
+                                linewidth=0,
+                            )
 
                         best_events = run_data.get("best_epoch_events", {})
                         best_event = (
@@ -1211,6 +1286,25 @@ class ModelComparisonAnalysis:
                                     s=50,
                                     zorder=4,
                                 )
+                                best_epoch_std = float(best_event.get("epoch_std", np.nan))
+                                best_value_std = float(
+                                    best_event.get("val_metrics_norm_std", {}).get(metric_key, np.nan)
+                                )
+                                if int(best_event.get("epoch_count", 0)) > 1:
+                                    yerr = best_value_std * 100.0 if is_percent else best_value_std
+                                    ax.errorbar(
+                                        [best_event["epoch"]],
+                                        [best_plot_value],
+                                        xerr=[[best_epoch_std], [best_epoch_std]]
+                                        if np.isfinite(best_epoch_std)
+                                        else None,
+                                        yerr=[[yerr], [yerr]] if np.isfinite(yerr) else None,
+                                        color=run_data["color"],
+                                        linewidth=1.0,
+                                        capsize=2,
+                                        alpha=0.8,
+                                        zorder=3,
+                                    )
 
                 ax.set_title(metric_title)
                 ax.set_xlabel("Epoch")
@@ -1509,7 +1603,9 @@ class ModelComparisonAnalysis:
                 for run_data in dataset_runs:
                     for mode_key, line_style, mode_label, marker in mode_specs:
                         metric_key = f"acc_level_{mode_key}_{level_idx}"
-                        epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
+                        epochs, values, stds, counts = metric_series_with_std(
+                            run_data["epoch_events"], metric_key
+                        )
                         if np.all(~np.isfinite(values)):
                             continue
 
@@ -1521,6 +1617,19 @@ class ModelComparisonAnalysis:
                             linestyle=line_style,
                             linewidth=2.0,
                         )
+                        plot_values = values * 100.0
+                        plot_stds = stds * 100.0
+                        band_mask = np.isfinite(plot_values) & np.isfinite(plot_stds) & (counts > 1)
+                        if np.any(band_mask):
+                            ax.fill_between(
+                                epochs,
+                                plot_values - plot_stds,
+                                plot_values + plot_stds,
+                                where=band_mask,
+                                color=run_data["color"],
+                                alpha=0.14,
+                                linewidth=0,
+                            )
 
                         best_events = run_data.get("best_epoch_events", {})
                         best_event = (
@@ -1539,6 +1648,26 @@ class ModelComparisonAnalysis:
                                     s=42,
                                     zorder=4,
                                 )
+                                best_epoch_std = float(best_event.get("epoch_std", np.nan))
+                                best_value_std = float(
+                                    best_event.get("val_metrics_norm_std", {}).get(metric_key, np.nan)
+                                )
+                                if int(best_event.get("epoch_count", 0)) > 1:
+                                    ax.errorbar(
+                                        [best_event["epoch"]],
+                                        [best_value * 100.0],
+                                        xerr=[[best_epoch_std], [best_epoch_std]]
+                                        if np.isfinite(best_epoch_std)
+                                        else None,
+                                        yerr=[[best_value_std * 100.0], [best_value_std * 100.0]]
+                                        if np.isfinite(best_value_std)
+                                        else None,
+                                        color=run_data["color"],
+                                        linewidth=1.0,
+                                        capsize=2,
+                                        alpha=0.8,
+                                        zorder=3,
+                                    )
 
                 ax.set_title(f"Validation Accuracy - {level_label} (L{level_idx})")
                 ax.set_ylabel("Accuracy (%)")
@@ -1613,42 +1742,30 @@ class ModelComparisonAnalysis:
             best_epoch_cells: List[str] = []
             for run_data in dataset_runs:
                 test_results = run_data.get("test_results", {})
-                td_epoch = None
-                ind_epoch = None
+                td_section: Mapping[str, Any] = {}
+                ind_section: Mapping[str, Any] = {}
                 if isinstance(test_results, MappingABC):
-                    td_section = test_results.get("topdown")
-                    if isinstance(td_section, MappingABC):
-                        td_epoch = _coerce_int(td_section.get("best_epoch"))
-                    ind_section = test_results.get("independent")
-                    if isinstance(ind_section, MappingABC):
-                        ind_epoch = _coerce_int(ind_section.get("best_epoch"))
+                    raw_td = test_results.get("topdown", {})
+                    raw_ind = test_results.get("independent", {})
+                    td_section = raw_td if isinstance(raw_td, MappingABC) else {}
+                    ind_section = raw_ind if isinstance(raw_ind, MappingABC) else {}
 
-                best_events = run_data.get("best_epoch_events", {})
-                if td_epoch is None:
-                    td_event = (
-                        best_events.get("topdown")
-                        if isinstance(best_events, MappingABC)
-                        else run_data.get("best_epoch_event")
-                    )
-                    td_epoch = _coerce_int(td_event.get("epoch")) if isinstance(td_event, MappingABC) else None
-                if ind_epoch is None:
-                    ind_event = (
-                        best_events.get("independent")
-                        if isinstance(best_events, MappingABC)
-                        else run_data.get("best_epoch_event")
-                    )
-                    ind_epoch = _coerce_int(ind_event.get("epoch")) if isinstance(ind_event, MappingABC) else None
-                if ind_epoch is None:
-                    ind_epoch = td_epoch
+                def epoch_text(section: Mapping[str, Any]) -> str:
+                    mean = float(section.get("best_epoch", np.nan))
+                    std = float(section.get("best_epoch_std", np.nan))
+                    count = int(section.get("best_epoch_count", 0))
+                    if not np.isfinite(mean):
+                        return "n/a"
+                    if count > 1 and np.isfinite(std):
+                        return f"{mean:.1f} ± {std:.1f}"
+                    return f"{mean:.0f}"
 
-                if td_epoch is None and ind_epoch is None:
-                    best_epoch_cells.append("n/a")
-                else:
-                    td_text = str(td_epoch) if td_epoch is not None else "n/a"
-                    ind_text = str(ind_epoch) if ind_epoch is not None else "n/a"
-                    best_epoch_cells.append(f"{td_text}/{ind_text}")
+                best_epoch_cells.append(f"{epoch_text(td_section)}/{epoch_text(ind_section)}")
 
-            header_labels = ["Metric"] + [str(run_data["model_label"]) for run_data in dataset_runs]
+            header_labels = ["Metric"] + [
+                f"{run_data['model_label']} (n={run_data.get('num_seeds', 1)})"
+                for run_data in dataset_runs
+            ]
             table_lines = [
                 f"### Dataset: `{dataset_display_name(dataset_name)}`",
                 f"Baseline run: **{base['model_label']}**",
@@ -1663,10 +1780,12 @@ class ModelComparisonAnalysis:
                 row_cells = [metric_label]
                 values = values_by_metric[metric_key]
                 for run_idx, value in enumerate(values):
-                    if run_idx == 0:
-                        cell = _fmt_value(metric_key, value)
+                    mean, std, count = _test_metric_stats(dataset_runs[run_idx], metric_key)
+                    value_text = _fmt_value_stats(metric_key, mean, std, count)
+                    if run_idx == 0 or not np.isfinite(values[0]) or not np.isfinite(value):
+                        cell = value_text
                     else:
-                        cell = _merged_comp_cell(metric_key, value, values[0])
+                        cell = f"{value_text} ({_fmt_delta(metric_key, value - values[0])})"
                     if run_idx in best_by_metric[metric_key] and cell != "n/a":
                         cell = f"**{cell}**"
                     elif run_idx in second_best_by_metric[metric_key] and cell != "n/a":

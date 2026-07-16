@@ -10,10 +10,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
+source "$ROOT_DIR/scripts/run_seed_utils.sh"
+init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
-MAX_PARALLEL="${MAX_PARALLEL:-2}"
+MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 
 kill_running_jobs() {
@@ -43,7 +45,7 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_lex_grid.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100 cub200 aircraft)
+DATASETS=(cub200 aircraft)
 
 lex_config_for_dataset() {
   case "$1" in
@@ -111,7 +113,7 @@ run_output_dir() {
   local ds="$1"
   local epoch_tag="$2"
   case "$epoch_tag" in
-    e0) echo "$OUTPUTS_ROOT/hcast_lex_${ds}" ;;
+    e0) echo "$OUTPUTS_ROOT/hcast_${ds}_lex" ;;
     e80) echo "$OUTPUTS_ROOT/hcast_lex_${ds}_step_80epoch" ;;
     *)
       echo "Unknown lex epoch tag: $epoch_tag" >&2
@@ -124,20 +126,15 @@ printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
+print_seed_run_settings
 
 for ds in "${DATASETS[@]}"; do
   lex_cfg="$(lex_config_for_dataset "$ds")"
 
   # hcast_lex (epoch 0)
-  run_train "$lex_cfg" "$(run_output_dir "$ds" e0)" \
+  run_seeded_train "$lex_cfg" "$(run_output_dir "$ds" e0)" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.start_epoch=0" \
-    "model.loss.globalkl=false"
-
-  # hcast_lex (epoch 80)
-  run_train "$lex_cfg" "$(run_output_dir "$ds" e80)" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=80" \
     "model.loss.globalkl=false"
 done
 

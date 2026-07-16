@@ -7,6 +7,7 @@ model:
   pretrained: false
   backbone_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
+  fixed_frame_per_level: false
   wide_depth: 28
   wide_widen_factor: 8
   wide_drop_rate: 0.0

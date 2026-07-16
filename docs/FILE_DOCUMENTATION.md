@@ -13,6 +13,8 @@ This document is a concise map of the tracked repository files. It describes wha
 
 - `python-dotenv`: Loads the ignored root `.env` for Python entrypoints; existing process variables take precedence.
 - `scripts/load_env.sh`: Equivalent shared loader sourced by shell experiment runners.
+- `scripts/run_seed_utils.sh`: Shared run-count validation, consecutive seed generation, and nested output-directory helpers.
+- `scripts/migrate_single_seed_outputs.py`: Dry-run-first utility that wraps direct historical run artifacts in `seed_<train.seed>/`.
 
 ## Configs
 
@@ -157,7 +159,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 
 ## Scripts
 
-- `scripts/hcast/`: H-CAST runner scripts, including full/lex grids and the orthonormal-plugin runner.
+- `scripts/hcast/`: H-CAST runner scripts, including baseline/lex grids, the lexicographic orthonormal-plugin runner, and a dedicated final-only non-lex plugin runner.
 - `scripts/hrn/`: HRN baseline and orthonormal-plugin runner scripts.
 - `scripts/hiercos/`: Hier-COS baseline, lexicographic, and transform-ablation runner scripts.
 - `scripts/data/`: Dataset preparation utilities such as the iNat19 Making Better Mistakes split converter.
@@ -167,6 +169,7 @@ These files are the closest local equivalents of the upstream CAST internals and
 - `notebooks/hcast_analysis.ipynb`: H-CAST result analysis notebook.
 - `notebooks/hrn_analysis.ipynb`: HRN baseline-versus-orthonormal-plugin analysis notebook.
 - `notebooks/hcast_analysis_utils.py`: Shared loaders, run selection, plotting, and table utilities used by `hcast_analysis.ipynb`.
+- `notebooks/multiseed_utils.py`: Seed-run discovery, consistency validation, and mean/sample-standard-deviation aggregation shared by analyses.
 - `notebooks/hcc_internal_diagnostics.ipynb`: HCC diagnostics notebook over `run_log.jsonl` with switch-focused plots/tables.
 - `notebooks/hcc_failure_examples.ipynb`: CUB/Aircraft qualitative notebook for cases where independent fails and top-down succeeds.
 - `notebooks/model_comparison_all_datasets.ipynb`: Cross-model comparison notebook across datasets.
@@ -180,7 +183,19 @@ These files are the closest local equivalents of the upstream CAST internals and
 
 ## Runtime Artifacts
 
-Runtime outputs are not tracked in the repository tree. Each training run writes to its configured `train.output_dir`, typically producing:
+Runtime outputs are not tracked in the repository tree. Runner-managed
+experiment conditions keep their existing name and contain one directory per
+training seed:
+
+```text
+<experiment_name>/
+  seed_0/
+  seed_1/
+  ...
+```
+
+Each seed directory is a normal training output directory and typically
+contains:
 
 - `latest.pt`
 - `best_topdown.pt`

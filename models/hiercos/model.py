@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional
 import torch
 import torch.nn as nn
 
-from models.orthonormal_plugin.head import init_fixed_classifier
+from models.orthonormal_plugin.config import parse_bool
+from models.orthonormal_plugin.head import FrozenBlockDiagonalClassifier, build_fixed_classifier
 from models.orthonormal_plugin.topology import build_topology
 from models.orthonormal_plugin.transforms import build_transformation_module
 
@@ -239,6 +240,7 @@ class HierCosModel(nn.Module):
         backbone_lr_scale: float = 0.1,
         transform_lr_scale: float = 1.0,
         fixed_frame_mode: str = "orthonormal_random",
+        fixed_frame_per_level: bool = False,
         wide_depth: int = 28,
         wide_widen_factor: int = 8,
         wide_drop_rate: float = 0.0,
@@ -309,11 +311,16 @@ class HierCosModel(nn.Module):
             mode=self.transform_mode,
             owner="Hier-COS model",
         )
-        self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
-        init_fixed_classifier(
-            classifier=self.fixed_classifier,
+        self.fixed_frame_mode = "orthonormal_random" if fixed_frame_mode == "orthonormal_block_random" else fixed_frame_mode
+        self.fixed_frame_per_level = (
+            parse_bool(fixed_frame_per_level, default=False)
+            or fixed_frame_mode == "orthonormal_block_random"
+        )
+        self.fixed_classifier = build_fixed_classifier(
             width=self.total_nodes,
             mode=fixed_frame_mode,
+            fixed_frame_per_level=self.fixed_frame_per_level,
+            block_sizes=self.num_classes_per_level,
             owner="Hier-COS model",
         )
 
@@ -369,6 +376,10 @@ class HierCosModel(nn.Module):
         z = self.backbone(x)
         transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
         node_logits = self.fixed_classifier(transformed)
+        if isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
+            node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))
+        else:
+            node_logits_per_level = None
         logits_per_level = self._level_subspace_scores(node_logits)
         effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
 
@@ -379,6 +390,8 @@ class HierCosModel(nn.Module):
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,
             "orthonormal_plugin_node_logits": node_logits,
+            "node_logits_per_level": node_logits_per_level,
+            "orthonormal_plugin_node_logits_per_level": node_logits_per_level,
             "hiercos_level_node_ids": level_node_ids,
             "orthonormal_plugin_level_node_ids": level_node_ids,
             "leaf_to_level_local": self.leaf_to_level_local,

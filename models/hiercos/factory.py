@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from models.orthonormal_plugin.config import is_enabled, plugin_section, validate_disabled_mixup
+from models.orthonormal_plugin.config import is_enabled, parse_bool, plugin_section, validate_disabled_mixup
 
 from .model import HierCosModel
 
@@ -24,6 +24,10 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         backbone_lr_scale=float(model_cfg.get("backbone_lr_scale", 0.1)),
         transform_lr_scale=float(plugin_cfg.get("transform_lr_scale", model_cfg.get("transform_lr_scale", 1.0))),
         fixed_frame_mode=plugin_cfg.get("fixed_frame_mode", model_cfg.get("fixed_frame_mode", "orthonormal_random")),
+        fixed_frame_per_level=parse_bool(
+            plugin_cfg.get("fixed_frame_per_level", model_cfg.get("fixed_frame_per_level", False)),
+            default=False,
+        ),
         wide_depth=int(model_cfg.get("wide_depth", 28)),
         wide_widen_factor=int(model_cfg.get("wide_widen_factor", 8)),
         wide_drop_rate=float(model_cfg.get("wide_drop_rate", 0.0)),

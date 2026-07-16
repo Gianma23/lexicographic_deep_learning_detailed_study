@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs HRN with the shared orthonormal taxonomy-frame plugin.
+# Runs H-CAST with the shared orthonormal taxonomy-frame plugin and
+# lexicographic gradient projection.
 # Defaults:
 # - orthonormal_plugin.loss=global_softmax_ce_reg
 # - orthonormal_plugin.weight_mode=equal
 # - hard targets: MixUp/CutMix disabled and smoothing set to 0
-# - output dirs: hrn_<dataset>_orthonormal_plugin_<loss>_baseline_<weight>
-# for: cifar100, cub200, aircraft.
+# - lexicographic orthogonalize-all variants
+# for: aircraft and cub200.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -32,14 +33,23 @@ PLUGIN_FIXED_FRAME_MODE="${PLUGIN_FIXED_FRAME_MODE:-identity}"
 PLUGIN_FIXED_FRAME_PER_LEVEL="${PLUGIN_FIXED_FRAME_PER_LEVEL:-0}"
 PLUGIN_TRANSFORM_LR_SCALE="${PLUGIN_TRANSFORM_LR_SCALE:-1.0}"
 
+LEX_START_EPOCH="${LEX_START_EPOCH:-0}"
+LEX_PROJECTION_RULE="${LEX_PROJECTION_RULE:-orthogonalize_all}"
+
 case "$LOSS_MODE" in
   kl_reg|global_softmax_ce_reg|level_softmax_ce_reg) ;;
   *)
-    echo "Unsupported LOSS_MODE: $LOSS_MODE" >&2
+    echo "Unsupported LOSS_MODE for this runner: $LOSS_MODE" >&2
     echo "Expected kl_reg, global_softmax_ce_reg, or level_softmax_ce_reg." >&2
     exit 1
     ;;
 esac
+
+if [[ "$LOSS_MODE" == "kl_reg" ]]; then
+  echo "LOSS_MODE=kl_reg does not expose per-level losses for lexicographic mode." >&2
+  echo "Choose global_softmax_ce_reg or level_softmax_ce_reg." >&2
+  exit 1
+fi
 
 case "$WEIGHT_MODE" in
   equal|kl_leaf|kl_coarse) ;;
@@ -77,6 +87,15 @@ case "$PLUGIN_FIXED_FRAME_PER_LEVEL" in
     ;;
 esac
 
+case "$LEX_PROJECTION_RULE" in
+  orthogonalize_all|conflict_only) ;;
+  *)
+    echo "Unsupported LEX_PROJECTION_RULE: $LEX_PROJECTION_RULE" >&2
+    echo "Expected orthogonalize_all or conflict_only." >&2
+    exit 1
+    ;;
+esac
+
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
 }
@@ -100,12 +119,13 @@ trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
 DATASETS=(cub200 aircraft)
+LEX_PROJECTION_MODES=(coarse_first)
 
 config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hrn/hrn_cifar100.yaml" ;;
-    cub200) echo "configs/hrn/hrn_cub200.yaml" ;;
-    aircraft) echo "configs/hrn/hrn_aircraft.yaml" ;;
+    cifar100) echo "configs/hcast/hcast_cifar100.yaml" ;;
+    cub200) echo "configs/hcast/hcast_cub200.yaml" ;;
+    aircraft) echo "configs/hcast/hcast_aircraft.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -180,15 +200,6 @@ run_train() {
   fi
 }
 
-hard_target_overrides=(
-  "dataset.transforms.mixup=0.0"
-  "dataset.transforms.cutmix=0.0"
-  "dataset.transforms.cutmix_minmax=null"
-  "dataset.transforms.mixup_prob=0.0"
-  "dataset.transforms.mixup_switch_prob=0.0"
-  "train.smoothing=0.0"
-)
-
 plugin_overrides=(
   "orthonormal_plugin.enabled=true"
   "orthonormal_plugin.loss=$LOSS_MODE"
@@ -197,10 +208,18 @@ plugin_overrides=(
   "orthonormal_plugin.fixed_frame_mode=$PLUGIN_FIXED_FRAME_MODE"
   "orthonormal_plugin.fixed_frame_per_level=$PLUGIN_FIXED_FRAME_PER_LEVEL"
   "orthonormal_plugin.transform_lr_scale=$PLUGIN_TRANSFORM_LR_SCALE"
+  "model.loss.globalkl=false"
+  "dataset.transforms.mixup=0.0"
+  "dataset.transforms.cutmix=0.0"
+  "dataset.transforms.cutmix_minmax=null"
+  "dataset.transforms.mixup_prob=0.0"
+  "dataset.transforms.mixup_switch_prob=0.0"
+  "train.smoothing=0.0"
 )
 
-run_output_dir() {
+lex_output_dir() {
   local ds="$1"
+  local projection_mode="$2"
   local frame_suffix=""
   local per_level="$PLUGIN_FIXED_FRAME_PER_LEVEL"
   if [[ "$PLUGIN_FIXED_FRAME_MODE" == "orthonormal_block_random" ]]; then
@@ -212,7 +231,7 @@ run_output_dir() {
   elif [[ "$PLUGIN_FIXED_FRAME_MODE" == "orthonormal_random" && "$per_level" =~ ^(1|true|True)$ ]]; then
     frame_suffix="_orthonormal_random_per_level"
   fi
-  echo "$OUTPUTS_ROOT/hrn_${ds}_orthonormal_plugin_${LOSS_MODE}_${PLUGIN_TRANSFORM_MODE}${frame_suffix}"
+  echo "$OUTPUTS_ROOT/hcast_${ds}_orthonormal_plugin_${LOSS_MODE}_lex_${projection_mode}_${PLUGIN_TRANSFORM_MODE}${frame_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -226,6 +245,8 @@ fi
 printf 'Plugin transform mode: %s\n' "$PLUGIN_TRANSFORM_MODE"
 printf 'Plugin fixed frame: %s\n' "$PLUGIN_FIXED_FRAME_MODE"
 printf 'Plugin fixed frame per level: %s\n' "$PLUGIN_FIXED_FRAME_PER_LEVEL"
+printf 'Lex start epoch: %s\n' "$LEX_START_EPOCH"
+printf 'Lex projection rule: %s\n' "$LEX_PROJECTION_RULE"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -235,11 +256,16 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   plugin_alpha="$(plugin_alpha_for_dataset "$ds")"
   printf 'Dataset %s plugin alpha: %s\n' "$ds" "$plugin_alpha"
-  run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
-    "${hard_target_overrides[@]}" \
-    "${plugin_overrides[@]}" \
-    "orthonormal_plugin.alpha=$plugin_alpha" \
-    "train.lexicographic.enabled=false"
+
+  for projection_mode in "${LEX_PROJECTION_MODES[@]}"; do
+    run_seeded_train "$cfg" "$(lex_output_dir "$ds" "$projection_mode")" \
+      "${plugin_overrides[@]}" \
+      "orthonormal_plugin.alpha=$plugin_alpha" \
+      "train.lexicographic.enabled=true" \
+      "train.lexicographic.start_epoch=$LEX_START_EPOCH" \
+      "train.lexicographic.projection_mode=$projection_mode" \
+      "train.lexicographic.projection_rule=$LEX_PROJECTION_RULE"
+  done
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -253,4 +279,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested HRN orthonormal-plugin runs.\n'
+printf 'Completed all requested H-CAST orthonormal-plugin lexicographic runs.\n'

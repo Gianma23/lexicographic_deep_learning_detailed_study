@@ -12,6 +12,7 @@ model:
   # Upstream --larger-backbone uses 0.01 for both f_theta and the ResNet trunk.
   transform_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
+  fixed_frame_per_level: false
 
 dataset:
   name: inat19

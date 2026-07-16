@@ -79,6 +79,9 @@ Edit `.env` when dataset or output storage moves. The active presets and runner 
 - `OUTPUTS_ROOT`: parent directory for run artifacts, grid searches, and analysis outputs
 - `PYTHON_BIN`: Python executable used by shell runners
 - `MAX_PARALLEL`, `MAX_RESUME_RETRIES`: shared runner resource/retry defaults
+- `NUM_RUNS`: repetitions per experiment condition (default `1`)
+- `BASE_SEED`: first training seed; later repetitions use consecutive seeds
+- `SPLIT_SEED`: fixed train/validation split seed shared by all repetitions
 - `TRAIN_DEVICE`: default config device (`cuda` or `cpu`)
 
 The Python config loader reads `.env` automatically. Shell runners load it through `scripts/load_env.sh`. Variables already exported by the calling process take precedence, and `PROJECT_ENV_FILE=/path/to/file` selects a different env file.
@@ -190,19 +193,55 @@ Lexicographic upper-bound mode (3-level):
 
 The config loader supports positional dotlist overrides such as `train.epochs=10` or `optim.lr=1e-4`.
 
-The Hier-COS orthogonalize-all runner defaults to `global_softmax_ce_reg`. Use the same experiment matrix with level-local softmax normalization via:
+Hier-COS runners expose `LOSS_MODE`, `WEIGHT_MODE`, and `FIXED_FRAME_MODE`. Set
+`FIXED_FRAME_MODE=identity` to use the identity frame, or
+`FIXED_FRAME_MODE=orthonormal_random` to use the fixed random orthonormal frame:
 
 ```bash
-LOSS_MODE=level_softmax_ce_reg ./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
+LOSS_MODE=level_softmax_ce_reg \
+WEIGHT_MODE=kl_leaf \
+FIXED_FRAME_MODE=identity \
+./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
 ```
 
 Runner scripts are grouped by family under `scripts/hcast/`, `scripts/hrn/`, `scripts/hiercos/`, and `scripts/data/`. Plugin runs use hard targets, so the runners disable MixUp/CutMix and smoothing:
 
 ```bash
 DRY_RUN=1 ./scripts/hcast/run_hcast_orthonormal_plugin.sh
+DRY_RUN=1 ./scripts/hcast/run_hcast_lex_orthonormal_plugin.sh
 DRY_RUN=1 ./scripts/hrn/run_hrn_baselines.sh
 DRY_RUN=1 ./scripts/hrn/run_hrn_orthonormal_plugin.sh
 ```
+
+Runner-managed experiments preserve the existing experiment name and store
+each repetition in its own seed directory:
+
+```text
+${OUTPUTS_ROOT}/<experiment_name>/seed_<train.seed>/
+```
+
+For example, this launches three repetitions with training seeds 0, 1, and 2
+while keeping the train/validation split fixed:
+
+```bash
+NUM_RUNS=3 BASE_SEED=0 SPLIT_SEED=0 \
+./scripts/hiercos/run_hiercos_baselines.sh
+```
+
+`MAX_PARALLEL` limits the total number of simultaneous jobs across datasets,
+experiment variants, and seeds. Each seed directory has independent
+checkpoints and retry/resume state.
+
+Historical direct-output folders can be previewed and migrated with:
+
+```bash
+python scripts/migrate_single_seed_outputs.py
+python scripts/migrate_single_seed_outputs.py --apply
+```
+
+The utility only considers immediate `OUTPUTS_ROOT` children that directly
+contain both `config_resolved.yaml` and `run_log.jsonl`, and refuses target
+collisions.
 
 ## Supported Datasets
 
@@ -380,6 +419,11 @@ Each run writes to `train.output_dir`:
 - `config_resolved.yaml`
 - `run_log.jsonl`
 - `test_metrics.yaml`
+
+When launched through `scripts/`, these files live under
+`<experiment_name>/seed_<seed>/`. The analysis notebooks group the seed
+directories by experiment and report the run-to-run mean and sample standard
+deviation.
 
 `best_topdown.pt` is selected from validation metrics using:
 

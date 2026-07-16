@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import torch
 
@@ -208,14 +208,40 @@ def tice_score(
     return float(1.0 - consistency)
 
 
-def merge_metric_batches(metric_batches: List[Dict[str, float]]) -> Dict[str, float]:
+def merge_metric_batches(
+    metric_batches: List[Dict[str, float]],
+    batch_weights: Optional[Sequence[float]] = None,
+) -> Dict[str, float]:
     if not metric_batches:
         return {}
+    if batch_weights is None:
+        weights = [1.0] * len(metric_batches)
+    else:
+        if len(batch_weights) != len(metric_batches):
+            raise ValueError("batch_weights must align with metric_batches.")
+        weights = [float(weight) for weight in batch_weights]
+        if any(weight < 0.0 for weight in weights):
+            raise ValueError("batch_weights must be non-negative.")
 
     keys = set().union(*[metrics.keys() for metrics in metric_batches])
     out: Dict[str, float] = {}
     for key in keys:
-        values = [metrics[key] for metrics in metric_batches if key in metrics]
-        if values:
-            out[key] = float(sum(values) / len(values))
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for metrics, batch_weight in zip(metric_batches, weights):
+            if key not in metrics:
+                continue
+
+            metric_weight = batch_weight
+            if key == "acc_l2_ind_given_l1_correct":
+                metric_weight *= float(metrics.get("support_l1_ind_correct", 0.0))
+            elif key == "acc_l2_td_given_l1_correct":
+                metric_weight *= float(metrics.get("support_l1_td_correct", 0.0))
+
+            weighted_sum += float(metrics[key]) * metric_weight
+            total_weight += metric_weight
+        if total_weight > 0.0:
+            out[key] = float(weighted_sum / total_weight)
+        elif key in {"acc_l2_ind_given_l1_correct", "acc_l2_td_given_l1_correct"}:
+            out[key] = 0.0
     return out

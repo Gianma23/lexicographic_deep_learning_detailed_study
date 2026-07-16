@@ -13,7 +13,8 @@ model:
   alpha: 0.1                        # Weight of level regularization in all supported loss modes
   backbone_lr_scale: 0.1            # LR multiplier for backbone parameter group (SGD path)
   transform_lr_scale: 1.0           # LR multiplier for f_theta on resnet50; set 0.1 to match upstream --larger-backbone
-  fixed_frame_mode: orthonormal_random # orthonormal_random | identity
+  fixed_frame_mode: orthonormal_random # orthonormal_random | identity; legacy: orthonormal_block_random
+  fixed_frame_per_level: false      # false = one global fixed layer; true = one frozen block per hierarchy level
 
   # Used only when variant=haframe_wide_resnet
   wide_depth: 28                    # WideResNet depth; must satisfy (depth - 4) % 6 == 0

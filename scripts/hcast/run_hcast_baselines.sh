@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs HRN baselines:
-# - hrn_<dataset>
-# for: cifar100, cub200, aircraft.
+# Runs plain H-CAST baselines:
+# - hcast_<dataset>
+# for: cifar100, cub200, aircraft, inat19.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -16,7 +16,6 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -40,13 +39,19 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-DATASETS=(cifar100 cub200 aircraft)
+# Notebook-compatible outputs root.
+# Example:
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_baselines.sh
+OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
+
+DATASETS=(cifar100 cub200 aircraft inat19)
 
 config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hrn/hrn_cifar100.yaml" ;;
-    cub200) echo "configs/hrn/hrn_cub200.yaml" ;;
-    aircraft) echo "configs/hrn/hrn_aircraft.yaml" ;;
+    cifar100) echo "configs/hcast/hcast_cifar100.yaml" ;;
+    cub200) echo "configs/hcast/hcast_cub200.yaml" ;;
+    aircraft) echo "configs/hcast/hcast_aircraft.yaml" ;;
+    inat19) echo "configs/hcast/hcast_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -104,21 +109,23 @@ run_train() {
   fi
 }
 
-hard_target_overrides=(
-  "dataset.transforms.mixup=0.0"
-  "dataset.transforms.cutmix=0.0"
-  "dataset.transforms.cutmix_minmax=null"
-  "dataset.transforms.mixup_prob=0.0"
-  "dataset.transforms.mixup_switch_prob=0.0"
-  "train.smoothing=0.0"
-)
-
 run_output_dir() {
   local ds="$1"
-  echo "$OUTPUTS_ROOT/hrn_${ds}"
+  case "$ds" in
+    cifar100) echo "$OUTPUTS_ROOT/hcast_cifar100" ;;
+    cub200) echo "$OUTPUTS_ROOT/hcast_cub200" ;;
+    aircraft) echo "$OUTPUTS_ROOT/hcast_aircraft_nokl" ;;
+    inat19) echo "$OUTPUTS_ROOT/hcast_inat19" ;;
+    *)
+      echo "Unknown dataset: $ds" >&2
+      exit 1
+      ;;
+  esac
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Lexicographic mode: disabled\n'
+printf 'HCC: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -127,8 +134,6 @@ print_seed_run_settings
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
-    "${hard_target_overrides[@]}" \
-    "orthonormal_plugin.enabled=false" \
     "train.lexicographic.enabled=false"
 done
 
@@ -143,4 +148,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested HRN baseline runs.\n'
+printf 'Completed all requested H-CAST baseline runs.\n'

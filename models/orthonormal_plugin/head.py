@@ -7,10 +7,80 @@ from .topology import build_topology
 from .transforms import build_transformation_module
 
 
+def _parse_bool_like(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
+class FrozenBlockDiagonalClassifier(nn.Module):
+    """Frozen block-diagonal classifier with one independent block per level."""
+
+    def __init__(
+        self,
+        block_sizes: Sequence[int],
+        mode: str = "orthonormal_random",
+        owner: str = "Orthonormal plugin",
+    ):
+        super().__init__()
+        parsed_block_sizes = [int(size) for size in block_sizes]
+        if any(size <= 0 for size in parsed_block_sizes):
+            raise ValueError(f"{owner} block sizes must be positive, got {parsed_block_sizes}.")
+        if mode not in {"orthonormal_random", "identity"}:
+            raise ValueError(
+                f"Unsupported {owner} block classifier mode '{mode}'. "
+                "Expected one of ['orthonormal_random', 'identity']."
+            )
+        self.block_sizes = parsed_block_sizes
+        blocks: List[nn.Linear] = []
+        for block_size in self.block_sizes:
+            block = nn.Linear(block_size, block_size, bias=False)
+            with torch.no_grad():
+                if mode == "orthonormal_random":
+                    random_matrix = torch.randn(block_size, block_size)
+                    q, _ = torch.linalg.qr(random_matrix, mode="reduced")
+                    block.weight.copy_(q)
+                else:
+                    block.weight.copy_(torch.eye(block_size))
+            block.weight.requires_grad_(False)
+            blocks.append(block)
+        self.blocks = nn.ModuleList(blocks)
+
+    def forward_chunks(self, chunks: Sequence[torch.Tensor]) -> List[torch.Tensor]:
+        if len(chunks) != len(self.block_sizes):
+            raise ValueError(f"Expected {len(self.block_sizes)} chunks, got {len(chunks)}.")
+        out: List[torch.Tensor] = []
+        for level, (chunk, block, block_size) in enumerate(zip(chunks, self.blocks, self.block_sizes)):
+            if not isinstance(chunk, torch.Tensor) or chunk.ndim != 2:
+                raise ValueError(f"Block classifier chunk {level} must have shape [B, C].")
+            if int(chunk.size(1)) != int(block_size):
+                raise ValueError(
+                    f"Block classifier chunk {level} has width {int(chunk.size(1))}; "
+                    f"expected {int(block_size)}."
+                )
+            out.append(block(chunk))
+        return out
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        chunks = torch.split(x, self.block_sizes, dim=1)
+        return torch.cat(self.forward_chunks(chunks), dim=1)
+
+
 def init_fixed_classifier(
     classifier: nn.Linear,
     width: int,
     mode: str,
+    block_sizes: Optional[Sequence[int]] = None,
     owner: str = "Orthonormal plugin",
 ) -> None:
     if not isinstance(mode, str):
@@ -20,14 +90,61 @@ def init_fixed_classifier(
             random_matrix = torch.randn(int(width), int(width))
             q, _ = torch.linalg.qr(random_matrix, mode="reduced")
             classifier.weight.copy_(q)
+        elif mode == "orthonormal_block_random":
+            if block_sizes is None:
+                raise ValueError(f"{owner} fixed_frame_mode='orthonormal_block_random' requires block sizes.")
+            parsed_block_sizes = [int(size) for size in block_sizes]
+            if any(size <= 0 for size in parsed_block_sizes):
+                raise ValueError(f"{owner} block sizes must be positive, got {parsed_block_sizes}.")
+            if sum(parsed_block_sizes) != int(width):
+                raise ValueError(
+                    f"{owner} block sizes sum to {sum(parsed_block_sizes)}, expected fixed frame width {width}."
+                )
+            classifier.weight.zero_()
+            start = 0
+            for block_size in parsed_block_sizes:
+                end = start + block_size
+                random_matrix = torch.randn(block_size, block_size)
+                q, _ = torch.linalg.qr(random_matrix, mode="reduced")
+                classifier.weight[start:end, start:end].copy_(q)
+                start = end
         elif mode == "identity":
             classifier.weight.copy_(torch.eye(int(width)))
         else:
             raise ValueError(
                 f"Unsupported {owner} fixed_frame_mode '{mode}'. "
-                "Expected one of ['orthonormal_random', 'identity']."
+                "Expected one of ['orthonormal_random', 'orthonormal_block_random', 'identity']."
             )
     classifier.weight.requires_grad_(False)
+
+
+def build_fixed_classifier(
+    width: int,
+    mode: str,
+    fixed_frame_per_level: bool = False,
+    block_sizes: Optional[Sequence[int]] = None,
+    owner: str = "Orthonormal plugin",
+) -> nn.Module:
+    resolved_mode = str(mode)
+    resolved_per_level = _parse_bool_like(fixed_frame_per_level, default=False)
+    if resolved_mode == "orthonormal_block_random":
+        resolved_mode = "orthonormal_random"
+        resolved_per_level = True
+
+    if resolved_per_level:
+        if block_sizes is None:
+            raise ValueError(f"{owner} fixed_frame_per_level=true requires block sizes.")
+        return FrozenBlockDiagonalClassifier(block_sizes=block_sizes, mode=resolved_mode, owner=owner)
+
+    classifier = nn.Linear(int(width), int(width), bias=False)
+    init_fixed_classifier(
+        classifier=classifier,
+        width=int(width),
+        mode=resolved_mode,
+        block_sizes=block_sizes,
+        owner=owner,
+    )
+    return classifier
 
 
 def validate_scores_per_level(
@@ -65,6 +182,7 @@ class OrthonormalPluginHead(nn.Module):
         taxonomy: Dict[str, Any],
         transform_mode: str = "full",
         fixed_frame_mode: str = "orthonormal_random",
+        fixed_frame_per_level: bool = False,
         owner: str = "Orthonormal plugin",
     ):
         super().__init__()
@@ -92,12 +210,17 @@ class OrthonormalPluginHead(nn.Module):
         self.register_buffer("node_prob_weights", topology["node_prob_weights"], persistent=False)
 
         self.transform_mode = transform_mode
+        self.fixed_frame_mode = "orthonormal_random" if fixed_frame_mode == "orthonormal_block_random" else fixed_frame_mode
+        self.fixed_frame_per_level = (
+            _parse_bool_like(fixed_frame_per_level, default=False)
+            or fixed_frame_mode == "orthonormal_block_random"
+        )
         self.f_theta = build_transformation_module(self.total_nodes, mode=transform_mode, owner=owner)
-        self.fixed_classifier = nn.Linear(self.total_nodes, self.total_nodes, bias=False)
-        init_fixed_classifier(
-            classifier=self.fixed_classifier,
+        self.fixed_classifier = build_fixed_classifier(
             width=self.total_nodes,
             mode=fixed_frame_mode,
+            fixed_frame_per_level=self.fixed_frame_per_level,
+            block_sizes=self.num_classes_per_level,
             owner=owner,
         )
 
@@ -133,6 +256,10 @@ class OrthonormalPluginHead(nn.Module):
 
         transformed = self.f_theta(z)
         node_logits = self.fixed_classifier(transformed)
+        if isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
+            node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))
+        else:
+            node_logits_per_level = None
         logits_per_level = self._level_subspace_scores(node_logits)
         effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
         level_node_ids = self.level_node_ids()
@@ -143,6 +270,8 @@ class OrthonormalPluginHead(nn.Module):
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,
             "orthonormal_plugin_node_logits": node_logits,
+            "node_logits_per_level": node_logits_per_level,
+            "orthonormal_plugin_node_logits_per_level": node_logits_per_level,
             "hiercos_level_node_ids": level_node_ids,
             "orthonormal_plugin_level_node_ids": level_node_ids,
             "leaf_to_level_local": self.leaf_to_level_local,
@@ -157,6 +286,27 @@ class OrthonormalPluginHead(nn.Module):
             num_classes_per_level=self.num_classes_per_level,
             owner=self.owner,
         )
+        if self.transform_mode == "final_only" and isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
+            node_logits_per_level = self.fixed_classifier.forward_chunks(scores)
+            node_logits = torch.cat(node_logits_per_level, dim=1)
+            logits_per_level = self._level_subspace_scores(node_logits)
+            effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
+            level_node_ids = self.level_node_ids()
+            return {
+                "logits_per_level": logits_per_level,
+                "effective_probs_per_level": effective_probs_per_level,
+                "leaf_logits": logits_per_level[-1],
+                "node_logits": node_logits,
+                "orthonormal_plugin_node_logits": node_logits,
+                "node_logits_per_level": node_logits_per_level,
+                "orthonormal_plugin_node_logits_per_level": node_logits_per_level,
+                "hiercos_level_node_ids": level_node_ids,
+                "orthonormal_plugin_level_node_ids": level_node_ids,
+                "leaf_to_level_local": self.leaf_to_level_local,
+                "orthonormal_plugin_leaf_to_level_local": self.leaf_to_level_local,
+                "node_prob_weights": self.node_prob_weights,
+                "orthonormal_plugin_node_prob_weights": self.node_prob_weights,
+            }
         return self.forward_tensor(torch.cat(scores, dim=1))
 
     def forward(self, scores_per_level: Any) -> Dict[str, Any]:

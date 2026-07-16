@@ -18,6 +18,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from dotenv import load_dotenv
+try:
+    from notebooks.multiseed_utils import (
+        aggregate_parsed_seed_runs,
+        discover_seed_dirs,
+        has_seed_runs,
+        metric_series_with_std,
+    )
+except ModuleNotFoundError:
+    from multiseed_utils import (
+        aggregate_parsed_seed_runs,
+        discover_seed_dirs,
+        has_seed_runs,
+        metric_series_with_std,
+    )
 
 
 load_dotenv(
@@ -233,7 +247,7 @@ def _mode_from_metric_key(metric_key: str) -> str:
     return "topdown"
 
 
-def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
+def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
     run_path = Path(run_dir)
     events = load_jsonl_events(run_path / "run_log.jsonl")
     epoch_events = [event for event in events if event.get("event") == "epoch"]
@@ -264,6 +278,7 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
     orthonormal_plugin_weight_mode: Optional[str] = None
     orthonormal_plugin_transform_mode: Optional[str] = None
     orthonormal_plugin_alpha: Optional[float] = None
+    cfg: Dict[str, Any] = {}
     cfg_path = run_path / "config_resolved.yaml"
     if cfg_path.exists():
         cfg = load_yaml(cfg_path) or {}
@@ -320,6 +335,8 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
 
     return {
         "run_dir": run_path,
+        "run_name": run_path.name,
+        "config": cfg,
         "events": events,
         "epoch_events": epoch_events,
         "test_event": test_event,
@@ -339,6 +356,15 @@ def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         "best_epoch_events": best_epoch_events,
         "best_epoch_event": best_epoch_event,
     }
+
+
+def parse_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
+    experiment_dir = Path(run_dir)
+    seed_dirs = discover_seed_dirs(experiment_dir)
+    if not seed_dirs:
+        raise ValueError(f"No completed seed directories found under {experiment_dir}")
+    seed_runs = [_parse_single_run(seed_dir) for seed_dir in seed_dirs]
+    return aggregate_parsed_seed_runs(experiment_dir, seed_runs)
 
 
 def get_metric_series(epoch_events: Sequence[Mapping[str, Any]], metric_key: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -461,8 +487,13 @@ def _resolve_run_dir(path_like: Union[str, Path], outputs_root: Path) -> Path:
     return outputs_root / path
 
 
+def _metadata_seed_dir(run_dir: Path) -> Path:
+    seed_dirs = discover_seed_dirs(run_dir)
+    return seed_dirs[0] if seed_dirs else Path(run_dir)
+
+
 def _read_hcc_cfg(run_dir: Path) -> Dict[str, Any]:
-    cfg_path = run_dir / "config_resolved.yaml"
+    cfg_path = _metadata_seed_dir(run_dir) / "config_resolved.yaml"
     if not cfg_path.exists():
         return {}
     cfg = load_yaml(cfg_path) or {}
@@ -478,7 +509,7 @@ def _read_hcc_cfg(run_dir: Path) -> Dict[str, Any]:
 
 
 def _read_dataset_name(run_dir: Path) -> Optional[str]:
-    cfg_path = run_dir / "config_resolved.yaml"
+    cfg_path = _metadata_seed_dir(run_dir) / "config_resolved.yaml"
     if not cfg_path.exists():
         return None
     cfg = load_yaml(cfg_path) or {}
@@ -786,6 +817,24 @@ def _merged_comp_cell(metric_key: str, comp_value: float, base_value: float) -> 
     return f"{comp_txt} ({delta_txt})"
 
 
+def _test_metric_stats(run_data: Mapping[str, Any], metric_key: str) -> Tuple[float, float, int]:
+    mode = _mode_from_metric_key(metric_key)
+    section = run_data.get("test_results", {}).get(mode, {})
+    if not isinstance(section, MappingABC):
+        return float("nan"), float("nan"), 0
+    mean = float(section.get("test_metrics", {}).get(metric_key, np.nan))
+    std = float(section.get("test_metrics_std", {}).get(metric_key, np.nan))
+    count = int(section.get("test_metrics_count", {}).get(metric_key, 0))
+    return mean, std, count
+
+
+def _fmt_value_stats(metric_key: str, mean: float, std: float, count: int) -> str:
+    mean_text = _fmt_value(metric_key, mean)
+    if count > 1 and np.isfinite(std):
+        return f"{mean_text} ± {_fmt_value(metric_key, std)}"
+    return mean_text
+
+
 def _best_and_second_best_indices(metric_key: str, values: Sequence[float]) -> Tuple[set[int], set[int]]:
     finite_pairs = [(idx, val) for idx, val in enumerate(values) if np.isfinite(val)]
     if not finite_pairs:
@@ -892,8 +941,7 @@ class HCastAnalysis:
                 raise TypeError(f"Unsupported run spec type: {type(spec)!r}")
 
             run_dir = _resolve_run_dir(normalized_spec["run_dir"], config.outputs_root)
-            has_log = (run_dir / "run_log.jsonl").exists()
-            if not run_dir.exists() or not run_dir.is_dir() or not has_log:
+            if not run_dir.exists() or not run_dir.is_dir() or not has_seed_runs(run_dir):
                 print(f"Skipping missing/manual-invalid run: {run_dir}")
                 continue
 
@@ -944,8 +992,11 @@ class HCastAnalysis:
                 continue
 
             baseline_run_dir = _resolve_run_dir(baseline_spec["run_dir"], config.outputs_root)
-            has_log = (baseline_run_dir / "run_log.jsonl").exists()
-            if not baseline_run_dir.exists() or not baseline_run_dir.is_dir() or not has_log:
+            if (
+                not baseline_run_dir.exists()
+                or not baseline_run_dir.is_dir()
+                or not has_seed_runs(baseline_run_dir)
+            ):
                 print(f"Skipping missing baseline run: {baseline_run_dir}")
                 continue
 
@@ -993,6 +1044,7 @@ class HCastAnalysis:
                 dataset_name = run_data.get("dataset_name", "unknown")
                 is_baseline = bool(run_data.get("is_baseline", False))
                 plugin_enabled = bool(run_data.get("orthonormal_plugin_enabled", False))
+                seeds = list(run_data.get("seeds", []))
 
                 temp_txt = "" if temperature is None else f", T={temperature:g}"
                 mode_txt = "" if projection_mode is None else f", proj_mode={projection_mode}"
@@ -1013,11 +1065,12 @@ class HCastAnalysis:
                 else:
                     plugin_txt = ""
                 baseline_txt = ", baseline" if is_baseline else ""
+                seeds_txt = f", seeds={seeds}" if seeds else ""
 
                 print(
                     f"[{dataset_name}] {run_data['label']}: epochs={epoch_count}, "
                     f"best_td_epoch={best_td_epoch}, best_ind_epoch={best_ind_epoch}"
-                    f"{temp_txt}{mode_txt}{strength_txt}{plugin_txt}{baseline_txt}"
+                    f"{temp_txt}{mode_txt}{strength_txt}{plugin_txt}{baseline_txt}{seeds_txt}"
                 )
 
     def plot_validation_curves(
@@ -1049,7 +1102,9 @@ class HCastAnalysis:
                 for run_data in dataset_runs:
                     for mode_key, line_style, mode_label, marker in mode_specs:
                         metric_key = f"{metric_prefix}_{mode_key}"
-                        epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
+                        epochs, values, stds, counts = metric_series_with_std(
+                            run_data["epoch_events"], metric_key
+                        )
                         plot_values = values * 100.0 if is_percent else values
                         ax.plot(
                             epochs,
@@ -1059,6 +1114,18 @@ class HCastAnalysis:
                             linestyle=line_style,
                             linewidth=2.0,
                         )
+                        plot_stds = stds * 100.0 if is_percent else stds
+                        band_mask = np.isfinite(plot_values) & np.isfinite(plot_stds) & (counts > 1)
+                        if np.any(band_mask):
+                            ax.fill_between(
+                                epochs,
+                                plot_values - plot_stds,
+                                plot_values + plot_stds,
+                                where=band_mask,
+                                color=run_data["color"],
+                                alpha=0.14,
+                                linewidth=0,
+                            )
 
                         best_events = run_data.get("best_epoch_events", {})
                         best_event = (
@@ -1078,6 +1145,25 @@ class HCastAnalysis:
                                     s=50,
                                     zorder=4,
                                 )
+                                best_epoch_std = float(best_event.get("epoch_std", np.nan))
+                                best_value_std = float(
+                                    best_event.get("val_metrics_norm_std", {}).get(metric_key, np.nan)
+                                )
+                                if int(best_event.get("epoch_count", 0)) > 1:
+                                    yerr = best_value_std * 100.0 if is_percent else best_value_std
+                                    ax.errorbar(
+                                        [best_event["epoch"]],
+                                        [best_plot_value],
+                                        xerr=[[best_epoch_std], [best_epoch_std]]
+                                        if np.isfinite(best_epoch_std)
+                                        else None,
+                                        yerr=[[yerr], [yerr]] if np.isfinite(yerr) else None,
+                                        color=run_data["color"],
+                                        linewidth=1.0,
+                                        capsize=2,
+                                        alpha=0.8,
+                                        zorder=3,
+                                    )
 
                 ax.set_title(metric_title)
                 ax.set_xlabel("Epoch")
@@ -1907,7 +1993,9 @@ class HCastAnalysis:
                 for run_data in dataset_runs:
                     for mode_key, line_style, mode_label, marker in mode_specs:
                         metric_key = f"acc_level_{mode_key}_{level_idx}"
-                        epochs, values = get_metric_series(run_data["epoch_events"], metric_key)
+                        epochs, values, stds, counts = metric_series_with_std(
+                            run_data["epoch_events"], metric_key
+                        )
                         ax.plot(
                             epochs,
                             values * 100.0,
@@ -1916,6 +2004,19 @@ class HCastAnalysis:
                             linestyle=line_style,
                             linewidth=2.0,
                         )
+                        plot_values = values * 100.0
+                        plot_stds = stds * 100.0
+                        band_mask = np.isfinite(plot_values) & np.isfinite(plot_stds) & (counts > 1)
+                        if np.any(band_mask):
+                            ax.fill_between(
+                                epochs,
+                                plot_values - plot_stds,
+                                plot_values + plot_stds,
+                                where=band_mask,
+                                color=run_data["color"],
+                                alpha=0.14,
+                                linewidth=0,
+                            )
 
                         best_events = run_data.get("best_epoch_events", {})
                         best_event = (
@@ -1934,6 +2035,26 @@ class HCastAnalysis:
                                     s=42,
                                     zorder=4,
                                 )
+                                best_epoch_std = float(best_event.get("epoch_std", np.nan))
+                                best_value_std = float(
+                                    best_event.get("val_metrics_norm_std", {}).get(metric_key, np.nan)
+                                )
+                                if int(best_event.get("epoch_count", 0)) > 1:
+                                    ax.errorbar(
+                                        [best_event["epoch"]],
+                                        [best_value * 100.0],
+                                        xerr=[[best_epoch_std], [best_epoch_std]]
+                                        if np.isfinite(best_epoch_std)
+                                        else None,
+                                        yerr=[[best_value_std * 100.0], [best_value_std * 100.0]]
+                                        if np.isfinite(best_value_std)
+                                        else None,
+                                        color=run_data["color"],
+                                        linewidth=1.0,
+                                        capsize=2,
+                                        alpha=0.8,
+                                        zorder=3,
+                                    )
 
                 ax.set_title(f"Validation Accuracy - {level_label} (L{level_idx})")
                 ax.set_ylabel("Accuracy (%)")
@@ -2012,42 +2133,30 @@ class HCastAnalysis:
             best_epoch_cells: List[str] = []
             for run_data in dataset_runs:
                 test_results = run_data.get("test_results", {})
-                td_epoch = None
-                ind_epoch = None
+                td_section: Mapping[str, Any] = {}
+                ind_section: Mapping[str, Any] = {}
                 if isinstance(test_results, MappingABC):
-                    td_section = test_results.get("topdown")
-                    if isinstance(td_section, MappingABC):
-                        td_epoch = _coerce_int(td_section.get("best_epoch"))
-                    ind_section = test_results.get("independent")
-                    if isinstance(ind_section, MappingABC):
-                        ind_epoch = _coerce_int(ind_section.get("best_epoch"))
+                    raw_td = test_results.get("topdown", {})
+                    raw_ind = test_results.get("independent", {})
+                    td_section = raw_td if isinstance(raw_td, MappingABC) else {}
+                    ind_section = raw_ind if isinstance(raw_ind, MappingABC) else {}
 
-                best_events = run_data.get("best_epoch_events", {})
-                if td_epoch is None:
-                    td_event = (
-                        best_events.get("topdown")
-                        if isinstance(best_events, MappingABC)
-                        else run_data.get("best_epoch_event")
-                    )
-                    td_epoch = _coerce_int(td_event.get("epoch")) if isinstance(td_event, MappingABC) else None
-                if ind_epoch is None:
-                    ind_event = (
-                        best_events.get("independent")
-                        if isinstance(best_events, MappingABC)
-                        else run_data.get("best_epoch_event")
-                    )
-                    ind_epoch = _coerce_int(ind_event.get("epoch")) if isinstance(ind_event, MappingABC) else None
-                if ind_epoch is None:
-                    ind_epoch = td_epoch
+                def epoch_text(section: Mapping[str, Any]) -> str:
+                    mean = float(section.get("best_epoch", np.nan))
+                    std = float(section.get("best_epoch_std", np.nan))
+                    count = int(section.get("best_epoch_count", 0))
+                    if not np.isfinite(mean):
+                        return "n/a"
+                    if count > 1 and np.isfinite(std):
+                        return f"{mean:.1f} ± {std:.1f}"
+                    return f"{mean:.0f}"
 
-                if td_epoch is None and ind_epoch is None:
-                    best_epoch_cells.append("n/a")
-                else:
-                    td_text = str(td_epoch) if td_epoch is not None else "n/a"
-                    ind_text = str(ind_epoch) if ind_epoch is not None else "n/a"
-                    best_epoch_cells.append(f"{td_text}/{ind_text}")
+                best_epoch_cells.append(f"{epoch_text(td_section)}/{epoch_text(ind_section)}")
 
-            header_labels = ["Metric"] + [run_data["label"] for run_data in dataset_runs]
+            header_labels = ["Metric"] + [
+                f"{run_data['label']} (n={run_data.get('num_seeds', 1)})"
+                for run_data in dataset_runs
+            ]
             table_lines = [
                 f"### Dataset: `{dataset_key}`",
                 f"Baseline run: **{base['label']}**",
@@ -2062,7 +2171,12 @@ class HCastAnalysis:
                 row_cells = [metric_label]
                 values = values_by_metric[metric_key]
                 for run_idx, value in enumerate(values):
-                    cell = _fmt_value(metric_key, value) if run_idx == 0 else _merged_comp_cell(metric_key, value, values[0])
+                    mean, std, count = _test_metric_stats(dataset_runs[run_idx], metric_key)
+                    value_text = _fmt_value_stats(metric_key, mean, std, count)
+                    if run_idx == 0 or not np.isfinite(values[0]) or not np.isfinite(value):
+                        cell = value_text
+                    else:
+                        cell = f"{value_text} ({_fmt_delta(metric_key, value - values[0])})"
                     if run_idx in best_by_metric[metric_key] and cell != "n/a":
                         cell = f"**{cell}**"
                     elif run_idx in second_best_by_metric[metric_key] and cell != "n/a":

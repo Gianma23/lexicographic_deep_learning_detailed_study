@@ -47,6 +47,7 @@ def train_one_epoch(
     _set_model_epoch(model, epoch)
     loss_vals = []
     batch_metrics = []
+    batch_weights = []
     grad_metric_vals = []
     mixup_fn = build_mixup_fn(cfg, num_classes_per_level=num_classes_per_level)
     trainable_named_params = get_trainable_named_params(model)
@@ -156,14 +157,17 @@ def train_one_epoch(
                 loss.backward()
                 optimizer.step()
 
+        batch_weight = int(labels.size(0))
         loss_vals.append(loss_dict)
+        batch_weights.append(batch_weight)
         if batch_grad_metrics:
             grad_metric_vals.append(batch_grad_metrics)
         batch_metric = evaluate_batch(output, labels, taxonomy)
         batch_metrics.append(batch_metric)
 
-    loss_metrics = merge_metric_batches(loss_vals)
-    metrics = merge_metric_batches(batch_metrics)
+    loss_metrics = merge_metric_batches(loss_vals, batch_weights=batch_weights)
+    metrics = merge_metric_batches(batch_metrics, batch_weights=batch_weights)
+    # Gradient norms/cosines describe optimizer steps, not per-sample outcomes.
     grad_metrics = merge_metric_batches(grad_metric_vals)
     trunk_param_metrics = compute_trunk_param_norm_metrics(
         params=trainable_params,
@@ -196,6 +200,7 @@ def evaluate(
 
     loss_vals = []
     batch_metrics = []
+    batch_weights = []
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
 
     for images, labels, _ in loader:
@@ -210,12 +215,13 @@ def evaluate(
         if include_losses:
             loss_vals.append(loss_dict)
         batch_metrics.append(evaluate_batch(output, labels, taxonomy))
+        batch_weights.append(int(labels.size(0)))
 
-    metrics = merge_metric_batches(batch_metrics)
+    metrics = merge_metric_batches(batch_metrics, batch_weights=batch_weights)
     if not include_losses:
         return metrics
 
-    loss_metrics = merge_metric_batches(loss_vals)
+    loss_metrics = merge_metric_batches(loss_vals, batch_weights=batch_weights)
     outputs: Dict[str, Any] = dict(loss_metrics)
     outputs.update(metrics)
     outputs["__loss_keys__"] = sorted(loss_metrics.keys())

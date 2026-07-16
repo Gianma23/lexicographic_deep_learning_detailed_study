@@ -8,6 +8,7 @@ model:
   alpha: 0.1
   backbone_lr_scale: 0.1
   fixed_frame_mode: orthonormal_random
+  fixed_frame_per_level: false
 
 dataset:
   name: fgvc-aircraft
