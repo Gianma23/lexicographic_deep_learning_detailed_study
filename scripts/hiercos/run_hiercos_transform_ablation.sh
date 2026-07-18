@@ -171,14 +171,10 @@ run_output_dir() {
   if [[ "$WEIGHT_MODE" != "equal" ]]; then
     weight_suffix="_${WEIGHT_MODE}"
   fi
-  if [[ "$FIXED_FRAME_MODE" == "orthonormal_block_random" ]]; then
-    frame_suffix="_orthonormal_random_per_level"
-  elif [[ "$FIXED_FRAME_MODE" == "identity" && "$per_level" =~ ^(1|true|True)$ ]]; then
+  if [[ "$FIXED_FRAME_MODE" == "identity" && "$per_level" =~ ^(1|true|True)$ ]]; then
     frame_suffix="_identity_per_level"
   elif [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
-  elif [[ "$FIXED_FRAME_MODE" == "orthonormal_random" && "$per_level" =~ ^(1|true|True)$ ]]; then
-    frame_suffix="_orthonormal_random_per_level"
   fi
   echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_orthogonalize_all_coarse_first_${transform_mode}${weight_suffix}${frame_suffix}"
 }

@@ -1077,6 +1077,7 @@ class HCastAnalysis:
         self,
         metric_families: Optional[Sequence[Tuple[str, str, bool]]] = None,
         mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
+        show_best_errorbars: bool = False,
     ) -> None:
         metric_families = metric_families or [
             ("fpa", "Validation FPA (%)", True),
@@ -1149,7 +1150,7 @@ class HCastAnalysis:
                                 best_value_std = float(
                                     best_event.get("val_metrics_norm_std", {}).get(metric_key, np.nan)
                                 )
-                                if int(best_event.get("epoch_count", 0)) > 1:
+                                if show_best_errorbars and int(best_event.get("epoch_count", 0)) > 1:
                                     yerr = best_value_std * 100.0 if is_percent else best_value_std
                                     ax.errorbar(
                                         [best_event["epoch"]],
@@ -1955,7 +1956,9 @@ class HCastAnalysis:
                 print(f"[{dataset_key}] No trunk gradient/parameter diagnostics found in selected runs.")
 
     def plot_per_level_validation_accuracy(
-        self, mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None
+        self,
+        mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
+        show_best_errorbars: bool = False,
     ) -> None:
         mode_specs = mode_specs or [
             ("independent", "--", "independent", "x"),
@@ -2039,7 +2042,7 @@ class HCastAnalysis:
                                 best_value_std = float(
                                     best_event.get("val_metrics_norm_std", {}).get(metric_key, np.nan)
                                 )
-                                if int(best_event.get("epoch_count", 0)) > 1:
+                                if show_best_errorbars and int(best_event.get("epoch_count", 0)) > 1:
                                     ax.errorbar(
                                         [best_event["epoch"]],
                                         [best_value * 100.0],

@@ -26,7 +26,7 @@ class MultiSeedUtilsTest(unittest.TestCase):
         self.assertAlmostEqual(stds["score"], 0.1)
         self.assertEqual(counts["score"], 3)
 
-    def test_epoch_aggregation_uses_common_epochs(self) -> None:
+    def test_epoch_aggregation_uses_available_epochs(self) -> None:
         seed_runs = [
             {
                 "epoch_events": [
@@ -41,9 +41,27 @@ class MultiSeedUtilsTest(unittest.TestCase):
             },
         ]
         events = aggregate_epoch_events(seed_runs)
-        self.assertEqual([event["epoch"] for event in events], [0])
+        self.assertEqual([event["epoch"] for event in events], [0, 1])
         self.assertAlmostEqual(events[0]["val_metrics_norm"]["score"], 2.0)
         self.assertAlmostEqual(events[0]["val_metrics_norm_std"]["score"], np.sqrt(2.0))
+        self.assertEqual(events[0]["val_metrics_norm_count"]["score"], 2)
+        self.assertAlmostEqual(events[1]["val_metrics_norm"]["score"], 2.0)
+        self.assertTrue(np.isnan(events[1]["val_metrics_norm_std"]["score"]))
+        self.assertEqual(events[1]["val_metrics_norm_count"]["score"], 1)
+
+    def test_epoch_aggregation_ignores_seed_without_epoch_events(self) -> None:
+        seed_runs = [
+            {
+                "epoch_events": [
+                    {"epoch": 0, "val_metrics_norm": {"score": 1.0}},
+                ]
+            },
+            {"epoch_events": []},
+        ]
+        events = aggregate_epoch_events(seed_runs)
+        self.assertEqual([event["epoch"] for event in events], [0])
+        self.assertAlmostEqual(events[0]["val_metrics_norm"]["score"], 1.0)
+        self.assertEqual(events[0]["val_metrics_norm_count"]["score"], 1)
 
     def test_seed_folder_must_match_config(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:

@@ -23,7 +23,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
+LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-equal}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
 

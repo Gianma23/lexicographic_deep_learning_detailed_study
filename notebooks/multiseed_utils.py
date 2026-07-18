@@ -161,21 +161,21 @@ def validate_seed_group(experiment_dir: Path, seed_runs: Sequence[Mapping[str, A
 def aggregate_epoch_events(seed_runs: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     event_maps: List[Dict[int, Mapping[str, Any]]] = []
     for seed_run in seed_runs:
-        event_maps.append(
-            {
-                int(event["epoch"]): event
-                for event in seed_run.get("epoch_events", [])
-                if isinstance(event, Mapping) and "epoch" in event
-            }
-        )
+        events = {
+            int(event["epoch"]): event
+            for event in seed_run.get("epoch_events", [])
+            if isinstance(event, Mapping) and "epoch" in event
+        }
+        if events:
+            event_maps.append(events)
 
-    if not event_maps or any(not events for events in event_maps):
+    if not event_maps:
         return []
 
-    common_epochs = sorted(set.intersection(*(set(events.keys()) for events in event_maps)))
+    available_epochs = sorted(set.union(*(set(events.keys()) for events in event_maps)))
     aggregated: List[Dict[str, Any]] = []
-    for epoch in common_epochs:
-        source_events = [events[epoch] for events in event_maps]
+    for epoch in available_epochs:
+        source_events = [events[epoch] for events in event_maps if epoch in events]
         event: Dict[str, Any] = {"event": "epoch", "epoch": epoch}
         for mapping_key in _EPOCH_MAPPING_KEYS:
             source_mappings = [
