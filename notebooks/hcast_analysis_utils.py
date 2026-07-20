@@ -857,10 +857,32 @@ def _best_and_second_best_indices(metric_key: str, values: Sequence[float]) -> T
     return best_indices, second_best_indices
 
 
+def _default_mode_specs(include_topdown: bool = True) -> List[Tuple[str, str, str, str]]:
+    mode_specs = [("independent", "--", "independent", "x")]
+    if include_topdown:
+        mode_specs.append(("topdown", "-", "top-down", "o"))
+    return mode_specs
+
+
+def _filter_mode_specs(
+    mode_specs: Sequence[Tuple[str, str, str, str]], include_topdown: bool = True
+) -> List[Tuple[str, str, str, str]]:
+    if include_topdown:
+        return list(mode_specs)
+    return [spec for spec in mode_specs if spec[0] != "topdown"]
+
+
+def _include_topdown_metric(metric_key: str, include_topdown: bool = True) -> bool:
+    if include_topdown:
+        return True
+    return "_topdown" not in metric_key and not metric_key.startswith("acc_level_topdown_")
+
+
 @dataclass
 class HCastAnalysisConfig:
     outputs_root: Path = Path(os.environ.get("OUTPUTS_ROOT", "/scratch/g.saggini1/outputs"))
     include_baselines: bool = True
+    include_topdown_metrics: bool = True
     baseline_color: str = "#1f77b4"
     baseline_by_dataset: Dict[str, Dict[str, Any]] = field(
         default_factory=lambda: {
@@ -1067,10 +1089,14 @@ class HCastAnalysis:
                 baseline_txt = ", baseline" if is_baseline else ""
                 seeds_txt = f", seeds={seeds}" if seeds else ""
 
+                if self.config.include_topdown_metrics:
+                    best_txt = f"best_td_epoch={best_td_epoch}, best_ind_epoch={best_ind_epoch}"
+                else:
+                    best_txt = f"best_ind_epoch={best_ind_epoch}"
+
                 print(
                     f"[{dataset_name}] {run_data['label']}: epochs={epoch_count}, "
-                    f"best_td_epoch={best_td_epoch}, best_ind_epoch={best_ind_epoch}"
-                    f"{temp_txt}{mode_txt}{strength_txt}{plugin_txt}{baseline_txt}{seeds_txt}"
+                    f"{best_txt}{temp_txt}{mode_txt}{strength_txt}{plugin_txt}{baseline_txt}{seeds_txt}"
                 )
 
     def plot_validation_curves(
@@ -1078,17 +1104,20 @@ class HCastAnalysis:
         metric_families: Optional[Sequence[Tuple[str, str, bool]]] = None,
         mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
         show_best_errorbars: bool = False,
+        include_topdown: Optional[bool] = None,
     ) -> None:
+        include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
         metric_families = metric_families or [
             ("fpa", "Validation FPA (%)", True),
             ("weighted_ap", "Validation wAP (%)", True),
             ("tice", "Validation TICE (%)", True),
             ("ahd", "Validation AHD (edges)", False),
         ]
-        mode_specs = mode_specs or [
-            ("independent", "--", "independent", "x"),
-            ("topdown", "-", "top-down", "o"),
-        ]
+        mode_specs = (
+            _default_mode_specs(include_topdown)
+            if mode_specs is None
+            else _filter_mode_specs(mode_specs, include_topdown)
+        )
 
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
@@ -1173,7 +1202,7 @@ class HCastAnalysis:
                 ax.legend(fontsize=9)
 
             plt.suptitle(
-                f"{dataset_key}: Validation Metrics (Top-Down + Independent on Same Plot)",
+                f"{dataset_key}: Validation Metrics ({'Top-Down + Independent' if include_topdown else 'Independent'} on Same Plot)",
                 y=1.03,
                 fontsize=13,
             )
@@ -1959,11 +1988,14 @@ class HCastAnalysis:
         self,
         mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
         show_best_errorbars: bool = False,
+        include_topdown: Optional[bool] = None,
     ) -> None:
-        mode_specs = mode_specs or [
-            ("independent", "--", "independent", "x"),
-            ("topdown", "-", "top-down", "o"),
-        ]
+        include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
+        mode_specs = (
+            _default_mode_specs(include_topdown)
+            if mode_specs is None
+            else _filter_mode_specs(mode_specs, include_topdown)
+        )
 
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
@@ -1977,6 +2009,8 @@ class HCastAnalysis:
                     for event in run_data["epoch_events"]
                     for key in event["val_metrics_norm"].keys()
                     if (
+                        _include_topdown_metric(key, include_topdown)
+                        and
                         (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                         and key.rsplit("_", 1)[-1].isdigit()
                     )
@@ -2069,7 +2103,8 @@ class HCastAnalysis:
             plt.tight_layout()
             plt.show()
 
-    def show_final_test_tables(self) -> None:
+    def show_final_test_tables(self, include_topdown: Optional[bool] = None) -> None:
+        include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
             if len(dataset_runs) < 2:
@@ -2084,6 +2119,8 @@ class HCastAnalysis:
                 for mode in BEST_SELECTION_MODES
                 for key in _test_metrics_for_mode(run_data, mode).keys()
                 if (
+                    _include_topdown_metric(key, include_topdown)
+                    and
                     (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                     and key.rsplit("_", 1)[-1].isdigit()
                 )
@@ -2097,6 +2134,8 @@ class HCastAnalysis:
                         for event in run_data["epoch_events"]
                         for key in event["val_metrics_norm"].keys()
                         if (
+                            _include_topdown_metric(key, include_topdown)
+                            and
                             (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                             and key.rsplit("_", 1)[-1].isdigit()
                         )
@@ -2113,11 +2152,16 @@ class HCastAnalysis:
                 ("ahd_independent", "AHD independent"),
                 ("ahd_topdown", "AHD top-down"),
             ]
+            metric_rows = [
+                row for row in metric_rows
+                if _include_topdown_metric(row[0], include_topdown)
+            ]
 
             for level_idx in all_level_ids:
                 level_label = get_level_label(level_idx, base)
                 metric_rows.append((f"acc_level_independent_{level_idx}", f"Acc independent {level_label} (L{level_idx})"))
-                metric_rows.append((f"acc_level_topdown_{level_idx}", f"Acc top-down {level_label} (L{level_idx})"))
+                if include_topdown:
+                    metric_rows.append((f"acc_level_topdown_{level_idx}", f"Acc top-down {level_label} (L{level_idx})"))
 
             values_by_metric = {}
             best_by_metric = {}
@@ -2154,7 +2198,10 @@ class HCastAnalysis:
                         return f"{mean:.1f} ± {std:.1f}"
                     return f"{mean:.0f}"
 
-                best_epoch_cells.append(f"{epoch_text(td_section)}/{epoch_text(ind_section)}")
+                if include_topdown:
+                    best_epoch_cells.append(f"{epoch_text(td_section)}/{epoch_text(ind_section)}")
+                else:
+                    best_epoch_cells.append(epoch_text(ind_section or td_section))
 
             header_labels = ["Metric"] + [
                 f"{run_data['label']} (n={run_data.get('num_seeds', 1)})"
@@ -2166,7 +2213,8 @@ class HCastAnalysis:
                 "",
                 "| " + " | ".join(header_labels) + " |",
                 "|---|" + "|".join(["---:"] * (len(header_labels) - 1)) + "|",
-                "| Best epoch (TD/Ind) | " + " | ".join(best_epoch_cells) + " |",
+                f"| Best epoch ({'TD/Ind' if include_topdown else 'Ind'}) | "
+                + " | ".join(best_epoch_cells) + " |",
             ]
 
             for metric_key, metric_name in metric_rows:

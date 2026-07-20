@@ -80,7 +80,7 @@ trap handle_exit EXIT
 #     ./scripts/hiercos/run_hiercos_baselines.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(aircraft cub200 cifar100)
+DATASETS=(aircraft)
 
 config_for_dataset() {
   case "$1" in

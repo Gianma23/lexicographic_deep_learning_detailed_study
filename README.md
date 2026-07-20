@@ -254,9 +254,9 @@ Strict dataset ids:
 
 Adapter behavior:
 
-- CIFAR-100 loads through `torchvision.datasets.CIFAR100` and supports `hierarchy_depth: 2` or `3`. The 3-level layout is `super -> coarse -> fine`.
+- CIFAR-100 loads through `torchvision.datasets.CIFAR100`; the official `fine_labels`/`coarse_labels` arrays define the 20-coarse-to-100-fine edge used by B-CNN dynamically. `hierarchy_depth: 3` prepends B-CNN's manually defined 8-to-20 edge, which is not part of the official download.
 - CUB supports `train/` and `test/` folder splits, `images_split/{train,test}`, or the official `images.txt` / `image_class_labels.txt` / `train_test_split.txt` layout.
-- FGVC-Aircraft reads the official `images_variant_{train,val,test,trainval}.txt` files under `data/`-style roots.
+- FGVC-Aircraft reconstructs its hierarchy from the official class lists and the parallel `images_{variant,family,manufacturer}_{train,val,test}.txt` annotations under `data/`-style roots.
 - iNat19 uses official iNaturalist 2019 COCO-style JSON or JSON-in-tar annotations with a local 3-level `family -> genus -> species` projection. The active iNat19 configs use fixed Making Better Mistakes / Hier-COS train/val/test manifests over the labeled official `train_val2019` image pool.
 
 Default dataset roots in `.env.example`:

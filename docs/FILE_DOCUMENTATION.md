@@ -80,11 +80,10 @@ These presets use the single Hier-COS implementation with a fixed orthonormal fr
 
 - `datasets/__init__.py`: Strict dataset-id registry (`cifar-100`, `cub-200-2011`, `fgvc-aircraft`, `inat19`), transforms, collate function, and dataloader builder (including optional `crop_bottom_pixels` transform and `drop_last_eval` dataloader flag).
 - `datasets/base.py`: Shared hierarchical dataset base class, train/val splitting, normalized JSON annotations, label remapping, and taxonomy inference.
-- `datasets/cifar100.py`: CIFAR-100 adapter. Supports 2-level `coarse -> fine` and 3-level `super -> coarse -> fine` hierarchies.
+- `datasets/cifar100.py`: CIFAR-100 adapter. Derives the official 20-coarse-to-100-fine edge used by B-CNN from the downloaded Python archive and supports 2-level `coarse -> fine` and 3-level `super -> coarse -> fine` hierarchies; B-CNN's manual 8-to-20 edge is retained explicitly because CIFAR-100 does not provide it.
 - `datasets/cub.py`: CUB-200-2011 adapter for folder-based and official metadata layouts.
-- `datasets/cub_tree.py`: Static order/family/species mapping used by the CUB adapter.
-- `datasets/aircraft.py`: FGVC-Aircraft adapter for official variant split files and related fallbacks.
-- `datasets/aircraft_tree.py`: Static manufacturer/family/variant mapping used by the Aircraft adapter.
+- `datasets/cub_tree.py`: External H-CAST order/family/species mapping retained because the official CUB-200-2011 download provides species labels but no order/family taxonomy.
+- `datasets/aircraft.py`: FGVC-Aircraft adapter that derives the complete manufacturer/family/variant taxonomy from the official class lists and parallel per-image annotations.
 - `datasets/inat.py`: iNaturalist 2019 adapter for official COCO-style JSON and JSON-in-tar annotations, using `family -> genus -> species` labels and repo-specific split fallback logic.
 
 ## Models

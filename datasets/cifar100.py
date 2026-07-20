@@ -1,4 +1,6 @@
-﻿from pathlib import Path
+﻿import pickle
+from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PIL import Image
@@ -11,25 +13,93 @@ from .base import (
     stratified_train_val_indices,
 )
 
-# Canonical CIFAR-100 fine->coarse mapping aligned with torchvision fine-label order.
-_FINE_TO_COARSE = [
-    4, 1, 14, 8, 0, 6, 7, 7, 18, 3,
-    3, 14, 9, 18, 7, 11, 3, 9, 7, 11,
-    6, 11, 5, 10, 7, 6, 13, 15, 3, 15,
-    0, 11, 1, 10, 12, 14, 16, 9, 11, 5,
-    5, 19, 8, 8, 15, 13, 14, 17, 18, 10,
-    16, 4, 17, 4, 2, 0, 17, 4, 18, 17,
-    10, 3, 2, 12, 12, 16, 12, 1, 9, 19,
-    2, 10, 0, 1, 16, 12, 9, 13, 15, 13,
-    16, 19, 2, 4, 6, 19, 5, 5, 8, 19,
-    18, 1, 2, 15, 6, 0, 17, 8, 14, 13,
-]
-
-# HT-CapsNet CIFAR-100 coarse(20)->super(8) mapping.
-_COARSE_TO_SUPER = [
+# B-CNN manually groups CIFAR-100's 20 official coarse classes into 8
+# coarse-1 classes. This edge is absent from the dataset and therefore must
+# remain explicit. Source:
+# https://github.com/zhuxinqimac/B-CNN/blob/main/CIFAR_100_keras_vgg16_hierarchy_dynamic.py
+B_CNN_COARSE_TO_SUPER = [
     0, 0, 1, 2, 1, 2, 2, 3, 4, 5,
     5, 4, 4, 3, 6, 4, 4, 1, 7, 7,
 ]
+
+
+def _pickle_field(payload: Dict[Any, Any], name: str):
+    if name in payload:
+        return payload[name]
+    encoded = name.encode("utf-8")
+    if encoded in payload:
+        return payload[encoded]
+    return None
+
+
+def load_official_cifar100_fine_to_coarse(root: Path) -> List[int]:
+    """Derive fine-to-coarse IDs from the official CIFAR-100 Python archive."""
+    root = Path(root)
+    candidates = [
+        root / "cifar-100-python" / "train",
+        root / "train",
+    ]
+    train_file = next((path for path in candidates if path.is_file()), None)
+    if train_file is None:
+        searched = ", ".join(str(path) for path in candidates)
+        raise FileNotFoundError(
+            "Could not locate the official CIFAR-100 Python training file needed "
+            f"for fine/coarse labels. Searched: {searched}"
+        )
+
+    with train_file.open("rb") as handle:
+        payload = pickle.load(handle, encoding="latin1")
+    if not isinstance(payload, dict):
+        raise ValueError(f"Malformed official CIFAR-100 payload in {train_file}: expected a dictionary.")
+
+    fine_labels = _pickle_field(payload, "fine_labels")
+    coarse_labels = _pickle_field(payload, "coarse_labels")
+    if not isinstance(fine_labels, list) or not isinstance(coarse_labels, list):
+        raise ValueError(
+            f"Official CIFAR-100 payload {train_file} must contain fine_labels and coarse_labels lists."
+        )
+    if len(fine_labels) != len(coarse_labels) or not fine_labels:
+        raise ValueError(
+            f"Official CIFAR-100 label arrays in {train_file} are empty or misaligned: "
+            f"fine={len(fine_labels)}, coarse={len(coarse_labels)}."
+        )
+
+    fine_to_coarse: Dict[int, int] = {}
+    for fine_raw, coarse_raw in zip(fine_labels, coarse_labels):
+        fine = int(fine_raw)
+        coarse = int(coarse_raw)
+        previous = fine_to_coarse.get(fine)
+        if previous is not None and previous != coarse:
+            raise ValueError(
+                f"Inconsistent official CIFAR-100 parent for fine class {fine}: "
+                f"coarse class {previous} versus {coarse}."
+            )
+        fine_to_coarse[fine] = coarse
+
+    expected_fine = set(range(100))
+    if set(fine_to_coarse) != expected_fine:
+        missing = sorted(expected_fine - set(fine_to_coarse))
+        extra = sorted(set(fine_to_coarse) - expected_fine)
+        raise ValueError(
+            "Official CIFAR-100 training labels do not define exactly 100 fine classes. "
+            f"Missing: {missing[:10]}, extra: {extra[:10]}."
+        )
+    coarse_counts = Counter(fine_to_coarse.values())
+    expected_coarse = set(range(20))
+    if set(coarse_counts) != expected_coarse:
+        missing = sorted(expected_coarse - set(coarse_counts))
+        extra = sorted(set(coarse_counts) - expected_coarse)
+        raise ValueError(
+            "Official CIFAR-100 training labels do not define exactly 20 coarse classes. "
+            f"Missing: {missing}, extra: {extra}."
+        )
+    invalid_fanout = {coarse: count for coarse, count in coarse_counts.items() if count != 5}
+    if invalid_fanout:
+        raise ValueError(
+            "B-CNN expects the official CIFAR-100 hierarchy with exactly five fine "
+            f"classes per coarse class; found {invalid_fanout}."
+        )
+    return [fine_to_coarse[fine] for fine in range(100)]
 
 
 class CIFAR100Dataset(BaseHierDataset):
@@ -50,7 +120,7 @@ class CIFAR100Dataset(BaseHierDataset):
         if self.depth == 2:
             return [coarse, fine]
         if self.depth == 3:
-            super_cls = int(_COARSE_TO_SUPER[coarse])
+            super_cls = int(B_CNN_COARSE_TO_SUPER[coarse])
             return [super_cls, coarse, fine]
         raise ValueError(
             f"CIFAR-100 supports hierarchy_depth in {{2, 3}}, got {self.depth}. "
@@ -63,10 +133,9 @@ class CIFAR100Dataset(BaseHierDataset):
         if ann_file is not None:
             return self._read_json_samples(ann_file)
 
-        if len(_FINE_TO_COARSE) != 100:
-            raise RuntimeError("Invalid CIFAR-100 fine->coarse mapping. Expected 100 entries.")
-        if len(_COARSE_TO_SUPER) != 20:
-            raise RuntimeError("Invalid CIFAR-100 coarse->super mapping. Expected 20 entries.")
+        if len(B_CNN_COARSE_TO_SUPER) != 20:
+            raise RuntimeError("Invalid B-CNN CIFAR-100 coarse->super mapping. Expected 20 entries.")
+        fine_to_coarse = load_official_cifar100_fine_to_coarse(self.root)
 
         val_ratio = resolve_val_split_ratio(self.cfg)
         val_source = self.cfg.dataset.get("val_source", "train_split")
@@ -102,7 +171,7 @@ class CIFAR100Dataset(BaseHierDataset):
         samples: List[Dict[str, Any]] = []
         for idx in chosen:
             fine = int(self._cifar_targets[idx])
-            coarse = int(_FINE_TO_COARSE[fine])
+            coarse = int(fine_to_coarse[fine])
             samples.append(
                 {
                     "image": int(idx),

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import html
 import json
 import os
@@ -15,6 +14,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from dotenv import load_dotenv
+from datasets.aircraft import load_official_aircraft_hierarchy
+from datasets.cifar100 import (
+    B_CNN_COARSE_TO_SUPER,
+    load_official_cifar100_fine_to_coarse,
+)
+from datasets.cub_tree import TREES as CUB_TREES
 
 
 load_dotenv(
@@ -105,14 +110,13 @@ def _last_row(rows: Sequence[Dict[str, float]]) -> Dict[str, float]:
     return rows[-1]
 
 
-def _parse_python_constant(path: Path, name: str):
-    module = ast.parse(path.read_text(encoding="utf-8-sig"))
-    for node in module.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            if isinstance(target, ast.Name) and target.id == name:
-                return ast.literal_eval(node.value)
-    raise KeyError(f"Could not find constant {name} in {path}.")
+def _required_dataset_root(env_name: str) -> Path:
+    raw = os.environ.get(env_name, "").strip()
+    if not raw:
+        raise RuntimeError(
+            f"{env_name} must point to the official dataset download when generating taxonomy figures."
+        )
+    return Path(raw).expanduser()
 
 
 def _fanout_summary(
@@ -141,26 +145,31 @@ def _fanout_summary(
 
 
 def load_fanout_summaries() -> Dict[str, Dict[str, object]]:
-    cifar_fine_to_middle = _parse_python_constant(REPO_ROOT / "datasets" / "cifar100.py", "_FINE_TO_COARSE")
-    cifar_middle_to_coarse = _parse_python_constant(REPO_ROOT / "datasets" / "cifar100.py", "_COARSE_TO_SUPER")
-    cub_trees = _parse_python_constant(REPO_ROOT / "datasets" / "cub_tree.py", "TREES")
-    aircraft_trees = _parse_python_constant(REPO_ROOT / "datasets" / "aircraft_tree.py", "TREES")
+    cifar_fine_to_middle = load_official_cifar100_fine_to_coarse(
+        _required_dataset_root("CIFAR100_ROOT")
+    )
+    aircraft_hierarchy = load_official_aircraft_hierarchy(
+        _required_dataset_root("AIRCRAFT_ROOT")
+    )
 
     return {
         "cifar100": _fanout_summary(
             dataset_label="CIFAR-100",
-            middle_to_coarse={idx: int(parent) for idx, parent in enumerate(cifar_middle_to_coarse)},
+            middle_to_coarse={
+                idx: int(parent)
+                for idx, parent in enumerate(B_CNN_COARSE_TO_SUPER)
+            },
             fine_to_middle={idx: int(parent) for idx, parent in enumerate(cifar_fine_to_middle)},
         ),
         "cub200": _fanout_summary(
             dataset_label="CUB-200",
-            middle_to_coarse={int(tree[2]) - 1: int(tree[1]) - 1 for tree in cub_trees},
-            fine_to_middle={idx: int(tree[2]) - 1 for idx, tree in enumerate(cub_trees)},
+            middle_to_coarse={int(tree[2]) - 1: int(tree[1]) - 1 for tree in CUB_TREES},
+            fine_to_middle={idx: int(tree[2]) - 1 for idx, tree in enumerate(CUB_TREES)},
         ),
         "aircraft": _fanout_summary(
             dataset_label="Aircraft",
-            middle_to_coarse={int(tree[1]) - 1: int(tree[2]) - 1 for tree in aircraft_trees},
-            fine_to_middle={idx: int(tree[1]) - 1 for idx, tree in enumerate(aircraft_trees)},
+            middle_to_coarse=dict(aircraft_hierarchy.family_to_manufacturer),
+            fine_to_middle=dict(aircraft_hierarchy.variant_to_family),
         ),
     }
 

@@ -1014,6 +1014,27 @@ def _edges_or_na(value: float) -> str:
     return _fmt_edges(value)
 
 
+def _default_mode_specs(include_topdown: bool = True) -> List[Tuple[str, str, str, str]]:
+    mode_specs = [("independent", "--", "independent", "x")]
+    if include_topdown:
+        mode_specs.append(("topdown", "-", "top-down", "o"))
+    return mode_specs
+
+
+def _filter_mode_specs(
+    mode_specs: Sequence[Tuple[str, str, str, str]], include_topdown: bool = True
+) -> List[Tuple[str, str, str, str]]:
+    if include_topdown:
+        return list(mode_specs)
+    return [spec for spec in mode_specs if spec[0] != "topdown"]
+
+
+def _include_topdown_metric(metric_key: str, include_topdown: bool = True) -> bool:
+    if include_topdown:
+        return True
+    return "_topdown" not in metric_key and not metric_key.startswith("acc_level_topdown_")
+
+
 @dataclass
 class ModelComparisonConfig:
     output_root: Path = Path(os.environ.get("OUTPUTS_ROOT", "/scratch/g.saggini1/outputs"))
@@ -1026,6 +1047,7 @@ class ModelComparisonConfig:
     include_run_name_substrings: List[str] = field(default_factory=list)
     exclude_run_name_substrings: List[str] = field(default_factory=lambda: ["design", "warmup"])
     require_model_dataset_run_name_format: bool = False
+    include_topdown_metrics: bool = True
 
     preferred_dataset_order: List[str] = field(
         default_factory=lambda: ["cifar-100", "cub-200-2011", "fgvc-aircraft", "inat19"]
@@ -1202,31 +1224,47 @@ class ModelComparisonAnalysis:
                 )
                 test_fpa_topdown = float(_test_metrics_for_mode(run, "topdown").get("fpa_topdown", np.nan))
                 test_fpa_independent = float(_test_metrics_for_mode(run, "independent").get("fpa_independent", np.nan))
-                print(
-                    f"  - {run['model_label']:<12} | run={run['run_name']:<35} "
-                    f"| seeds={run.get('seeds', [])} "
-                    f"| best_td={_fmt_epoch_score(topdown_event, topdown_score):<12} | "
-                    f"best_ind={_fmt_epoch_score(independent_event, independent_score):<12} | "
-                    f"test_FPA_td={_fmt_pct(test_fpa_topdown)} | "
-                    f"test_FPA_ind={_fmt_pct(test_fpa_independent)}"
-                )
+                summary_bits = [
+                    f"  - {run['model_label']:<12} | run={run['run_name']:<35}",
+                    f"seeds={run.get('seeds', [])}",
+                ]
+                if self.config.include_topdown_metrics:
+                    summary_bits.extend(
+                        [
+                            f"best_td={_fmt_epoch_score(topdown_event, topdown_score):<12}",
+                            f"best_ind={_fmt_epoch_score(independent_event, independent_score):<12}",
+                            f"test_FPA_td={_fmt_pct(test_fpa_topdown)}",
+                            f"test_FPA_ind={_fmt_pct(test_fpa_independent)}",
+                        ]
+                    )
+                else:
+                    summary_bits.extend(
+                        [
+                            f"best_ind={_fmt_epoch_score(independent_event, independent_score):<12}",
+                            f"test_FPA_ind={_fmt_pct(test_fpa_independent)}",
+                        ]
+                    )
+                print(" | ".join(summary_bits))
 
     def plot_validation_curves(
         self,
         metric_families: Optional[Sequence[Tuple[str, str, bool]]] = None,
         mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
         show_best_errorbars: bool = False,
+        include_topdown: Optional[bool] = None,
     ) -> None:
+        include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
         metric_families = metric_families or [
             ("fpa", "Validation FPA (%)", True),
             ("weighted_ap", "Validation wAP (%)", True),
             ("tice", "Validation TICE (%)", True),
             ("ahd", "Validation AHD (edges)", False),
         ]
-        mode_specs = mode_specs or [
-            ("independent", "--", "independent", "x"),
-            ("topdown", "-", "top-down", "o"),
-        ]
+        mode_specs = (
+            _default_mode_specs(include_topdown)
+            if mode_specs is None
+            else _filter_mode_specs(mode_specs, include_topdown)
+        )
 
         for dataset_name in self.dataset_keys:
             dataset_runs = self.runs_by_dataset[dataset_name]
@@ -1314,7 +1352,7 @@ class ModelComparisonAnalysis:
                 ax.legend(fontsize=9)
 
             plt.suptitle(
-                f"{dataset_display_name(dataset_name)}: Validation Metrics (Top-Down + Independent)",
+                f"{dataset_display_name(dataset_name)}: Validation Metrics ({'Top-Down + Independent' if include_topdown else 'Independent'})",
                 y=1.03,
                 fontsize=13,
             )
@@ -1567,11 +1605,14 @@ class ModelComparisonAnalysis:
         self,
         mode_specs: Optional[Sequence[Tuple[str, str, str, str]]] = None,
         show_best_errorbars: bool = False,
+        include_topdown: Optional[bool] = None,
     ) -> None:
-        mode_specs = mode_specs or [
-            ("independent", "--", "independent", "x"),
-            ("topdown", "-", "top-down", "o"),
-        ]
+        include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
+        mode_specs = (
+            _default_mode_specs(include_topdown)
+            if mode_specs is None
+            else _filter_mode_specs(mode_specs, include_topdown)
+        )
 
         for dataset_name in self.dataset_keys:
             dataset_runs = self.runs_by_dataset[dataset_name]
@@ -1585,6 +1626,8 @@ class ModelComparisonAnalysis:
                     for event in run_data["epoch_events"]
                     for key in event.get("val_metrics_norm", {}).keys()
                     if (
+                        _include_topdown_metric(key, include_topdown)
+                        and
                         (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                         and key.rsplit("_", 1)[-1].isdigit()
                     )
@@ -1681,7 +1724,8 @@ class ModelComparisonAnalysis:
             plt.tight_layout()
             plt.show()
 
-    def show_final_test_tables(self) -> None:
+    def show_final_test_tables(self, include_topdown: Optional[bool] = None) -> None:
+        include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
         metric_rows_base = [
             ("fpa_independent", "FPA independent"),
             ("fpa_topdown", "FPA top-down"),
@@ -1706,6 +1750,8 @@ class ModelComparisonAnalysis:
                 for metric_map in _iter_test_metric_maps(run_data)
                 for key in metric_map.keys()
                 if (
+                    _include_topdown_metric(key, include_topdown)
+                    and
                     (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                     and key.rsplit("_", 1)[-1].isdigit()
                 )
@@ -1719,17 +1765,23 @@ class ModelComparisonAnalysis:
                         for event in run_data["epoch_events"]
                         for key in event.get("val_metrics_norm", {}).keys()
                         if (
+                            _include_topdown_metric(key, include_topdown)
+                            and
                             (key.startswith("acc_level_topdown_") or key.startswith("acc_level_independent_"))
                             and key.rsplit("_", 1)[-1].isdigit()
                         )
                     }
                 )
 
-            metric_rows = list(metric_rows_base)
+            metric_rows = [
+                row for row in metric_rows_base
+                if _include_topdown_metric(row[0], include_topdown)
+            ]
             for level_idx in all_level_ids:
                 level_label = get_level_label(level_idx, base)
                 metric_rows.append((f"acc_level_independent_{level_idx}", f"Acc independent {level_label} (L{level_idx})"))
-                metric_rows.append((f"acc_level_topdown_{level_idx}", f"Acc top-down {level_label} (L{level_idx})"))
+                if include_topdown:
+                    metric_rows.append((f"acc_level_topdown_{level_idx}", f"Acc top-down {level_label} (L{level_idx})"))
 
             values_by_metric: Dict[str, List[float]] = {}
             best_by_metric: Dict[str, set[int]] = {}
@@ -1762,7 +1814,10 @@ class ModelComparisonAnalysis:
                         return f"{mean:.1f} ± {std:.1f}"
                     return f"{mean:.0f}"
 
-                best_epoch_cells.append(f"{epoch_text(td_section)}/{epoch_text(ind_section)}")
+                if include_topdown:
+                    best_epoch_cells.append(f"{epoch_text(td_section)}/{epoch_text(ind_section)}")
+                else:
+                    best_epoch_cells.append(epoch_text(ind_section or td_section))
 
             header_labels = ["Metric"] + [
                 f"{run_data['model_label']} (n={run_data.get('num_seeds', 1)})"
@@ -1774,7 +1829,8 @@ class ModelComparisonAnalysis:
                 "",
                 "| " + " | ".join(header_labels) + " |",
                 "|---|" + "|".join(["---:"] * (len(header_labels) - 1)) + "|",
-                "| Best epoch (TD/Ind) | " + " | ".join(best_epoch_cells) + " |",
+                f"| Best epoch ({'TD/Ind' if include_topdown else 'Ind'}) | "
+                + " | ".join(best_epoch_cells) + " |",
             ]
 
             for metric_key, metric_name in metric_rows:
@@ -1836,15 +1892,25 @@ class ModelComparisonAnalysis:
                 best_ahd_ind = float(independent_metrics.get("ahd_independent", np.nan))
                 best_ahd_td = float(topdown_metrics.get("ahd_topdown", np.nan))
 
-                print(
+                summary = (
                     f"{run_data['model_label']}: "
-                    f"best_td={_fmt_epoch_score(best_topdown, _event_score(best_topdown, 'topdown') if best_topdown else None)}, "
                     f"best_ind={_fmt_epoch_score(best_independent, _event_score(best_independent, 'independent') if best_independent else None)}, "
-                    f"val FPA_ind={_pct_or_na(best_fpa_ind)}, val FPA_td={_pct_or_na(best_fpa_td)}, "
-                    f"val wAP_ind={_pct_or_na(best_wap_ind)}, val wAP_td={_pct_or_na(best_wap_td)}, "
-                    f"val TICE_ind={_pct_or_na(best_tice_ind)}, val TICE_td={_pct_or_na(best_tice_td)}, "
-                    f"val AHD_ind={_edges_or_na(best_ahd_ind)}, val AHD_td={_edges_or_na(best_ahd_td)}"
+                    f"val FPA_ind={_pct_or_na(best_fpa_ind)}, "
+                    f"val wAP_ind={_pct_or_na(best_wap_ind)}, "
+                    f"val TICE_ind={_pct_or_na(best_tice_ind)}, "
+                    f"val AHD_ind={_edges_or_na(best_ahd_ind)}"
                 )
+                if self.config.include_topdown_metrics:
+                    summary = (
+                        f"{run_data['model_label']}: "
+                        f"best_td={_fmt_epoch_score(best_topdown, _event_score(best_topdown, 'topdown') if best_topdown else None)}, "
+                        f"best_ind={_fmt_epoch_score(best_independent, _event_score(best_independent, 'independent') if best_independent else None)}, "
+                        f"val FPA_ind={_pct_or_na(best_fpa_ind)}, val FPA_td={_pct_or_na(best_fpa_td)}, "
+                        f"val wAP_ind={_pct_or_na(best_wap_ind)}, val wAP_td={_pct_or_na(best_wap_td)}, "
+                        f"val TICE_ind={_pct_or_na(best_tice_ind)}, val TICE_td={_pct_or_na(best_tice_td)}, "
+                        f"val AHD_ind={_edges_or_na(best_ahd_ind)}, val AHD_td={_edges_or_na(best_ahd_td)}"
+                    )
+                print(summary)
 
             if len(dataset_runs) < 2:
                 continue
@@ -1884,14 +1950,23 @@ class ModelComparisonAnalysis:
                     float(_test_metrics_for_mode(base, "topdown").get("ahd_topdown", np.nan)),
                 )
 
-                print(
+                delta_summary = (
                     f"Test delta ({comp['model_label']} - {base['model_label']}): "
                     f"FPA_ind={_fmt_delta_pp(fpa_ind_delta)}, "
-                    f"FPA_td={_fmt_delta_pp(fpa_td_delta)}, "
                     f"wAP_ind={_fmt_delta_pp(wap_ind_delta)}, "
-                    f"wAP_td={_fmt_delta_pp(wap_td_delta)}, "
                     f"TICE_ind={_fmt_delta_pp(tice_ind_delta)}, "
-                    f"TICE_td={_fmt_delta_pp(tice_td_delta)}, "
-                    f"AHD_ind={_fmt_delta_edges(ahd_ind_delta)}, "
-                    f"AHD_td={_fmt_delta_edges(ahd_td_delta)}"
+                    f"AHD_ind={_fmt_delta_edges(ahd_ind_delta)}"
                 )
+                if self.config.include_topdown_metrics:
+                    delta_summary = (
+                        f"Test delta ({comp['model_label']} - {base['model_label']}): "
+                        f"FPA_ind={_fmt_delta_pp(fpa_ind_delta)}, "
+                        f"FPA_td={_fmt_delta_pp(fpa_td_delta)}, "
+                        f"wAP_ind={_fmt_delta_pp(wap_ind_delta)}, "
+                        f"wAP_td={_fmt_delta_pp(wap_td_delta)}, "
+                        f"TICE_ind={_fmt_delta_pp(tice_ind_delta)}, "
+                        f"TICE_td={_fmt_delta_pp(tice_td_delta)}, "
+                        f"AHD_ind={_fmt_delta_edges(ahd_ind_delta)}, "
+                        f"AHD_td={_fmt_delta_edges(ahd_td_delta)}"
+                    )
+                print(delta_summary)
