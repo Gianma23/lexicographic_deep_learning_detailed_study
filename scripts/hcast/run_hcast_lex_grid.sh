@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs H-CAST lexicographic variants on all datasets:
-# - hcast_lex (start epoch 0)
-# - hcast_lex starting from epoch 80
-# for: cifar100, cub200, aircraft.
+# Runs the selected H-CAST lexicographic matrix. Defaults are the currently
+# active cub200/aircraft, start-at-0 study. Override with whitespace-separated
+# DATASETS and START_EPOCHS (allowed epochs: 0 and 80).
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -45,7 +45,8 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_lex_grid.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cub200 aircraft)
+parse_choice_list DATASETS "cub200 aircraft" DATASETS cifar100 cub200 aircraft
+parse_choice_list START_EPOCHS "0" START_EPOCHS 0 80
 
 lex_config_for_dataset() {
   case "$1" in
@@ -123,6 +124,8 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
+printf 'Lex start epochs: %s\n' "${START_EPOCHS[*]}"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -131,11 +134,12 @@ print_seed_run_settings
 for ds in "${DATASETS[@]}"; do
   lex_cfg="$(lex_config_for_dataset "$ds")"
 
-  # hcast_lex (epoch 0)
-  run_seeded_train "$lex_cfg" "$(run_output_dir "$ds" e0)" \
-    "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=0" \
-    "model.loss.globalkl=false"
+  for start_epoch in "${START_EPOCHS[@]}"; do
+    run_seeded_train "$lex_cfg" "$(run_output_dir "$ds" "e${start_epoch}")" \
+      "train.lexicographic.enabled=true" \
+      "train.lexicographic.start_epoch=$start_epoch" \
+      "model.loss.globalkl=false"
+  done
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

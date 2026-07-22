@@ -30,7 +30,7 @@ dataset:
   levels: [coarse1, coarse2, fine]
   download: true
   val_split_ratio: 0.1
-  split_seed: null
+  split_seed: 0
   transforms:
     use_timm: true
     normalization: torchvision
@@ -55,11 +55,6 @@ dataset:
     mixup_prob: 1.0
     mixup_switch_prob: 0.5
     mixup_mode: batch
-
-  annotations:
-    train: train.json
-    val: val.json
-    test: test.json
 
 dataloader:
   batch_size: 256
@@ -104,3 +99,4 @@ scheduler:
 
 runtime:
   deterministic: true
+  protocol: corrected_unified_v1

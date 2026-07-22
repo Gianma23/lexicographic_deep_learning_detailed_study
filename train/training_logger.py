@@ -19,6 +19,18 @@ def _as_float_dict(metrics: Mapping[str, Any]) -> Dict[str, float]:
     return converted
 
 
+def _as_selection_key_dict(keys: Mapping[str, Any]) -> Dict[str, List[float]]:
+    converted: Dict[str, List[float]] = {}
+    for mode, value in keys.items():
+        if not isinstance(value, (list, tuple)) or len(value) != 3:
+            continue
+        try:
+            converted[str(mode)] = [float(component) for component in value]
+        except (TypeError, ValueError):
+            continue
+    return converted
+
+
 def _required_loss_keys(outputs: Mapping[str, Any]) -> Set[str]:
     if LOSS_KEYS_HINT_FIELD not in outputs:
         raise KeyError(f"Missing required '{LOSS_KEYS_HINT_FIELD}' in outputs.")
@@ -72,6 +84,8 @@ class TrainingLogger:
         epoch: int,
         lr: float,
         best_metrics: Mapping[str, Any],
+        best_selection_keys: Mapping[str, Any],
+        candidate_selection: Mapping[str, Any],
         train_outputs: Mapping[str, Any],
         val_outputs: Mapping[str, Any],
     ) -> Dict[str, Any]:
@@ -83,6 +97,8 @@ class TrainingLogger:
             "epoch": int(epoch),
             "lr": float(lr),
             "best_metrics": best_metrics_float,
+            "best_selection_keys": _as_selection_key_dict(best_selection_keys),
+            "candidate_selection": dict(candidate_selection),
             "train_losses": train_losses,
             "train_metrics": train_metrics,
             "val_losses": val_losses,
@@ -99,6 +115,13 @@ class TrainingLogger:
                 "best_checkpoint": str(result.get("best_checkpoint", "")),
                 "best_epoch": int(result.get("best_epoch", -1)),
                 "best_metric": float(result.get("best_metric", float("nan"))),
+                "best_selection_key": [
+                    float(component)
+                    for component in result.get(
+                        "best_selection_key",
+                        [float("nan"), float("nan"), float("nan")],
+                    )
+                ],
                 "test_metrics": _as_float_dict(result.get("test_metrics", {})),
             }
 

@@ -3,6 +3,30 @@ from typing import Any, Dict, List, Optional
 from .model import HTCapsNet
 
 
+def _validate_complete_taxonomy(
+    taxonomy: Optional[Dict],
+    num_classes_per_level: List[int],
+) -> None:
+    if not isinstance(taxonomy, dict):
+        raise ValueError("HT-CapsNet requires a complete taxonomy with `parent_of` mappings.")
+    parent_of = taxonomy.get("parent_of")
+    if not isinstance(parent_of, dict):
+        raise ValueError("HT-CapsNet taxonomy must contain a `parent_of` mapping.")
+    for level in range(1, len(num_classes_per_level)):
+        mapping = parent_of.get(level, parent_of.get(str(level)))
+        if not isinstance(mapping, dict):
+            raise ValueError(f"HT-CapsNet taxonomy is missing transition level {level}.")
+        expected_children = set(range(int(num_classes_per_level[level])))
+        observed_children = {int(child) for child in mapping}
+        if observed_children != expected_children:
+            raise ValueError(
+                f"HT-CapsNet taxonomy level {level} must map every child exactly once."
+            )
+        parent_count = int(num_classes_per_level[level - 1])
+        if any(int(parent) < 0 or int(parent) >= parent_count for parent in mapping.values()):
+            raise ValueError(f"HT-CapsNet taxonomy level {level} contains invalid parent ids.")
+
+
 def _resolve_secondary_dims(cfg: Any, num_classes_per_level: List[int], primary_dim: int) -> List[int]:
     sec_dims_cfg = cfg.model.get("secondary_dims")
     if sec_dims_cfg is None:
@@ -39,6 +63,7 @@ def _assert_reproducibility_cfg(cfg: Any) -> None:
 def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[Dict] = None):
     """Build an `HTCapsNet` instance from the project config object."""
     _assert_reproducibility_cfg(cfg)
+    _validate_complete_taxonomy(taxonomy, num_classes_per_level)
 
     primary_dim = int(cfg.model.get("caps_dim", 16))
     secondary_dims = _resolve_secondary_dims(cfg, num_classes_per_level, primary_dim)

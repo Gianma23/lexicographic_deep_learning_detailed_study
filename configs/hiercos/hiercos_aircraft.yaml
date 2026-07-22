@@ -1,6 +1,6 @@
 model:
   name: hiercos
-  loss: global_softmax_ce_reg
+  loss: kl_reg
   weight_mode: kl_leaf
   variant: haframe_resnet50
   pool: average
@@ -72,3 +72,4 @@ scheduler:
 
 runtime:
   deterministic: true
+  protocol: corrected_unified_v1

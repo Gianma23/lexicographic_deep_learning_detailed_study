@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the Hier-COS transformation-layer ablation on all datasets:
+# Runs the selected Hier-COS transformation-layer ablation matrix:
 # - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
@@ -10,16 +10,17 @@ set -euo pipefail
 # - train.lexicographic.start_epoch=0
 # - train.lexicographic.projection_mode=coarse_first
 # - train.lexicographic.projection_rule=orthogonalize_all
-# - model.transform_mode in {bn_linear, final_only}
+# - model.transform_mode selected by TRANSFORM_MODES
 # The matching full-transform reference is produced by
 # scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh.
-# for: cifar100, cub200, aircraft, inat19.
+# Defaults: cub200/aircraft/cifar100 with final_only.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -66,6 +67,7 @@ case "$FIXED_FRAME_PER_LEVEL" in
     exit 1
     ;;
 esac
+normalize_bool_like "$FIXED_FRAME_PER_LEVEL" FIXED_FRAME_PER_LEVEL_OVERRIDE
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -96,8 +98,10 @@ trap handle_exit EXIT
 #     ./scripts/hiercos/run_hiercos_transform_ablation.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cub200 aircraft cifar100)
-TRANSFORM_MODES=(final_only)
+parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
+  cifar100 cub200 aircraft inat19
+parse_choice_list TRANSFORM_MODES "final_only" TRANSFORM_MODES \
+  full bn_linear final_only
 
 config_for_dataset() {
   case "$1" in
@@ -180,6 +184,8 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
+printf 'Transform modes: %s\n' "${TRANSFORM_MODES[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
@@ -200,7 +206,7 @@ for ds in "${DATASETS[@]}"; do
       "model.weight_mode=$WEIGHT_MODE" \
       "model.transform_mode=$transform_mode" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
-      "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL" \
+      "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
       "train.lexicographic.enabled=true" \
       "train.lexicographic.start_epoch=0" \
       "train.lexicographic.projection_mode=coarse_first" \

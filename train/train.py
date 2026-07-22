@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 import torch
 
-from datasets import build_dataloader
+from datasets import build_dataloaders
 from models import build_model
 from .config_loader import load_config
 from .engine import evaluate, train_one_epoch
@@ -12,7 +12,13 @@ from .metric_formatting import pretty_metrics
 from .runtime.checkpointing import resume_if_available, save_checkpoint
 from .runtime.finetune import load_finetune_checkpoint, load_trusted_checkpoint
 from .runtime.optimization import build_optimizer, build_scheduler, seed_everything
-from .runtime.selection import BEST_SELECTION_MODES, metric_for_best
+from .runtime.selection import (
+    BEST_SELECTION_MODES,
+    is_better,
+    normalize_selection_key,
+    selection_components,
+    selection_key,
+)
 from .training_logger import TrainingLogger
 
 
@@ -82,14 +88,12 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
 
     device = torch.device(str(cfg.train.get("device", "cuda" if torch.cuda.is_available() else "cpu")))
 
-    train_loader, num_classes_per_level, taxonomy = build_dataloader(cfg, split="train")
-    val_loader, _, _ = build_dataloader(cfg, split="val")
-    test_loader, _, _ = build_dataloader(cfg, split="test")
-    loaders_by_split = {
-        "train": train_loader,
-        "val": val_loader,
-        "test": test_loader,
-    }
+    loaders_by_split, dataset_metadata = build_dataloaders(cfg)
+    train_loader = loaders_by_split["train"]
+    val_loader = loaders_by_split["val"]
+    test_loader = loaders_by_split["test"]
+    num_classes_per_level = dataset_metadata.num_classes_per_level
+    taxonomy = dataset_metadata.taxonomy
     _print_loader_sizes(train_loader, val_loader, test_loader)
 
     model = build_model(cfg, num_classes_per_level, taxonomy)
@@ -108,7 +112,7 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
     best_ckpts = {mode: out_dir / f"best_{mode}.pt" for mode in BEST_SELECTION_MODES}
 
     level_names = [str(name) for name in cfg.dataset.get("levels", [])]
-    start_epoch, best_metrics, resume_info = resume_if_available(
+    start_epoch, best_metrics, best_selection_keys, resume_info = resume_if_available(
         str(cfg.train.get("resume", "")),
         model,
         optimizer,
@@ -171,14 +175,26 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
             include_losses=True,
         )
 
-        scores = {mode: metric_for_best(val_outputs, mode=mode) for mode in BEST_SELECTION_MODES}
+        candidate_selection = {
+            mode: selection_components(val_outputs, mode=mode)
+            for mode in BEST_SELECTION_MODES
+        }
+        candidate_keys = {
+            mode: selection_key(val_outputs, mode=mode)
+            for mode in BEST_SELECTION_MODES
+        }
+        primary_scores = {
+            mode: float(candidate_keys[mode][0])
+            for mode in BEST_SELECTION_MODES
+        }
         if scheduler is not None:
-            scheduler.step(epoch + 1, scores["topdown"])
+            scheduler.step(epoch + 1, primary_scores["topdown"])
 
         improved_modes = []
-        for mode, score in scores.items():
-            if score > best_metrics[mode]:
-                best_metrics[mode] = score
+        for mode, candidate_key in candidate_keys.items():
+            if is_better(candidate_key, best_selection_keys[mode]):
+                best_selection_keys[mode] = candidate_key
+                best_metrics[mode] = primary_scores[mode]
                 improved_modes.append(mode)
 
         # Keep the best checkpoint for each validation-ranking mode.
@@ -193,6 +209,7 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
                 best_metrics,
                 cfg_resolved,
                 loaders=loaders_by_split,
+                best_selection_keys=best_selection_keys,
             )
 
         # Always refresh latest checkpoint for resumable training.
@@ -206,12 +223,15 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
             best_metrics,
             cfg_resolved,
             loaders=loaders_by_split,
+            best_selection_keys=best_selection_keys,
         )
 
         logger.log_epoch(
             epoch=epoch + 1,
             lr=float(optimizer.param_groups[0]["lr"]) if optimizer.param_groups else float("nan"),
             best_metrics=best_metrics,
+            best_selection_keys=best_selection_keys,
+            candidate_selection=candidate_selection,
             train_outputs=train_outputs,
             val_outputs=val_outputs,
         )
@@ -238,6 +258,11 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
             checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))
             checkpoint_best_metrics = checkpoint["best_metrics"]
             best_metric = float(checkpoint_best_metrics[mode])
+            checkpoint_selection = checkpoint.get("best_selection_keys", {})
+            best_selection_key = normalize_selection_key(
+                checkpoint_selection.get(mode) if isinstance(checkpoint_selection, dict) else None,
+                legacy_primary=best_metric,
+            )
 
             print(f"[test:{mode}] loaded best checkpoint from: {best_ckpt} (epoch {checkpoint_epoch + 1})")
             test_metrics = evaluate(model, test_loader, device, cfg, epoch=checkpoint_epoch, taxonomy=taxonomy)
@@ -246,6 +271,7 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
                 "best_checkpoint": str(best_ckpt),
                 "best_epoch": checkpoint_epoch + 1,
                 "best_metric": best_metric,
+                "best_selection_key": list(best_selection_key),
                 "test_metrics": test_metrics,
             }
     finally:

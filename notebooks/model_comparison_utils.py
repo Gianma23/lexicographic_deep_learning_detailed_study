@@ -18,6 +18,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from dotenv import load_dotenv
+from train.runtime.selection import SelectionKey, selection_key
+
 try:
     from notebooks.multiseed_utils import (
         aggregate_parsed_seed_runs,
@@ -361,7 +363,13 @@ def _normalize_best_metrics(raw: Any) -> Dict[str, float]:
 
 
 def _normalize_single_test_result(section: Mapping[str, Any]) -> Dict[str, Any]:
-    metadata_keys = {"best_checkpoint", "best_epoch", "best_metric", "test_metrics"}
+    metadata_keys = {
+        "best_checkpoint",
+        "best_epoch",
+        "best_metric",
+        "best_selection_key",
+        "test_metrics",
+    }
     test_metrics = normalize_metrics(section.get("test_metrics", {}))
     if not test_metrics:
         metric_like = {key: value for key, value in section.items() if key not in metadata_keys}
@@ -373,6 +381,7 @@ def _normalize_single_test_result(section: Mapping[str, Any]) -> Dict[str, Any]:
         "best_checkpoint": str(section.get("best_checkpoint", "")),
         "best_epoch": best_epoch,
         "best_metric": best_metric,
+        "best_selection_key": section.get("best_selection_key"),
         "test_metrics": test_metrics,
     }
 
@@ -400,39 +409,18 @@ def _normalize_test_results(raw: Any) -> Dict[str, Dict[str, Any]]:
     return results
 
 
-def metric_for_best(metrics: Mapping[str, float], mode: str = "topdown") -> float:
+def selection_key_for_best(
+    metrics: Mapping[str, float],
+    mode: str = "topdown",
+) -> SelectionKey:
+    """Use the training runtime's exact checkpoint ordering in analysis."""
     m = normalize_metrics(metrics)
+    return selection_key(m, mode)
 
-    if mode not in BEST_SELECTION_MODES:
-        raise ValueError(f"Unknown selection mode '{mode}'. Expected one of {BEST_SELECTION_MODES}.")
 
-    fpa_key = f"fpa_{mode}"
-    tice_key = f"tice_{mode}"
-    wap_key = f"weighted_ap_{mode}"
-    has_fpa = fpa_key in m
-    has_tice = tice_key in m
-    has_wap = wap_key in m
-
-    if has_fpa or has_tice or has_wap:
-        fpa = float(m.get(fpa_key, 0.0))
-        neg_tice = -float(m.get(tice_key, 1.0))
-        wap = float(m.get(wap_key, 0.0))
-        return float(fpa + 1e-3 * neg_tice + 1e-6 * wap)
-
-    prefix = f"acc_level_{mode}_"
-    mode_keys = [
-        key
-        for key in m
-        if key.startswith(prefix) and key.rsplit("_", 1)[-1].isdigit()
-    ]
-
-    if not mode_keys:
-        return float(m.get(fpa_key, 0.0))
-
-    deepest_key = max(mode_keys, key=lambda key: int(key.rsplit("_", 1)[-1]))
-    primary = float(m.get(deepest_key, 0.0))
-    tie = float(m.get(fpa_key, 0.0))
-    return float(primary + 1e-3 * tie)
+def metric_for_best(metrics: Mapping[str, float], mode: str = "topdown") -> float:
+    """Return only the primary component for legacy notebook displays."""
+    return float(selection_key_for_best(metrics, mode)[0])
 
 
 def _find_epoch_event(epoch_events: Sequence[Mapping[str, Any]], epoch: Optional[int]) -> Optional[Mapping[str, Any]]:
@@ -496,11 +484,15 @@ def _best_epoch_events_by_mode(
                 continue
 
         finite_pairs = [
-            (idx, _coerce_float(event.get("rank_scores", {}).get(mode)))
+            (idx, event.get("rank_keys", {}).get(mode))
             for idx, event in enumerate(epoch_events)
-            if isinstance(event.get("rank_scores", {}), MappingABC)
+            if isinstance(event.get("rank_keys", {}), MappingABC)
         ]
-        finite_pairs = [(idx, value) for idx, value in finite_pairs if value is not None]
+        finite_pairs = [
+            (idx, tuple(float(component) for component in value))
+            for idx, value in finite_pairs
+            if isinstance(value, (list, tuple)) and len(value) == 3
+        ]
         if finite_pairs:
             best_idx = max(finite_pairs, key=lambda item: item[1])[0]
             out[mode] = epoch_events[best_idx]
@@ -562,12 +554,10 @@ def _test_metrics_for_mode(run_data: Mapping[str, Any], mode: str) -> Mapping[st
             metrics = section["test_metrics"]
             if metrics:
                 return metrics
-
-        section = test_results.get("topdown")
-        if isinstance(section, MappingABC) and isinstance(section.get("test_metrics"), MappingABC):
-            metrics = section["test_metrics"]
-            if metrics:
-                return metrics
+        if test_results:
+            # Structured results are checkpoint-specific. Never substitute a
+            # different decoding mode when the requested one is absent.
+            return {}
 
     test_metrics = run_data.get("test_metrics", {})
     if isinstance(test_metrics, MappingABC):
@@ -608,8 +598,12 @@ def _parse_single_run(run_dir: Path) -> RunData:
     for event in epoch_events:
         event["train_metrics_norm"] = normalize_metrics(event.get("train_metrics", {}))
         event["val_metrics_norm"] = normalize_metrics(event.get("val_metrics", {}))
+        event["rank_keys"] = {
+            mode: selection_key_for_best(event["val_metrics_norm"], mode=mode)
+            for mode in BEST_SELECTION_MODES
+        }
         event["rank_scores"] = {
-            mode: metric_for_best(event["val_metrics_norm"], mode=mode)
+            mode: float(event["rank_keys"][mode][0])
             for mode in BEST_SELECTION_MODES
         }
         event["rank_score"] = event["rank_scores"]["topdown"]

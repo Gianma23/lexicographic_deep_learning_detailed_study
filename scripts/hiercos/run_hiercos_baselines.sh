@@ -7,13 +7,14 @@ set -euo pipefail
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.transform_mode=full
 # - train.lexicographic.enabled=false
-# for: cifar100, cub200, aircraft, inat19.
+# Default dataset: aircraft. Override DATASETS to select any supported subset.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -155,6 +156,7 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"

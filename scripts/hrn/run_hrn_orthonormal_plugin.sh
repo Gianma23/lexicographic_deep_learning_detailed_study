@@ -7,13 +7,14 @@ set -euo pipefail
 # - orthonormal_plugin.weight_mode=equal
 # - hard targets: MixUp/CutMix disabled and smoothing set to 0
 # - output dirs: hrn_<dataset>_orthonormal_plugin_<loss>_baseline_<weight>
-# for: cifar100, cub200, aircraft.
+# Defaults: cub200 and aircraft. Set DATASETS to opt into CIFAR-100.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -76,6 +77,7 @@ case "$PLUGIN_FIXED_FRAME_PER_LEVEL" in
     exit 1
     ;;
 esac
+normalize_bool_like "$PLUGIN_FIXED_FRAME_PER_LEVEL" PLUGIN_FIXED_FRAME_PER_LEVEL_OVERRIDE
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -99,7 +101,7 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-DATASETS=(cub200 aircraft)
+parse_choice_list DATASETS "cub200 aircraft" DATASETS cifar100 cub200 aircraft
 
 config_for_dataset() {
   case "$1" in
@@ -195,7 +197,7 @@ plugin_overrides=(
   "orthonormal_plugin.weight_mode=$WEIGHT_MODE"
   "orthonormal_plugin.transform_mode=$PLUGIN_TRANSFORM_MODE"
   "orthonormal_plugin.fixed_frame_mode=$PLUGIN_FIXED_FRAME_MODE"
-  "orthonormal_plugin.fixed_frame_per_level=$PLUGIN_FIXED_FRAME_PER_LEVEL"
+  "orthonormal_plugin.fixed_frame_per_level=$PLUGIN_FIXED_FRAME_PER_LEVEL_OVERRIDE"
   "orthonormal_plugin.transform_lr_scale=$PLUGIN_TRANSFORM_LR_SCALE"
 )
 
@@ -216,6 +218,7 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Plugin loss: %s\n' "$LOSS_MODE"
 printf 'Plugin weight mode: %s\n' "$WEIGHT_MODE"
 if [[ -n "$PLUGIN_ALPHA" ]]; then

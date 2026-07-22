@@ -1,206 +1,240 @@
-# Repository Map
+# Repository map
 
-This document is a concise map of the tracked repository files. It describes what each area is responsible for today and is intended to stay aligned with the current code, not to duplicate every internal method.
+This document maps the current tracked source tree. Generated experiment
+outputs and external datasets are not part of the repository.
 
 ## Root
 
-- `.env.example`: Versioned template for machine-local dataset paths, output storage, device, and launcher defaults; copy it to the ignored `.env`.
-- `README.md`: Project overview, setup, usage, datasets, metrics, and outputs.
-- `requirements.txt`: Python dependencies other than the user-installed `torch` and `torchvision`.
-- `TODO.md`: Local project notes.
+- `.env.example` — machine-local dataset roots, output root, device, and
+  launcher defaults.
+- `README.md` — setup, protocol, presets, datasets, metrics, launchers, and
+  verification.
+- `requirements.txt` — Python dependencies other than machine-specific
+  PyTorch and torchvision builds.
+- `AGENTS.md` — repository research, safety, coding, and reporting rules.
 
-## Environment Loading
+There is no tracked `TODO.md`.
 
-- `python-dotenv`: Loads the ignored root `.env` for Python entrypoints; existing process variables take precedence.
-- `scripts/load_env.sh`: Equivalent shared loader sourced by shell experiment runners.
-- `scripts/run_seed_utils.sh`: Shared run-count validation, consecutive seed generation, and nested output-directory helpers.
-- `scripts/migrate_single_seed_outputs.py`: Dry-run-first utility that wraps direct historical run artifacts in `seed_<train.seed>/`.
+## Configuration
 
-## Configs
+Runnable experiments:
 
-All experiment configs follow the same top-level sections: `model`, `dataset`, `dataloader`, `train`, `optim`, `scheduler`, and `runtime`.
-Dataset, output, and device fields resolve from the repository `.env` through OmegaConf environment interpolation.
+- `configs/hcast/` — four base H-CAST presets, three HCC presets, and three
+  explicit lexicographic presets.
+- `configs/lhdnn/` — CIFAR-100 plus CUB/Aircraft extrapolation presets.
+- `configs/capsnet/` — HT-CapsNet presets for CIFAR-100, CUB, and Aircraft.
+- `configs/hrn/` — HRN presets for CIFAR-100, CUB, and Aircraft.
+- `configs/hiercos/` — Hier-COS presets for CIFAR-100, CUB, Aircraft, and
+  iNat19.
 
-### H-CAST presets
+All runnable configs contain the standard sections `model`, `dataset`,
+`dataloader`, `train`, `optim`, `scheduler`, and `runtime`, and are tagged
+`runtime.protocol: corrected_unified_v1`.
 
-- `configs/hcast/hcast_cifar100.yaml`: Base H-CAST on CIFAR-100.
-- `configs/hcast/hcast_cub200.yaml`: Base H-CAST on CUB-200-2011.
-- `configs/hcast/hcast_aircraft.yaml`: Base H-CAST on FGVC-Aircraft.
-- `configs/hcast/hcast_inat19.yaml`: Base H-CAST on iNaturalist 2019 with a 3-level family/genus/species projection.
-- `configs/hcast/hcast_hcc_cifar100.yaml`: H-CAST with the hard hierarchy projection block on CIFAR-100.
-- `configs/hcast/hcast_hcc_cub200.yaml`: Same HCC variant on CUB.
-- `configs/hcast/hcast_hcc_aircraft.yaml`: Same HCC variant on Aircraft.
+Commented schema fragments:
 
-### LH-DNN presets
+- `configs/templates/dataset_template.yaml`
+- `configs/templates/hcast_template.yaml` — includes the optional top-level
+  HCC block.
+- `configs/templates/ht_capsnet_template.yaml`
+- `configs/templates/hrn_template.yaml`
+- `configs/templates/hiercos_template.yaml`
+- `configs/templates/orthonormal_plugin_template.yaml`
+- `configs/templates/training_template.yaml`
 
-- `configs/lhdnn/lhdnn_cifar100.yaml`
-- `configs/lhdnn/lhdnn_cub200.yaml`
-- `configs/lhdnn/lhdnn_aircraft.yaml`
-
-These are paper-aligned LH-DNN presets for the supported datasets.
-
-### HT-CapsNet presets
-
-- `configs/capsnet/capsnet_cifar100.yaml`
-- `configs/capsnet/capsnet_cub200.yaml`
-- `configs/capsnet/capsnet_aircraft.yaml`
-
-These presets configure the PyTorch HT-CapsNet port and its routing/loss parameters.
-
-### HRN presets
-
-- `configs/hrn/hrn_cifar100_parity.yaml`
-- `configs/hrn/hrn_cub200_parity.yaml`
-- `configs/hrn/hrn_aircraft_parity.yaml`
-
-The HRN family supports exactly three hierarchy levels.
-The CUB-200 and Aircraft presets mirror upstream HRN preprocessing and optimization: ImageNet-pretrained ResNet-50, 448 crops after 550x550 resize, `[0.5, 0.5, 0.5]` normalization, cosine LR, and a 0.1x LR group for the ResNet trunk. The CIFAR-100 preset is a local extrapolation because upstream HRN does not include CIFAR-100.
-
-### Hier-COS presets
-
-- `configs/hiercos/hiercos_cifar100.yaml`
-- `configs/hiercos/hiercos_cub200.yaml`
-- `configs/hiercos/hiercos_aircraft.yaml`
-- `configs/hiercos/hiercos_inat19.yaml`
-
-These presets use the single Hier-COS implementation with a fixed orthonormal frame, taxonomy-driven subspace scores, configurable `model.loss` (`kl_reg` default, global-softmax `global_softmax_ce_reg`, or level-softmax `level_softmax_ce_reg`), shared CE weighting through `model.weight_mode` in non-lex and lex modes, and paper-style SGD/cosine settings for CIFAR-100, Aircraft, and iNat19, plus a pragmatic CUB extrapolation. CIFAR keeps this repo hierarchy format (not the paper 5-level protocol), and iNat19 uses the local 3-level family/genus/species projection rather than the upstream 7-level taxonomy. The iNat19 preset defaults to the upstream-aligned `kl_reg`/`kl_leaf` objective and low-LR transform/backbone groups; runner scripts override the loss mode for local lex-ready CE studies. CIFAR uses HAFrame WideResNet from scratch; Aircraft, CUB, and iNat19 use an ImageNet-pretrained ResNet-50.
-
-### Templates
-
-- `configs/templates/dataset_template.yaml`: Commented template for dataset and transform settings.
-- `configs/templates/hcast_template.yaml`: Commented template for H-CAST-specific model options.
-- `configs/templates/hcc_template.yaml`: Standalone optional HCC projection block template.
-- `configs/templates/ht_capsnet_template.yaml`: Commented template for HT-CapsNet-specific model options.
-- `configs/templates/hrn_template.yaml`: Commented template for HRN-specific model options.
-- `configs/templates/hiercos_template.yaml`: Commented template for Hier-COS-specific model options.
-- `configs/templates/orthonormal_plugin_template.yaml`: Optional post-logit orthonormal taxonomy-frame plugin shared by Hier-COS-style losses and non-Hier-COS model adapters.
-- `configs/templates/training_template.yaml`: Shared template for train/optim/scheduler/runtime sections.
+Templates are validated schema fragments, not standalone runnable configs.
+There is no separate `hcc_template.yaml`.
 
 ## Datasets
 
-- `datasets/__init__.py`: Strict dataset-id registry (`cifar-100`, `cub-200-2011`, `fgvc-aircraft`, `inat19`), transforms, collate function, and dataloader builder (including optional `crop_bottom_pixels` transform and `drop_last_eval` dataloader flag).
-- `datasets/base.py`: Shared hierarchical dataset base class, train/val splitting, normalized JSON annotations, label remapping, and taxonomy inference.
-- `datasets/cifar100.py`: CIFAR-100 adapter. Derives the official 20-coarse-to-100-fine edge used by B-CNN from the downloaded Python archive and supports 2-level `coarse -> fine` and 3-level `super -> coarse -> fine` hierarchies; B-CNN's manual 8-to-20 edge is retained explicitly because CIFAR-100 does not provide it.
-- `datasets/cub.py`: CUB-200-2011 adapter for folder-based and official metadata layouts.
-- `datasets/cub_tree.py`: External H-CAST order/family/species mapping retained because the official CUB-200-2011 download provides species labels but no order/family taxonomy.
-- `datasets/aircraft.py`: FGVC-Aircraft adapter that derives the complete manufacturer/family/variant taxonomy from the official class lists and parallel per-image annotations.
-- `datasets/inat.py`: iNaturalist 2019 adapter for official COCO-style JSON and JSON-in-tar annotations, using `family -> genus -> species` labels and repo-specific split fallback logic.
+- `datasets/__init__.py` — small stable public API for dataset contracts,
+  transforms, and loader builders.
+- `datasets/types.py` — `DatasetLabelSpace` and the non-duplicating
+  `DatasetMetadata` view.
+- `datasets/base.py` — compact PyTorch dataset lifecycle, image checks, and
+  normalized JSON annotation I/O.
+- `datasets/hierarchy.py` — pure canonical mapping, remapping, and taxonomy
+  validation operations.
+- `datasets/splitting.py` — deterministic stratified train/validation splits.
+- `datasets/transforms.py` — timm/manual training and evaluation transforms.
+- `datasets/loaders.py` — adapter registry, deterministic DataLoaders, and
+  shared train/validation/test construction.
+- `datasets/cifar100.py` — official CIFAR-100 fine/coarse ingestion and the
+  explicit B-CNN 8-to-20 parent edge.
+- `datasets/cub.py` — folder and official-file CUB ingestion.
+- `datasets/cub_tree.py` — retained H-CAST order/family/species taxonomy.
+- `datasets/aircraft.py` — official class lists and parallel
+  manufacturer/family/variant annotations with completeness checks.
+- `datasets/inat.py` — official COCO/JSON-in-tar and normalized explicit iNat19
+  manifests projected to family/genus/species.
+
+Validation and test datasets always reuse the training/authoritative label
+space. Explicit missing annotations and previously silent malformed rows are
+fatal errors.
 
 ## Models
 
-- `models/__init__.py`: Unified `build_model` and `compute_loss` dispatcher. Supported model ids are `hcast`, `lhdnn`, `ht_capsnet`, `hrn`, and `hiercos`.
+`models/__init__.py` is the unified model/loss dispatcher.
 
 ### H-CAST
 
-- `models/hcast/__init__.py`: Public H-CAST exports.
-- `models/hcast/factory.py`: Converts config sections into `HCASTModel` constructor arguments.
-- `models/hcast/model.py`: Main H-CAST wrapper around the vendored CAST backbone, segmentation, and optional HCC projection.
-- `models/hcast/losses.py`: H-CAST loss combining per-level task loss, optional global KL regularization, and HCC-aware probability handling.
-- `models/hcast/segments.py`: OpenCV SEEDS-based segment generation helpers.
-- `models/hcast/hard_hierarchy.py`: Hierarchical Constraint Cascade (HCC) affine projector used for hard hierarchy constraints.
-
-#### Vendored H-CAST internals
-
-- `models/hcast/internal/__init__.py`: Internal export surface.
-- `models/hcast/internal/cast_deit_hier.py`: CAST architecture and size variants.
-- `models/hcast/internal/graph_pool.py`: Graph pooling and attention blocks.
-- `models/hcast/internal/modules.py`: Shared low-level modules used by CAST.
-- `models/hcast/internal/utils.py`: Tensor and embedding helpers.
-
-These files are the closest local equivalents of the upstream CAST internals and are usually treated as vendored backbone code.
+- `models/hcast/factory.py` — config adapter.
+- `models/hcast/model.py` — unified H-CAST wrapper and HCC integration.
+- `models/hcast/losses.py` — per-level loss and optional global KL.
+- `models/hcast/segments.py` — grid/SEEDS segmentation.
+- `models/hcast/hard_hierarchy.py` — HCC affine hierarchy projection and
+  schedule.
+- `models/hcast/internal/` — vendored CAST/H-CAST backbone implementation.
 
 ### LH-DNN
 
-- `models/lhdnn/__init__.py`: Public LH-DNN exports.
-- `models/lhdnn/factory.py`: Builds the fixed-topology LH-DNN model from config.
-- `models/lhdnn/model.py`: Paper-aligned LH-DNN implementation with shared features, projection component, and taxonomy-aware advantage topology.
-- `models/lhdnn/losses.py`: LH-DNN per-level cross-entropy loss with optional soft-target support from mixup/cutmix.
+- `models/lhdnn/model.py` — paper-derived large topology, forward-pass
+  projection blocks, advantage topology, and explicit optional large-image
+  adaptive pooling.
+- `models/lhdnn/losses.py` — unweighted sum of level cross-entropies.
+- `models/lhdnn/factory.py` — config and taxonomy adapter.
 
 ### HT-CapsNet
 
-- `models/ht_capsnet/__init__.py`: Public HT-CapsNet exports.
-- `models/ht_capsnet/factory.py`: Validates config and builds the HT-CapsNet model.
-- `models/ht_capsnet/model.py`: PyTorch HT-CapsNet implementation with configurable backbone, routing levels, and cross-capsule attention.
-- `models/ht_capsnet/routing.py`: Routing primitives and taxonomy-guided routing helpers.
-- `models/ht_capsnet/losses.py`: Capsule margin loss and hierarchy-aware penalties.
+- `models/ht_capsnet/model.py` — PyTorch capsule architecture, backbones, and
+  cross-capsule attention.
+- `models/ht_capsnet/routing.py` — taxonomy-guided routing.
+- `models/ht_capsnet/losses.py` — capsule margin loss and dynamic/static level
+  weighting.
+- `models/ht_capsnet/factory.py` — deterministic and complete-taxonomy checks.
 
 ### HRN
 
-- `models/hrn/__init__.py`: Public HRN exports.
-- `models/hrn/factory.py`: Enforces the 3-level constraint and builds `HRNModel`.
-- `models/hrn/model.py`: ResNet-50 HRN implementation with upstream branch blocks, residual fusion, and low-LR trunk parameter groups.
-- `models/hrn/losses.py`: HRN combinatorial tree loss and fine-level cross-entropy objective, including upstream-style leaf-only CE handling.
+- `models/hrn/model.py` — ResNet-50 RFM trunk, three branches, residual
+  fusion, leaf logits, and optimizer parameter groups.
+- `models/hrn/losses.py` — upstream-style tree-state loss plus leaf CE.
+- `models/hrn/factory.py` — exact three-level guard.
 
-### Hier-COS
+### Hier-COS and the orthonormal plugin
 
-- `models/hiercos/__init__.py`: Public Hier-COS exports.
-- `models/hiercos/factory.py`: Builds `HierCosModel` from config and taxonomy metadata.
-- `models/hiercos/model.py`: Hier-COS model with taxonomy-driven node subspaces and an upstream-style fixed random orthonormal frame, now using shared orthonormal-plugin topology/transform helpers.
-- `models/hiercos/losses.py`: Compatibility export for the shared orthonormal-plugin loss.
+- `models/hiercos/model.py` — fixed-frame node-space model with WideResNet or
+  ResNet-50 backbone.
+- `models/hiercos/factory.py` — model/plugin config adapter.
+- `models/hiercos/losses.py` — compatibility export for shared fixed-frame
+  losses.
+- `models/orthonormal_plugin/topology.py` — taxonomy node ids, subspace masks,
+  and path targets.
+- `models/orthonormal_plugin/head.py` — fixed identity/random orthonormal
+  classifiers.
+- `models/orthonormal_plugin/transforms.py` — full, BN-linear, and final-only
+  transformations.
+- `models/orthonormal_plugin/losses.py` — `kl_reg`,
+  `global_softmax_ce_reg`, and `level_softmax_ce_reg`.
+- `models/orthonormal_plugin/wrapper.py` — optional adapter for non-Hier-COS
+  host models.
+- `models/orthonormal_plugin/config.py` — shared plugin config helpers.
 
-### Orthonormal plugin
+## Training and evaluation
 
-- `models/orthonormal_plugin/`: Shared post-logit taxonomy-frame topology, transform/fixed-frame head, wrapper, config helpers, and Hier-COS-style loss used by Hier-COS and optional non-Hier-COS adapters.
+- `train/train.py` — CLI and complete train/validation/test lifecycle.
+- `train/config_loader.py` — mandatory OmegaConf loading, environment
+  interpolation, dotlist overrides, and validation call.
+- `train/config_validation.py` — strict allowed-key schema, numeric checks,
+  and model/dataset/HCC/plugin/lex compatibility.
+- `train/engine.py` — training/evaluation loops, AMP, diagnostics, and
+  lexicographic switch.
+- `train/evaluation.py` — per-batch metric and HCC diagnostic assembly.
+- `train/metrics.py` — independent/top-down decoding, per-level accuracy,
+  weighted AP, FPA, AHD, TICE, and sample-weighted aggregation.
+- `train/mixup.py` — hierarchy-aware MixUp/CutMix target construction.
+- `train/metric_formatting.py` — concise console formatting.
+- `train/training_logger.py` — resolved config, JSONL epoch/resume events, and
+  final YAML test output.
 
-## Training
+Lexicographic modules:
 
-- `train/__init__.py`: Package marker for training utilities.
-- `train/train.py`: Main CLI entrypoint (`python -m train.train`) and run orchestration (loader/model/runtime setup, train loop, checkpoint selection, final test evaluation).
-- `train/config_loader.py`: YAML config loader with optional OmegaConf support and dotlist override handling.
-- `train/engine.py`: `train_one_epoch` and `evaluate` loops.
-- `train/evaluation.py`: Batch metric assembly.
-- `train/metric_formatting.py`: Console metric formatting (`pretty_metrics`).
-- `train/metrics.py`: Shared hierarchical metrics such as per-level accuracy, weighted AP, FPA, AHD, and TICE.
-- `train/mixup.py`: Mixup/CutMix helpers used by the unified training loop.
-- `train/training_logger.py`: Writes `config_resolved.yaml`, `run_log.jsonl`, and `test_metrics.yaml`.
-- `train/lexicographic/`: Lexicographic config/types, trunk-gradient diagnostics, and projection utilities.
-- `train/runtime/`: Runtime concerns split by responsibility (optimization, finetune loading, checkpoint/resume, best-checkpoint selection), imported directly from concrete modules.
+- `train/lexicographic/config.py` — projection-mode/rule resolution and
+  compatibility checks.
+- `train/lexicographic/gradients.py` — trunk detection, raw gradient
+  diagnostics, projection, and custom gradient assignment.
+- `train/lexicographic/types.py` — typed lexicographic config/state records.
 
-## Scripts
+Runtime modules:
 
-- `scripts/hcast/`: H-CAST runner scripts, including baseline/lex grids, the lexicographic orthonormal-plugin runner, and a dedicated final-only non-lex plugin runner.
-- `scripts/hrn/`: HRN baseline and orthonormal-plugin runner scripts.
-- `scripts/hiercos/`: Hier-COS baseline, lexicographic, and transform-ablation runner scripts.
-- `scripts/data/`: Dataset preparation utilities such as the iNat19 Making Better Mistakes split converter.
+- `train/runtime/optimization.py` — deterministic seeding, optimizers, and
+  schedulers.
+- `train/runtime/checkpointing.py` — v2 exact-selection state, RNG/loader
+  snapshots, strict resume, and legacy selection upgrade.
+- `train/runtime/selection.py` — exact `(FPA, -TICE, weighted_AP)` comparison.
+- `train/runtime/finetune.py` — trusted finetune/checkpoint loading.
+- `train/runtime/common.py` — configuration conversion helpers.
 
-## Notebooks
+## Experiment and data scripts
 
-- `notebooks/hcast_analysis.ipynb`: H-CAST result analysis notebook.
-- `notebooks/hrn_analysis.ipynb`: HRN baseline-versus-orthonormal-plugin analysis notebook.
-- `notebooks/hcast_analysis_utils.py`: Shared loaders, run selection, plotting, and table utilities used by `hcast_analysis.ipynb`.
-- `notebooks/multiseed_utils.py`: Seed-run discovery, consistency validation, and mean/sample-standard-deviation aggregation shared by analyses.
-- `notebooks/hcc_internal_diagnostics.ipynb`: HCC diagnostics notebook over `run_log.jsonl` with switch-focused plots/tables.
-- `notebooks/hcc_failure_examples.ipynb`: CUB/Aircraft qualitative notebook for cases where independent fails and top-down succeeds.
-- `notebooks/model_comparison_all_datasets.ipynb`: Cross-model comparison notebook across datasets.
+- `scripts/load_env.sh` — shell `.env` loading with process-environment
+  precedence.
+- `scripts/run_seed_utils.sh` — seed matrix and nested output helpers.
+- `scripts/run_matrix_utils.sh` — whitespace-separated environment matrix
+  parsing and allowed-value validation.
+- `scripts/hcast/` — base, HCC, lexicographic, and plugin studies.
+- `scripts/hrn/` — base and plugin studies.
+- `scripts/hiercos/` — decomposed-loss baselines, two lexicographic rules, and
+  transform ablation.
+- `scripts/data/prepare_inat19_mbm_splits.py` — iNat Making Better Mistakes
+  manifest preparation.
+- `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
+  nesting migration.
 
-## Docs
+Runner matrices are overridable using `DATASETS`, `START_EPOCHS`,
+`LEX_PROJECTION_MODES`, and `TRANSFORM_MODES`, depending on the script. Current
+narrow defaults are printed during `DRY_RUN`.
 
-- `docs/FILE_DOCUMENTATION.md`: This repository map.
-- `docs/HCC_DIAGNOSTIC_LOGS.md`: Glossary and interpretation of HCC diagnostic metric keys.
-- `docs/GRADIENT_PARAM_DIAGNOSTIC_LOGS.md`: Glossary and interpretation of trunk gradient/parameter diagnostics, including lexicographic metrics.
-- `docs/hrn_hiercos_alignment.md`: HRN/Hier-COS upstream-alignment audit and intentional divergence notes.
+## Grid search
 
-## Runtime Artifacts
+- `gridsearch/hiercos_cub200_optuna.py` — original CUB Hier-COS Optuna study.
+- `gridsearch/hiercos_cub200_refined_optuna.py` — refined search space and
+  output layout.
 
-Runtime outputs are not tracked in the repository tree. Runner-managed
-experiment conditions keep their existing name and contain one directory per
-training seed:
+## Analysis notebooks and helpers
+
+- `notebooks/hcast_analysis.ipynb`
+- `notebooks/hcc_internal_diagnostics.ipynb`
+- `notebooks/hiercos_analysis.ipynb`
+- `notebooks/hrn_analysis.ipynb`
+- `notebooks/model_comparison_all_datasets.ipynb`
+- `notebooks/hcast_analysis_utils.py`
+- `notebooks/model_comparison_utils.py`
+- `notebooks/multiseed_utils.py`
+
+`analysis/hiercos_current_runs/hiercos_current_plots.ipynb` is a separate
+working analysis notebook. Notebook files are not rewritten by repository
+audits.
+
+## Documentation
+
+- [This repository map](FILE_DOCUMENTATION.md)
+- [Dated correctness/fidelity audit](REPOSITORY_AUDIT.md)
+- [Pinned upstream comparison by model](model_repo_differences.md)
+- [HCC diagnostic glossary](HCC_DIAGNOSTIC_LOGS.md)
+- [Gradient, parameter, and lexicographic diagnostic glossary](GRADIENT_PARAM_DIAGNOSTIC_LOGS.md)
+- [HCC/H-CAST research synthesis](hcc_hcast_research_report.md)
+- [Detailed HRN/Hier-COS alignment notes](hrn_hiercos_alignment.md)
+- `docs/generate_hcc_internal_insights_figures.py` — generates documentation
+  figures from existing run logs; outputs belong under the external output
+  root.
+
+## Tests
+
+Tests use `python -m unittest discover -s tests -v`. They cover official
+hierarchies, fixed-frame loss equivalence, multiseed helpers, shared label
+spaces, strict configs, exact checkpoint selection/resume, metrics, model
+contracts, launchers, and documentation paths.
+
+## Runtime artifacts
+
+Each seed run is written outside the repository:
 
 ```text
-<experiment_name>/
-  seed_0/
-  seed_1/
-  ...
+<experiment>/seed_<n>/
+  latest.pt
+  best_topdown.pt
+  best_independent.pt
+  config_resolved.yaml
+  run_log.jsonl
+  test_metrics.yaml
 ```
-
-Each seed directory is a normal training output directory and typically
-contains:
-
-- `latest.pt`
-- `best_topdown.pt`
-- `best_independent.pt`
-- `config_resolved.yaml`
-- `run_log.jsonl`
-- `test_metrics.yaml`
-
-Dataset files are also external to the repository and are located through `dataset.root` in each config.

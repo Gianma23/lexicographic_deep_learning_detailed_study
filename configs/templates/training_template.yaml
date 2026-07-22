@@ -59,3 +59,4 @@ scheduler:
 
 runtime:
   deterministic: true               # Enable deterministic algorithms / reproducibility guards
+  protocol: corrected_unified_v1     # Shared split/evaluation/checkpoint contract

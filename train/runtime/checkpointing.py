@@ -10,9 +10,9 @@ import numpy as np
 import torch
 
 from .common import section_to_dict, to_plain_data
-from .selection import BEST_SELECTION_MODES
+from .selection import BEST_SELECTION_MODES, SelectionKey, normalize_selection_key
 
-RESUME_STATE_VERSION = 1
+RESUME_STATE_VERSION = 2
 _RESUME_ALLOWED_TRAIN_DIFF_KEYS = {"resume", "output_dir", "stop_epoch"}
 
 
@@ -268,6 +268,7 @@ def save_checkpoint(
     best_metrics: Mapping[str, float],
     cfg_resolved: Dict[str, Any],
     loaders: Optional[Mapping[str, Any]] = None,
+    best_selection_keys: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """Persist training state so runs can be resumed exactly."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -280,6 +281,10 @@ def save_checkpoint(
         "scaler_state": scaler.state_dict() if scaler is not None else None,
         "epoch": epoch,
         "best_metrics": normalize_best_metrics(best_metrics),
+        "best_selection_keys": serialize_best_selection_keys(
+            best_selection_keys,
+            best_metrics=best_metrics,
+        ),
         "cfg_resolved": cfg_resolved,
         "rng_state": rng_state,
         "loader_generator_states": loader_generator_states,
@@ -297,8 +302,42 @@ def initial_best_metrics() -> Dict[str, float]:
     return {mode: float("-inf") for mode in BEST_SELECTION_MODES}
 
 
+def initial_best_selection_keys() -> Dict[str, SelectionKey]:
+    return {
+        mode: (float("-inf"), float("-inf"), float("-inf"))
+        for mode in BEST_SELECTION_MODES
+    }
+
+
 def normalize_best_metrics(best_metrics: Mapping[str, Any]) -> Dict[str, float]:
     return {mode: float(best_metrics[mode]) for mode in BEST_SELECTION_MODES}
+
+
+def normalize_best_selection_keys(
+    best_selection_keys: Optional[Mapping[str, Any]],
+    *,
+    best_metrics: Mapping[str, Any],
+) -> Dict[str, SelectionKey]:
+    source = best_selection_keys if isinstance(best_selection_keys, Mapping) else {}
+    return {
+        mode: normalize_selection_key(
+            source.get(mode),
+            legacy_primary=best_metrics.get(mode, float("-inf")),
+        )
+        for mode in BEST_SELECTION_MODES
+    }
+
+
+def serialize_best_selection_keys(
+    best_selection_keys: Optional[Mapping[str, Any]],
+    *,
+    best_metrics: Mapping[str, Any],
+) -> Dict[str, List[float]]:
+    normalized = normalize_best_selection_keys(
+        best_selection_keys,
+        best_metrics=best_metrics,
+    )
+    return {mode: list(normalized[mode]) for mode in BEST_SELECTION_MODES}
 
 
 def resume_if_available(
@@ -310,22 +349,22 @@ def resume_if_available(
     cfg_resolved: Optional[Mapping[str, Any]] = None,
     loaders: Optional[Mapping[str, Any]] = None,
     checkpoint_loader=None,
-) -> Tuple[int, Dict[str, float], ResumeInfo]:
-    """Load checkpoint state if present and return (start_epoch, best_metrics, resume_info)."""
+) -> Tuple[int, Dict[str, float], Dict[str, SelectionKey], ResumeInfo]:
+    """Load state and exact checkpoint-ranking keys, upgrading legacy checkpoints."""
     resume_info = ResumeInfo(resume_path=str(resume_path or ""))
 
     if checkpoint_loader is None:
         from .finetune import load_trusted_checkpoint as checkpoint_loader
 
     if not resume_path:
-        return 0, initial_best_metrics(), resume_info
+        return 0, initial_best_metrics(), initial_best_selection_keys(), resume_info
 
     if not os.path.exists(resume_path):
         _record_resume_warning(
             f"Resume checkpoint not found at '{resume_path}'. Starting from scratch.",
             resume_info.warnings,
         )
-        return 0, initial_best_metrics(), resume_info
+        return 0, initial_best_metrics(), initial_best_selection_keys(), resume_info
 
     ckpt = checkpoint_loader(resume_path, map_location="cpu")
     resume_info.checkpoint_found = True
@@ -335,6 +374,8 @@ def resume_if_available(
     resume_meta = ckpt.get("resume_reproducibility", None)
     if isinstance(resume_meta, Mapping):
         resume_info.resume_state_version = int(resume_meta.get("version", RESUME_STATE_VERSION))
+    else:
+        resume_info.resume_state_version = 1
 
     _validate_resume_config_or_raise(
         checkpoint_cfg_resolved=ckpt.get("cfg_resolved", None),
@@ -344,6 +385,10 @@ def resume_if_available(
     resume_info.config_check_passed = True
 
     best_metrics = normalize_best_metrics(ckpt["best_metrics"])
+    best_selection_keys = normalize_best_selection_keys(
+        ckpt.get("best_selection_keys"),
+        best_metrics=best_metrics,
+    )
 
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
@@ -382,4 +427,4 @@ def resume_if_available(
         and resume_info.rng_state_restored
         and resume_info.loader_rng_state_restored
     )
-    return start_epoch, best_metrics, resume_info
+    return start_epoch, best_metrics, best_selection_keys, resume_info

@@ -10,6 +10,7 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -44,7 +45,8 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_baselines.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100 cub200 aircraft inat19)
+parse_choice_list DATASETS "cifar100 cub200 aircraft inat19" DATASETS \
+  cifar100 cub200 aircraft inat19
 
 config_for_dataset() {
   case "$1" in
@@ -124,6 +126,7 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lexicographic mode: disabled\n'
 printf 'HCC: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"

@@ -21,7 +21,7 @@ def taxonomy_guided_routing_weights(
     level: int,
     taxonomy_matrix: Optional[torch.Tensor] = None,
     prev_predictions: Optional[torch.Tensor] = None,
-    taxonomy_temperature: float = 5.0,
+    taxonomy_temperature: float = 0.5,
     mask_threshold_high: float = 0.9,
     mask_threshold_low: float = 0.1,
     mask_temperature: float = 0.5,

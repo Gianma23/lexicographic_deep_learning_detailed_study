@@ -8,15 +8,17 @@ set -euo pipefail
 # - model.transform_mode=full
 # - train.lexicographic.enabled=true
 # - train.lexicographic.start_epoch=0
-# - train.lexicographic.projection_mode in {coarse_first, fine_first}
+# - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
 # - train.lexicographic.projection_rule=orthogonalize_all
-# for: cifar100, cub200, aircraft, inat19.
+# Defaults: aircraft/cub200/cifar100 with coarse_first. Environment matrices
+# can opt into iNat19 and the other supported projection modes.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -25,7 +27,7 @@ MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-equal}"
-FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
+FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
 
 case "$LOSS_MODE" in
   global_softmax_ce_reg|level_softmax_ce_reg) ;;
@@ -83,7 +85,7 @@ trap handle_exit EXIT
 #     ./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(aircraft cub200 cifar100)
+DATASETS=(cub200)
 LEX_PROJECTION_MODES=(coarse_first)
 
 config_for_dataset() {
@@ -164,6 +166,8 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
+printf 'Lex projection modes: %s\n' "${LEX_PROJECTION_MODES[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"

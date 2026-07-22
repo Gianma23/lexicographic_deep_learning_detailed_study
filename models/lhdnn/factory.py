@@ -14,4 +14,5 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
             "eps": float(projection_cfg.get("eps", 1e-6)),
         },
         in_channels=int(cfg.dataset.get("in_channels", 3)),
+        adaptive_pool_size=cfg.model.get("adaptive_pool_size", None),
     )

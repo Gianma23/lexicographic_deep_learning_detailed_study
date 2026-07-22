@@ -8,14 +8,15 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]      # Channel std (used when normalization=torchvision)
   levels: [coarse1, coarse2, fine]   # Human-readable hierarchy level names
   download: true                     # Adapter-specific auto-download toggle (if supported)
-  split_policy: default              # iNat19: explicit uses annotations.{train,val,test}; default keeps adapter fallback policy
-  val_split_ratio: 0.2               # Train->val split ratio when no explicit val split is provided
-  split_seed: null                   # Split seed; null means fallback to train.seed
+  split_policy: official_val_test    # iNat19: official_val_test | explicit
+  val_split_ratio: 0.1               # Corrected default: CIFAR .10; CUB presets use .15
+  split_seed: 0                      # Fixed data partition seed, independent of training seed
 
-  annotations:
-    train: train.json                # Optional explicit train annotation file (relative to root)
-    val: val.json                    # Optional explicit val annotation file (relative to root)
-    test: test.json                  # Optional explicit test annotation file (relative to root)
+  # When split_policy=explicit, all three paths are mandatory and must exist.
+  # annotations:
+  #   train: annotations/train.json
+  #   val: annotations/val.json
+  #   test: annotations/test.json
 
   transforms:
     use_timm: true                   # true: timm train pipeline, false: manual train pipeline

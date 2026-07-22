@@ -39,7 +39,7 @@ dataset:
   download: true
   # Keep dataset split policy aligned with H-CAST configs.
   val_split_ratio: 0.1
-  split_seed: null
+  split_seed: 0
   transforms:
     # Keep HT-CapsNet parity preprocessing (fixed resize + per-image z-score normalization).
     fixed_resize_only: true
@@ -53,11 +53,6 @@ dataset:
     mixup_switch_prob: 0.0
     mixup_mode: batch
 
-  annotations:
-    train: train.json
-    val: val.json
-    test: test.json
-
 dataloader:
   # run-HT-CapsNet.sh sets batch_size=32.
   batch_size: 32
@@ -67,11 +62,11 @@ dataloader:
 
 train:
   # run-HT-CapsNet.sh sets epochs=200.
-  epochs: 100
+  epochs: 200
   seed: 42
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: true
-  resume: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/capsnet_cifar100/latest.pt
+  resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/capsnet_cifar100
   smoothing: 0.0
 
@@ -101,3 +96,4 @@ scheduler:
 
 runtime:
   deterministic: true
+  protocol: corrected_unified_v1

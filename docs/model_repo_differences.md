@@ -1,162 +1,196 @@
-# Model-by-Model Upstream Delta Log for Thesis Reproduction
+# Model fidelity and upstream delta log
 
-Date: May 19, 2026
+Audit date: 20 July 2026
 
-## Purpose
+This document records which behavior is source-aligned and which behavior is a
+framework adaptation, verified correction, unified-protocol choice, local
+extension, or unsupported extrapolation. “Aligned” does not imply identical
+results across frameworks, library versions, seeds, or hardware.
 
-This document summarizes how the implementations in this repository differ from the original model sources used for reproduction work.  
-The goal is to provide thesis-ready traceability for what was changed, what was preserved, and why.
+## Source anchors
 
-The comparison includes both:
-
-- `Structural` changes: required by the unified PyTorch training/evaluation framework.
-- `Intentional` changes: deliberate research or reproducibility choices introduced in this repository.
-
-## Upstream Baselines (Pinned Snapshot)
-
-Snapshot policy: upstream `HEAD` references were pinned on **May 19, 2026**.
-
-| Model | Upstream baseline | Pinned reference (2026-05-19) | Comparison mode |
+| Family | Primary source | Pinned revision | Comparison |
 |---|---|---|---|
-| H-CAST | `https://github.com/pseulki/HCAST` | `b1a222bb32da5caf48691b5987d56b7483801907` | repo-to-repo |
-| HT-CapsNet | `https://github.com/tasrif-khondaker/HT-CapsNet` | `8a0ea23f3e6b68b75d8add07674b4b0288380417` | repo-to-repo |
-| HRN | `https://github.com/MonsterZhZh/HRN` | `59944e48fcbf41cc475402c8b9cb6af301006399` | repo-to-repo |
-| Hier-COS | `https://github.com/Depanshu-Sani/Hier-COS` | `122b01dff393d3b562ad2daac494496fda65131c` | repo-to-repo |
-| LH-DNN | arXiv `2409.16956` (no official code repo) | N/A | paper-to-code |
+| H-CAST | <https://github.com/pseulki/HCAST> | `b1a222bb32da5caf48691b5987d56b7483801907` | PyTorch repository |
+| HT-CapsNet | <https://github.com/tasrif-khondaker/HT-CapsNet> | `8a0ea23f3e6b68b75d8add07674b4b0288380417` | TensorFlow repository |
+| HRN | <https://github.com/MonsterZhZh/HRN> | `59944e48fcbf41cc475402c8b9cb6af301006399` | PyTorch repository |
+| Hier-COS | <https://github.com/Depanshu-Sani/Hier-COS> | `122b01dff393d3b562ad2daac494496fda65131c` | PyTorch repository |
+| LH-DNN | <https://arxiv.org/abs/2409.16956> | arXiv `2409.16956v2` | paper; no official code found |
 
-Pinning command used: `git ls-remote <repo_url> HEAD`.
+The revisions are evidence anchors. They are not fetched during normal
+training.
 
-## Methodology
+## Shared corrected-unified choices
 
-- Differences are labeled as `Structural` or `Intentional`.
-- `Structural` deltas are mostly due to unification into one codebase (`python -m train.train`) with shared data loading, optimization, logging, checkpointing, and evaluation.
-- `Intentional` deltas are deliberate design choices to support clean comparisons, parity presets, diagnostics, and lexicographic experiments.
-- For LH-DNN, comparison is against the paper specification because no official upstream repository exists.
+These are deliberate protocol choices, not claims about an original model:
 
-## Changes Affecting All Models
+- one coarse-to-fine three-level label convention;
+- one canonical label space reused across train, validation, and test;
+- deterministic CIFAR/CUB partitions with fixed split seed;
+- complete validation/test batches;
+- validation-only best-checkpoint selection;
+- separate top-down and independent best checkpoints;
+- exact ranking by FPA, then TICE, then weighted AP;
+- common metrics, output artifacts, AMP gate, and strict resume checks.
 
-- `Structural`: Unified training entrypoint and lifecycle (`train/val/test`) for all families.
-  - Why: keep one reproducible execution path and remove model-specific training scripts.
-- `Structural`: Validation-based checkpoint selection is unified and mode-specific (`topdown` and `independent` are ranked separately).
-  - Ranking order: `FPA` (higher), `TICE` (lower), `weighted AP` (higher).
-  - Why: avoid selecting one model with a different criterion than another.
-- `Structural`: Final test reporting is always done from two best checkpoints (top-down-selected and independent-selected).
-  - Why: preserve decoder-dependent fairness and avoid mixing selection modes.
-- `Structural`: Shared runtime controls are applied to every model (determinism, resume metadata, common output artifacts).
-  - Common artifacts: `config_resolved.yaml`, `run_log.jsonl`, `best_topdown.pt`, `best_independent.pt`, `test_metrics.yaml`.
-- `Structural`: AMP is exposed as a unified runtime switch (`train.amp`, CUDA-only gate).
-  - Why: consistent mixed-precision behavior across models without model-specific AMP codepaths.
-- `Structural`: Shared dataset/transform abstraction and taxonomy handling (including deterministic split logic and taxonomy inference fallbacks).
-  - Why: make dataset protocol consistent across baselines while preserving model-specific constraints.
-- `Intentional`: Common diagnostic infrastructure (gradient/parameter logs, lexicographic hooks) was integrated where compatible.
-  - Why: support thesis analysis beyond raw accuracy tables.
+The common protocol improves comparison discipline but prevents exact
+reproduction of repositories that use a different hierarchy, drop evaluation
+samples, or choose models on test data.
 
-## Model-Specific Deltas
+## H-CAST
 
-### H-CAST (`hcast`)
+### Source-aligned
 
-- `Structural`: Upstream CAST internals are vendored under `models/hcast/internal/` and wrapped by a local `HCASTModel` adapter through `timm.create_model`.
-  - Why: stabilize upstream dependencies and fit the unified model interface.
-- `Structural`: Class order adaptation is explicit (repo uses coarse-to-fine ordering; upstream H-CAST internals expect fine-to-coarse indexing).
-  - Why: keep repository-wide label conventions consistent.
-- `Intentional`: Hierarchical Constraint Cascade (HCC) was added as an optional output-space affine projector (`models/hcast/hard_hierarchy.py`) with schedule controls (`step`, `linear`, `exp`, `tanh`) and diagnostics.
-  - Why: enable hard-hierarchy intervention studies and step@0/step@80 analyses.
-- `Intentional`: HCC diagnostics (`proj_constraint_alpha`, residual before/after, etc.) are logged for activation-time verification.
-  - Why: avoid inferring HCC state from run names only.
-- `Structural`: H-CAST was integrated into shared checkpointing, dual-mode evaluation, and unified metrics stack.
-  - Why: preserve comparability with non-H-CAST baselines.
+- CAST/H-CAST internals remain vendored under `models/hcast/internal/`.
+- Local class outputs are reordered to the repository-wide
+  coarse-to-fine convention at the wrapper boundary.
+- Grid/SEEDS segmentation and H-CAST level/global-KL loss paths follow the
+  upstream design.
+- H-CAST training presets retain the source family’s CAST variant, augmentation
+  controls, and LR scaling.
 
-### LH-DNN (`lhdnn`)
+### Verified corrections and adaptations
 
-- `Structural`: Implemented as paper-derived PyTorch code (no official upstream repo), with fixed large topology and always-on projection/advantage pathways.
-  - Why: reproduce the core LH-DNN method from published specification.
-- `Structural`: Taxonomy is mandatory in the local implementation (advantage topology requires explicit parent mappings).
-  - Why: enforce consistency with hierarchical constraints assumed by the method.
-- `Structural`: Integrated into the unified trainer and evaluator (shared splits, checkpoint logic, decoder metrics, logging).
-  - Why: enable apples-to-apples comparison against other models.
-- `Intentional`: Dataset presets beyond paper-reported CIFAR are explicit extrapolations (CUB/Aircraft), marked in configs.
-  - Why: extend comparative experiments while keeping extrapolation status transparent.
-- `Structural`: Loss path accepts both hard labels and shared soft-target container format from the common pipeline.
-  - Why: interface compatibility with the global training stack.
+- The upstream Aircraft helper relies on a local CSV/hard-coded hierarchy.
+  This repository instead joins the official parallel
+  manufacturer/family/variant annotations and validates the complete
+  30/70/100 taxonomy.
+- Local graph/backbone guards handle tensor shapes and current timm/PyTorch
+  integration. Each retained divergence must have a shape or forward contract
+  test; vendored files are not normalized merely for style.
+- Shared validation selection, checkpointing, metrics, and logging are
+  framework adaptations.
 
-### HT-CapsNet (`ht_capsnet`)
+### Local extensions
 
-- `Structural`: Original TensorFlow-oriented implementation is ported to a PyTorch model (`models/ht_capsnet/model.py`) while preserving capsule-routing design intent.
-  - Why: run inside the repository-wide PyTorch framework.
-- `Structural`: Backbone flexibility (`custom` conv stack or `efficientnet_b7`) is implemented with compatibility fallbacks.
-  - Why: maintain parity-focused defaults while supporting practical training environments.
-- `Intentional`: Parity preprocessing is encoded in shared config/transforms (`fixed_resize_only` + per-image `standardscaler` normalization).
-  - Why: keep preprocessing behavior close to upstream script expectations.
-- `Intentional`: Loss weighting modes (`dynamic`, `static`, `none`) are explicit and configurable in local code.
-  - Why: make hierarchy weighting behavior inspectable and controllable in experiments.
-- `Structural`: Reproducibility guards are enforced at build time (`train.seed` required, `runtime.deterministic: true` required).
-  - Why: prevent non-reproducible runs from silently entering benchmark comparisons.
-- `Structural`: AMP is available via shared runtime (`train.amp: true` in shipped HT-CapsNet configs).
-  - Why: align execution controls with the rest of the repository.
+- HCC is an output-space affine hierarchy projection with scheduled blending
+  and diagnostics. It is absent from upstream H-CAST.
+- `train.lexicographic.enabled` is an explicit gradient-space projection path.
+  HCC alone is not an explicit lexicographic optimizer.
+- The orthonormal plugin is an additional local taxonomy-frame study.
 
-### HRN (`hrn`)
+## LH-DNN
 
-- `Structural`: Local model/loss follows upstream HRN full-label branch semantics, but is served through the shared training stack.
-  - Why: preserve architectural parity while unifying orchestration.
-- `Intentional`: Protocol divergence is explicit: repo uses train/val/test with validation-based checkpoint selection instead of direct train/test-only workflow.
-  - Why: cleaner evaluation discipline across all baselines.
-- `Intentional`: Scope is limited to full-label mode; partial-label branch behavior is intentionally out of scope in this pass.
-  - Why: avoid mixing protocol regimes inside one comparison suite.
-- `Intentional`: CIFAR-100 HRN preset is a local extrapolation (upstream HRN does not provide CIFAR-100 experiments).
-  - Why: include HRN in the same dataset grid used for other models.
-- `Structural`: Mixup/cutmix soft-target training paths are rejected for parity loss behavior.
-  - Why: keep loss semantics aligned with HRN parity assumptions.
+### Source-aligned
 
-### Hier-COS (`hiercos`)
+- The CIFAR-100 hierarchy is the paper’s 8 → 20 → 100 hierarchy.
+- The large topology uses four pairs of 3×3 convolutional layers, four 2×2
+  pools, a shared 512-unit ReLU layer, and linear level heads.
+- Forward projection blocks detach the removed higher-priority component so
+  the forward scores remain unchanged while the backward subspace is
+  restricted.
+- Coarser predictions are propagated as detached baselines by the advantage
+  topology.
+- The objective is an unweighted sum of per-level cross-entropies.
+- CIFAR-100 uses the large-network 15-epoch paper schedule and the LR switch at
+  epoch 11.
 
-- `Structural`: Local code keeps upstream-style fixed-frame/taxonomy-subspace formulation and KL+regularization objective path (`model.loss: kl_reg`) as the parity baseline.
-  - Why: preserve original method core before ablations.
-- `Intentional`: Added lex-ready `model.loss: global_softmax_ce_reg`, which uses weighted target CE under one global taxonomy-node softmax plus level regularization, exposes three differentiable level losses, and defines `total` as their sum.
-  - Why: align lex/non-lex comparisons on the same reported objective in this mode while enabling per-level gradient and lexicographic diagnostics.
-- `Intentional`: Added `model.loss: level_softmax_ce_reg`, which differs from `global_softmax_ce_reg` only by using an independent softmax inside each hierarchy level. Shared `model.weight_mode` values (`equal`, `kl_leaf`, `kl_coarse`) weight CE only; regularization remains unweighted.
-  - Why: isolate normalization scope while providing exact per-level objectives for diagnostics and lexicographic experiments.
-- `Intentional`: CIFAR protocol keeps repository hierarchy depth (`3`) rather than upstream 5-level CIFAR protocol.
-  - Why: maintain cross-model hierarchy consistency inside this repository.
-- `Intentional`: CUB-200 Hier-COS preset is explicitly marked as local extrapolation.
-  - Why: upstream Hier-COS does not report CUB experiments.
-- `Intentional`: iNat19 Hier-COS uses upstream iNaturalist19-224 hyperparameters where compatible, but projects the taxonomy to this repo's three levels (`family -> genus -> species`).
-  - Why: keep the requested H-CAST-compatible hierarchy depth while preserving the closest available Hier-COS iNat19 recipe. The preset keeps the upstream `kl_reg`-style objective, `kl_leaf` path weighting, `alpha=0.001`, and `--larger-backbone`-style low-LR transform/backbone groups.
-- `Intentional`: Aircraft preprocessing includes explicit bottom-banner crop support (`crop_bottom_pixels: 20`) for parity.
-  - Why: replicate known preprocessing behavior from upstream scripts.
-- `Structural`: AMP is enabled in shipped Hier-COS configs (`train.amp: true`) via shared runtime controls.
-  - Why: standardized mixed-precision support in the unified pipeline.
+### Extrapolations
 
-## Thesis Synthesis
+- The paper evaluates CIFAR-10, CIFAR-100, and Fashion-MNIST, not CUB or
+  Aircraft.
+- CUB/Aircraft keep the large topology but add explicit 2×2 adaptive average
+  pooling after the last convolutional stage. This preserves the paper’s
+  pre-head geometry at 224 px and avoids an accidental dense-layer parameter
+  explosion.
+- CUB/Aircraft transforms and optimizer regularization are local choices and
+  must not be reported as paper settings.
 
-### Evidence-Backed Facts
+## HT-CapsNet
 
-- All five model families are executed under one unified PyTorch pipeline with shared checkpointing and evaluation rules.
-- Top-down and independent decoding are both first-class evaluation modes, with separate best-checkpoint selection and final test reporting.
-- H-CAST includes local HCC extensions not present in the original H-CAST upstream repository.
-- HT-CapsNet is implemented as a PyTorch port of a TensorFlow-origin baseline.
-- Hier-COS includes local per-level extensions (`global_softmax_ce_reg`, `level_softmax_ce_reg`) beyond the paper-aligned KL baseline.
-- LH-DNN comparison is necessarily paper-to-code (no official upstream code repository).
+### Source-aligned
 
-### Interpretation for Thesis Writing
+- Primary capsules, per-level secondary capsules, hierarchical skip input,
+  routing-by-agreement, taxonomy masking, cross-capsule attention, capsule
+  lengths, margin loss, and dynamic level weighting were ported from the
+  TensorFlow source.
+- The local taxonomy temperature `0.5` is supported by the upstream saved run
+  arguments even though upstream constructor defaults are internally
+  inconsistent.
+- Secondary dimensions `[64, 32, 16]`, three routing iterations, per-image
+  standardization, and MixUp alpha `0.2` follow the source experiment family.
+- The shipped horizon is 200 epochs, matching the upstream launcher rather
+  than the shorter README example.
 
-- Most large deltas are not arbitrary model edits; they are consequences of enforcing one evaluation protocol for all baselines.
-- Intentional local additions (HCC controls, Hier-COS CE ablation, diagnostics) were introduced to answer research questions about hierarchy constraints and lexicographic behavior, not to claim paper-faithful parity.
-- Reported reproduction outcomes should be interpreted as results under this repository protocol, with parity to upstream logic where feasible and explicit local extrapolations where upstream coverage is missing.
+### Framework adaptations and limits
 
-### Limitations and Threats to Validity
+- Keras/TensorFlow layers and callbacks are represented by native PyTorch
+  modules and batch-local loss computations.
+- A complete taxonomy and deterministic mode are mandatory locally; missing
+  taxonomy cannot silently degrade the model into an ordinary capsule network.
+- CIFAR-100 and CUB are upstream datasets. Aircraft is a local extrapolation;
+  the upstream repository reports Stanford Cars rather than Aircraft.
+- Backbone fallback paths are practical compatibility behavior, not source
+  parity. Any fallback is warned.
 
-- Upstream drift: pinned SHAs are fixed on May 19, 2026; upstream repositories may change afterward.
-- LH-DNN source limitation: absence of official code forces paper-to-code reconstruction risk.
-- Extrapolation risk: HRN CIFAR and Hier-COS CUB settings are local extrapolations, and Hier-COS iNat19 is a local three-level projection rather than the upstream full-depth iNat19 protocol.
-- Protocol dependence: validation-based dual-checkpoint selection differs from some original repos and can alter final test outcomes.
-- Decoder dependence: top-down and independent conclusions may differ; they must not be merged into a single claim without mode qualification.
+## HRN
 
-## Local Evidence Anchors
+### Source-aligned
 
-- Shared protocol/runtime: `train/train.py`, `train/engine.py`, `train/runtime/selection.py`, `train/training_logger.py`.
-- Dataset/transform abstraction: `datasets/base.py`, `datasets/__init__.py`.
-- H-CAST: `models/hcast/model.py`, `models/hcast/hard_hierarchy.py`, `models/hcast/internal/`.
-- LH-DNN: `models/lhdnn/model.py`, `models/lhdnn/losses.py`, `configs/lhdnn/*.yaml`.
-- HT-CapsNet: `models/ht_capsnet/model.py`, `models/ht_capsnet/losses.py`, `models/ht_capsnet/factory.py`, `configs/capsnet/*.yaml`.
-- HRN + Hier-COS parity audit: `docs/hrn_hiercos_alignment.md`.
-- Hier-COS local ablations: `models/hiercos/losses.py`, `configs/hiercos/*.yaml`.
+- ResNet-50 trunk, three RFM branches, 1024 branch features, 512 embeddings,
+  sigmoid tree scores, leaf CE logits, and residual fusion follow upstream.
+- The local state-space/tree objective and leaf-only CE reproduce full-label
+  HRN semantics.
+- CUB/Aircraft preprocessing uses the source-style 550 resize, 448 crop,
+  `[0.5, 0.5, 0.5]` normalization, SGD/cosine schedule, and 0.1× trunk LR.
+
+### Unified-protocol choices and extrapolations
+
+- Upstream drops incomplete loaders, including evaluation. The corrected
+  protocol deliberately keeps every validation/test sample.
+- Upstream scripts can select/report on test data. Local checkpoints are
+  selected only on validation data.
+- Partial-label HRN branches are out of scope.
+- CIFAR-100 is a local extrapolation.
+
+## Hier-COS
+
+### Source-aligned core
+
+- Taxonomy nodes define orthogonal coordinate directions and hierarchical
+  subspaces.
+- A random orthonormal fixed classifier represents the upstream
+  `opts.orthonormal_basis_vectors`; subspace projection masks operate in the
+  resulting coordinate space.
+- `kl_reg` combines the global absolute-score path-distribution objective with
+  the levelwise cosine regularizer.
+- ResNet-50/WideResNet families, fixed frames, Aircraft bottom crop, and
+  SGD/cosine parameter-group behavior are retained where compatible.
+
+### Important source ambiguity
+
+- The upstream Aircraft script named `hier-cos.sh` passes
+  `--feature_space haf++`, unlike the CIFAR/iNat scripts that pass
+  `--feature_space hier-cos`. Aircraft behavior therefore cannot be described
+  as an unambiguous exact Hier-COS recipe. The local Aircraft preset is a
+  consistent Hier-COS adaptation and is labeled accordingly.
+
+### Local extensions and depth choices
+
+- `global_softmax_ce_reg` and `level_softmax_ce_reg` are local decompositions
+  that expose exact per-level objectives for diagnostics and lexicographic
+  projection. Baseline presets remain `kl_reg`; launchers override the loss
+  explicitly for these studies.
+- The repository uses three CIFAR levels instead of upstream’s five and three
+  iNat levels instead of upstream’s seven.
+- CUB is not an upstream Hier-COS experiment and is an extrapolation.
+- The shared orthonormal plugin generalizes the fixed-frame objective to other
+  host models; it is not part of upstream Hier-COS.
+
+## Threats to validity
+
+- TensorFlow/PyTorch kernel, initialization, attention, and optimizer details
+  can prevent numerical identity even when equations match.
+- Upstream repositories may contain accidental behavior. The audit preserves
+  method-defining behavior but does not reproduce test leakage, incomplete
+  evaluation, or silent input fallbacks.
+- LH-DNN is reconstructed from prose, equations, and figures without official
+  implementation tests.
+- Local dataset/model extrapolations have not inherited paper-level
+  hyperparameter validation.
+- Corrected split and checkpoint behavior makes new runs incomparable with old
+  results unless the protocol difference is stated.
+- One seed is not evidence of stable superiority; report seed count and sample
+  standard deviation.
+- Decoder dependence is material. Every claim must identify top-down or
+  independent decoding and use that mode’s selected checkpoint.

@@ -293,6 +293,14 @@ class AircraftDataset(BaseHierDataset):
         source: str,
     ) -> List[Dict[str, Any]]:
         """Emit normalized samples using official variant and parent IDs."""
+        manufacturer_names = {
+            class_id: name
+            for name, class_id in hierarchy.manufacturer_to_id.items()
+        }
+        family_names = {
+            class_id: name
+            for name, class_id in hierarchy.family_to_id.items()
+        }
         samples: List[Dict[str, Any]] = []
         for image_id, variant_name in AircraftDataset._read_image_labels(labels_path).items():
             try:
@@ -311,16 +319,8 @@ class AircraftDataset(BaseHierDataset):
                     "labels": [manufacturer_id, family_id, variant_id],
                     "meta": {
                         "source": source,
-                        "manufacturer_name": next(
-                            name
-                            for name, class_id in hierarchy.manufacturer_to_id.items()
-                            if class_id == manufacturer_id
-                        ),
-                        "family_name": next(
-                            name
-                            for name, class_id in hierarchy.family_to_id.items()
-                            if class_id == family_id
-                        ),
+                        "manufacturer_name": manufacturer_names[manufacturer_id],
+                        "family_name": family_names[family_id],
                         "variant_name": variant_name,
                         "labels_file": str(labels_path),
                     },

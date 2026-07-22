@@ -1,6 +1,6 @@
 model:
   name: hiercos
-  loss: global_softmax_ce_reg
+  loss: kl_reg
   weight_mode: kl_leaf
   variant: haframe_resnet50
   pool: average
@@ -45,18 +45,13 @@ dataset:
     mixup_switch_prob: 0.0
     mixup_mode: batch
 
-  annotations:
-    train: train.json
-    val: val.json
-    test: test.json
-
 dataloader:
   batch_size: 64
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
   drop_last_train: true
-  drop_last_eval: true
+  drop_last_eval: false
 
 train:
   epochs: 100
@@ -78,3 +73,4 @@ scheduler:
 
 runtime:
   deterministic: true
+  protocol: corrected_unified_v1

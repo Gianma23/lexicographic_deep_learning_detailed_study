@@ -10,6 +10,7 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -40,7 +41,8 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-DATASETS=(cifar100 cub200 aircraft)
+parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
+  cifar100 cub200 aircraft
 
 config_for_dataset() {
   case "$1" in
@@ -119,6 +121,7 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"

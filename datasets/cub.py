@@ -2,8 +2,9 @@
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from .base import BaseHierDataset, split_train_val_samples
+from .base import BaseHierDataset
 from .cub_tree import TREES
+from .splitting import split_train_val_samples
 
 
 class CUBDataset(BaseHierDataset):
@@ -53,7 +54,9 @@ class CUBDataset(BaseHierDataset):
         for class_dir in class_dirs:
             species = self._species_from_class_name(class_dir.name, fallback_species[class_dir.name])
             if species < 0 or species >= len(TREES):
-                continue
+                raise ValueError(
+                    f"CUB class folder {class_dir} resolves to out-of-range species id {species}."
+                )
 
             tree = TREES[species]
             order = int(tree[1]) - 1
@@ -96,16 +99,35 @@ class CUBDataset(BaseHierDataset):
             image_map = self._read_int_str_map(images_txt)
             class_map = self._read_int_int_map(labels_txt)
             split_map = self._read_int_int_map(split_txt)
+            image_ids = set(image_map)
+            if set(class_map) != image_ids or set(split_map) != image_ids:
+                raise ValueError(
+                    f"Malformed CUB metadata under {base}: images.txt, "
+                    "image_class_labels.txt, and train_test_split.txt must contain "
+                    "identical image ids."
+                )
 
             train_samples: List[Dict[str, Any]] = []
             test_samples: List[Dict[str, Any]] = []
             for image_id in sorted(image_map.keys()):
                 if image_id not in class_map or image_id not in split_map:
-                    continue
+                    raise ValueError(
+                        f"Malformed CUB metadata under {base}: image id {image_id} from "
+                        "images.txt is missing from image_class_labels.txt or train_test_split.txt."
+                    )
 
                 species = int(class_map[image_id]) - 1
                 if species < 0 or species >= len(TREES):
-                    continue
+                    raise ValueError(
+                        f"Malformed CUB metadata under {base}: image id {image_id} has "
+                        f"out-of-range one-based species id {class_map[image_id]}."
+                    )
+                split_flag = int(split_map[image_id])
+                if split_flag not in {0, 1}:
+                    raise ValueError(
+                        f"Malformed CUB metadata under {base}: image id {image_id} has "
+                        f"invalid train/test flag {split_flag}; expected 0 or 1."
+                    )
 
                 tree = TREES[species]
                 order = int(tree[1]) - 1
@@ -122,7 +144,7 @@ class CUBDataset(BaseHierDataset):
                     "meta": {"source": "cub_official", "image_id": image_id},
                 }
 
-                if int(split_map[image_id]) == 1:
+                if split_flag == 1:
                     train_samples.append(sample)
                 else:
                     test_samples.append(sample)
@@ -136,14 +158,28 @@ class CUBDataset(BaseHierDataset):
         """Read two-column text files mapping integer keys to string values."""
         out: Dict[int, str] = {}
         with path.open("r", encoding="utf-8") as f:
-            for line in f:
+            for line_number, line in enumerate(f, start=1):
                 row = line.strip().split(maxsplit=1)
                 if len(row) != 2:
-                    continue
+                    raise ValueError(
+                        f"Malformed CUB metadata in {path} at line {line_number}: "
+                        f"expected '<integer id> <value>', got {line.rstrip()!r}."
+                    )
                 try:
-                    out[int(row[0])] = row[1]
-                except ValueError:
-                    continue
+                    key = int(row[0])
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Malformed CUB metadata in {path} at line {line_number}: "
+                        f"id {row[0]!r} is not an integer."
+                    ) from exc
+                if key in out:
+                    raise ValueError(
+                        f"Malformed CUB metadata in {path} at line {line_number}: "
+                        f"duplicate id {key}."
+                    )
+                out[key] = row[1]
+        if not out:
+            raise ValueError(f"CUB metadata file is empty: {path}")
         return out
 
     @staticmethod
@@ -151,12 +187,27 @@ class CUBDataset(BaseHierDataset):
         """Read two-column text files mapping integer keys to integer values."""
         out: Dict[int, int] = {}
         with path.open("r", encoding="utf-8") as f:
-            for line in f:
+            for line_number, line in enumerate(f, start=1):
                 row = line.strip().split(maxsplit=1)
                 if len(row) != 2:
-                    continue
+                    raise ValueError(
+                        f"Malformed CUB metadata in {path} at line {line_number}: "
+                        f"expected two integers, got {line.rstrip()!r}."
+                    )
                 try:
-                    out[int(row[0])] = int(row[1])
-                except ValueError:
-                    continue
+                    key = int(row[0])
+                    value = int(row[1])
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Malformed CUB metadata in {path} at line {line_number}: "
+                        f"expected two integers, got {line.rstrip()!r}."
+                    ) from exc
+                if key in out:
+                    raise ValueError(
+                        f"Malformed CUB metadata in {path} at line {line_number}: "
+                        f"duplicate id {key}."
+                    )
+                out[key] = value
+        if not out:
+            raise ValueError(f"CUB metadata file is empty: {path}")
         return out

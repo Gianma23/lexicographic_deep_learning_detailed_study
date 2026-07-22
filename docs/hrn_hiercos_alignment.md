@@ -1,6 +1,6 @@
 # HRN + Hier-COS Alignment Audit
 
-Date: 2026-05-12
+Updated: 2026-07-20
 
 This note audits local `hrn` and `hiercos` implementations against upstream repositories:
 
@@ -12,7 +12,8 @@ The implementation choices below follow the selected clean-protocol constraints 
 - Keep this repo train/val/test workflow and final dual-checkpoint test evaluation.
 - Keep this repo CIFAR hierarchy depth for Hier-COS (`hierarchy_depth: 3`).
 - HRN scope is full-label experiments only.
-- Keep checkpoint ranking by `FPA`/`TICE`/`weighted AP`.
+- Keep exact checkpoint ranking by `(FPA, -TICE, weighted AP)`.
+- Evaluate every validation/test sample (`drop_last_eval: false`).
 
 ## HRN Alignment Status
 
@@ -47,6 +48,7 @@ The implementation choices below follow the selected clean-protocol constraints 
 ### Split/Evaluation Protocol
 - **Intentionally different**:
   - Upstream trains with train/test directly; this repo keeps a train/val split and selects best checkpoints from validation metrics.
+  - Upstream drops incomplete evaluation batches; this repo evaluates all samples.
   - This is deliberate for consistent, cleaner cross-model evaluation.
 
 ## Hier-COS Alignment Status
@@ -90,11 +92,11 @@ The implementation choices below follow the selected clean-protocol constraints 
 3. HRN partial-label (`proportion`) experiments are not implemented in this pass.
 4. Checkpoint selection remains `FPA/TICE/weighted AP` to preserve repository-wide comparability.
 
-## New Parity Presets Added
+## Active presets
 
-- `configs/hrn/hrn_cifar100_parity.yaml` (local extrapolation)
-- `configs/hrn/hrn_cub200_parity.yaml`
-- `configs/hrn/hrn_aircraft_parity.yaml`
+- `configs/hrn/hrn_cifar100.yaml` (local extrapolation)
+- `configs/hrn/hrn_cub200.yaml`
+- `configs/hrn/hrn_aircraft.yaml`
 - `configs/hiercos/hiercos_cifar100.yaml`
 - `configs/hiercos/hiercos_cub200.yaml` (local extrapolation)
 - `configs/hiercos/hiercos_aircraft.yaml`

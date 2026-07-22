@@ -1,6 +1,6 @@
 model:
   name: hiercos
-  loss: global_softmax_ce_reg
+  loss: kl_reg
   weight_mode: kl_leaf
   variant: haframe_resnet50
   pool: average
@@ -58,7 +58,7 @@ dataloader:
   pin_memory: true
   windows_spawn_safe: true
   drop_last_train: true
-  drop_last_eval: true
+  drop_last_eval: false
 
 train:
   epochs: 100
@@ -81,3 +81,4 @@ scheduler:
 
 runtime:
   deterministic: true
+  protocol: corrected_unified_v1

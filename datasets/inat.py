@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tarfile
 import warnings
@@ -14,13 +15,19 @@ class INat19Dataset(BaseHierDataset):
         """Default hierarchy names used when config does not provide levels."""
         return ["family", "genus", "species"]
 
+    def load_taxonomy(self) -> Optional[Dict[str, Any]]:
+        """Return category-derived raw taxonomy for official COCO annotations."""
+        return getattr(self, "_annotation_taxonomy", None)
+
     def load_samples(self) -> List[Dict[str, Any]]:
         """Load iNat19 using explicit manifests or official annotation fallbacks."""
         split_policy = self.cfg.dataset.get("split_policy", "official_val_test")
         if split_policy == "explicit":
             ann = self._configured_annotation_file(self.split)
             if ann is None:
-                return []
+                raise ValueError(
+                    f"dataset.split_policy=explicit requires dataset.annotations.{self.split}."
+                )
             return self._read_inat19_annotations(ann, split_hint=self.split)
 
         train_ann = self._find_preferred_annotation_file("train")
@@ -66,10 +73,14 @@ class INat19Dataset(BaseHierDataset):
         split_file = ann_cfg.get(split_name)
         if not split_file:
             return None
-        path = self.root / str(split_file)
-        if path.exists():
-            return path
-        return None
+        path = Path(str(split_file)).expanduser()
+        if not path.is_absolute():
+            path = self.root / path
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Configured iNat19 annotation for split={split_name} does not exist: {path}"
+            )
+        return path
 
     def _find_official_annotation_file(self, split_name: str) -> Optional[Path]:
         """Resolve official iNat 2019 annotation files for the requested split."""
@@ -103,7 +114,7 @@ class INat19Dataset(BaseHierDataset):
         """Read official iNat19 annotations from JSON or JSON-in-tar files."""
         payload = self._load_json_payload(ann_path)
         if not payload:
-            return []
+            raise ValueError(f"iNat19 annotation payload is empty: {ann_path}")
 
         if isinstance(payload, dict) and "images" in payload and "categories" in payload:
             return self._read_coco_style_annotations(payload, ann_path, split_hint)
@@ -111,32 +122,57 @@ class INat19Dataset(BaseHierDataset):
         # Fallback to the repository's normalized annotation format.
         rows = payload.get("samples", []) if isinstance(payload, dict) else payload
         if not isinstance(rows, list):
-            return []
+            raise TypeError(f"iNat19 annotation {ann_path} must contain a list of samples.")
 
         out: List[Dict[str, Any]] = []
-        for row in rows:
+        for row_index, row in enumerate(rows):
             if not isinstance(row, dict):
-                continue
+                raise TypeError(
+                    f"Malformed iNat19 annotation {ann_path} row {row_index}: expected a mapping."
+                )
             labels = row.get("labels") or row.get("levels")
             image_rel = row.get("image") or row.get("path")
             if labels is None or image_rel is None:
-                continue
-            labels = [int(x) for x in labels][: self.depth]
+                raise ValueError(
+                    f"Malformed iNat19 annotation {ann_path} row {row_index}: "
+                    "both labels/levels and image/path are required."
+                )
+            if not isinstance(labels, (list, tuple)):
+                raise TypeError(
+                    f"Malformed iNat19 annotation {ann_path} row {row_index}: labels must be a list."
+                )
             if len(labels) != self.depth:
-                continue
+                raise ValueError(
+                    f"Malformed iNat19 annotation {ann_path} row {row_index}: "
+                    f"expected {self.depth} labels, got {len(labels)}."
+                )
+            try:
+                normalized_labels = [int(value) for value in labels]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Malformed iNat19 annotation {ann_path} row {row_index}: labels must be integers."
+                ) from exc
             image_path = self._resolve_image_path(str(image_rel), ann_path=ann_path, split_hint=split_hint)
             meta = row.get("meta")
             if isinstance(meta, dict):
                 meta = dict(meta)
             else:
                 meta = dict(row)
-            out.append({"image": image_path, "labels": labels, "meta": meta})
+            meta["annotation_file"] = str(ann_path)
+            meta["annotation_row"] = row_index
+            out.append({"image": image_path, "labels": normalized_labels, "meta": meta})
         return out
 
     @staticmethod
     def _normalize_taxon_name(value: Any) -> str:
         """Normalize taxonomy strings for stable deterministic ID mapping."""
         return str(value or "").strip().lower()
+
+    @staticmethod
+    def _stable_taxon_id(rank: str, value: str) -> int:
+        """Encode a taxon name as a split-independent non-negative raw ID."""
+        digest = hashlib.sha256(f"inat19:{rank}:{value}".encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], byteorder="big", signed=False) & ((1 << 63) - 1)
 
     def _read_coco_style_annotations(
         self,
@@ -150,69 +186,159 @@ class INat19Dataset(BaseHierDataset):
         annotations = payload.get("annotations", [])
 
         if not isinstance(images, list) or not isinstance(categories, list) or not isinstance(annotations, list):
-            return []
+            raise TypeError(
+                f"Malformed iNat19 COCO annotation {ann_path}: "
+                "`images`, `categories`, and `annotations` must be lists."
+            )
         if not annotations:
             # public_test.json has no labels by design.
             return []
 
         image_by_id: Dict[int, Dict[str, Any]] = {}
-        for image in images:
+        for row_index, image in enumerate(images):
             if not isinstance(image, dict):
-                continue
+                raise TypeError(
+                    f"Malformed iNat19 COCO annotation {ann_path} image row {row_index}: "
+                    "expected a mapping."
+                )
             try:
                 image_id = int(image.get("id"))
-            except (TypeError, ValueError):
-                continue
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} image row {row_index}: "
+                    "missing or non-integer id."
+                ) from exc
+            if image_id in image_by_id:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} image row {row_index}: "
+                    f"duplicate image id {image_id}."
+                )
+            if image_id < 0:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} image row {row_index}: "
+                    f"negative image id {image_id}."
+                )
             image_by_id[image_id] = image
 
         category_by_id: Dict[int, Dict[str, Any]] = {}
         family_keys = set()
         genus_keys = set()
-        for category in categories:
+        for row_index, category in enumerate(categories):
             if not isinstance(category, dict):
-                continue
+                raise TypeError(
+                    f"Malformed iNat19 COCO annotation {ann_path} category row {row_index}: "
+                    "expected a mapping."
+                )
             try:
                 category_id = int(category.get("id"))
-            except (TypeError, ValueError):
-                continue
-
-            family_key = self._normalize_taxon_name(category.get("family"))
-            genus_key = self._normalize_taxon_name(category.get("genus"))
-            if family_key and genus_key:
-                family_keys.add(family_key)
-                genus_keys.add((family_key, genus_key))
-            category_by_id[category_id] = category
-
-        family_to_id = {name: idx for idx, name in enumerate(sorted(family_keys))}
-        genus_to_id = {name: idx for idx, name in enumerate(sorted(genus_keys))}
-
-        samples: List[Dict[str, Any]] = []
-        for ann in annotations:
-            if not isinstance(ann, dict):
-                continue
-            try:
-                image_id = int(ann.get("image_id"))
-                species = int(ann.get("category_id"))
-            except (TypeError, ValueError):
-                continue
-
-            image = image_by_id.get(image_id)
-            category = category_by_id.get(species)
-            if image is None or category is None:
-                continue
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} category row {row_index}: "
+                    "missing or non-integer id."
+                ) from exc
+            if category_id in category_by_id:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} category row {row_index}: "
+                    f"duplicate category id {category_id}."
+                )
+            if category_id < 0:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} category row {row_index}: "
+                    f"negative category id {category_id}."
+                )
 
             family_key = self._normalize_taxon_name(category.get("family"))
             genus_key = self._normalize_taxon_name(category.get("genus"))
             if not family_key or not genus_key:
-                continue
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} category row {row_index}: "
+                    "family and genus are required."
+                )
+            family_keys.add(family_key)
+            genus_keys.add((family_key, genus_key))
+            category_by_id[category_id] = category
+
+        family_to_id = {
+            name: self._stable_taxon_id("family", name)
+            for name in sorted(family_keys)
+        }
+        genus_to_id = {
+            name: self._stable_taxon_id("genus", f"{name[0]}\0{name[1]}")
+            for name in sorted(genus_keys)
+        }
+        if len(set(family_to_id.values())) != len(family_to_id):
+            raise RuntimeError("Stable iNat19 family IDs collided; refusing an ambiguous taxonomy.")
+        if len(set(genus_to_id.values())) != len(genus_to_id):
+            raise RuntimeError("Stable iNat19 genus IDs collided; refusing an ambiguous taxonomy.")
+
+        genus_to_family: Dict[int, int] = {}
+        species_to_genus: Dict[int, int] = {}
+        for species, category in category_by_id.items():
+            family_key = self._normalize_taxon_name(category.get("family"))
+            genus_key = self._normalize_taxon_name(category.get("genus"))
+            family = family_to_id[family_key]
+            genus = genus_to_id[(family_key, genus_key)]
+            previous_family = genus_to_family.get(genus)
+            if previous_family is not None and previous_family != family:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path}: genus {genus_key!r} "
+                    "maps to multiple families."
+                )
+            genus_to_family[genus] = family
+            species_to_genus[species] = genus
+        self._annotation_taxonomy = {
+            "levels": self._taxonomy_levels(),
+            "parent_of": {
+                1: genus_to_family,
+                2: species_to_genus,
+            },
+        }
+
+        samples: List[Dict[str, Any]] = []
+        for row_index, ann in enumerate(annotations):
+            if not isinstance(ann, dict):
+                raise TypeError(
+                    f"Malformed iNat19 COCO annotation {ann_path} annotation row {row_index}: "
+                    "expected a mapping."
+                )
+            try:
+                image_id = int(ann.get("image_id"))
+                species = int(ann.get("category_id"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} annotation row {row_index}: "
+                    "image_id and category_id must be integers."
+                ) from exc
+
+            image = image_by_id.get(image_id)
+            category = category_by_id.get(species)
+            if image is None or category is None:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} annotation row {row_index}: "
+                    f"unknown image_id={image_id} or category_id={species}."
+                )
+
+            family_key = self._normalize_taxon_name(category.get("family"))
+            genus_key = self._normalize_taxon_name(category.get("genus"))
+            if not family_key or not genus_key:
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} annotation row {row_index}: "
+                    "referenced category is missing family or genus."
+                )
             family = family_to_id.get(family_key)
             genus = genus_to_id.get((family_key, genus_key))
             if family is None or genus is None:
-                continue
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} annotation row {row_index}: "
+                    "referenced category is absent from the canonical family/genus maps."
+                )
 
             file_name = str(image.get("file_name", "")).strip()
             if not file_name:
-                continue
+                raise ValueError(
+                    f"Malformed iNat19 COCO annotation {ann_path} annotation row {row_index}: "
+                    f"image id {image_id} has no file_name."
+                )
             category_dir = str(category.get("image_dir_name", "")).strip()
             image_path = self._resolve_image_path(
                 file_name,
@@ -253,7 +379,7 @@ class INat19Dataset(BaseHierDataset):
             with tarfile.open(path, "r:*") as tar:
                 members = [m for m in tar.getmembers() if m.isfile() and m.name.lower().endswith(".json")]
                 if not members:
-                    return {}
+                    raise ValueError(f"iNat19 annotation archive contains no JSON file: {path}")
 
                 target = members[0]
                 wanted_name = lower_name.replace(".tar.gz", "").replace(".tgz", ".json").replace(".tar", "")
@@ -265,10 +391,14 @@ class INat19Dataset(BaseHierDataset):
 
                 extracted = tar.extractfile(target)
                 if extracted is None:
-                    return {}
+                    raise ValueError(
+                        f"Could not extract iNat19 JSON member {target.name} from {path}."
+                    )
                 return json.loads(extracted.read().decode("utf-8"))
 
-        return {}
+        raise ValueError(
+            f"Unsupported iNat19 annotation format for {path}; expected .json or .tar(.gz)."
+        )
 
     @staticmethod
     def _split_dir_for_context(split_hint: str, ann_name: str) -> str:

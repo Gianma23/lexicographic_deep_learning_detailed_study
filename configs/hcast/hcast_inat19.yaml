@@ -32,7 +32,7 @@ dataset:
   # Fixed Making Better Mistakes / Hier-COS split over official iNat19 train+val images.
   split_policy: explicit
   val_split_ratio: 0.0
-  split_seed: null
+  split_seed: 0
   transforms:
     use_timm: true
     normalization: torchvision
@@ -105,3 +105,4 @@ scheduler:
 
 runtime:
   deterministic: true
+  protocol: corrected_unified_v1

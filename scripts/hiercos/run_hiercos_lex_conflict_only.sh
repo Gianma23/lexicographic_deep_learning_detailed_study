@@ -17,6 +17,7 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
+source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -83,8 +84,10 @@ trap handle_exit EXIT
 #     ./scripts/hiercos/run_hiercos_lex_conflict_only.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100 cub200 aircraft inat19)
-LEX_PROJECTION_MODES=(coarse_first fine_first)
+parse_choice_list DATASETS "cifar100 cub200 aircraft inat19" DATASETS \
+  cifar100 cub200 aircraft inat19
+parse_choice_list LEX_PROJECTION_MODES "coarse_first fine_first" LEX_PROJECTION_MODES \
+  coarse_first fine_first pairwise_orthogonal
 
 config_for_dataset() {
   case "$1" in
@@ -164,6 +167,8 @@ run_output_dir() {
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
+printf 'Datasets: %s\n' "${DATASETS[*]}"
+printf 'Lex projection modes: %s\n' "${LEX_PROJECTION_MODES[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"

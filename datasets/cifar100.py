@@ -6,12 +6,13 @@ from typing import Any, Dict, List, Optional
 from PIL import Image
 from torchvision.datasets import CIFAR100
 
-from .base import (
-    BaseHierDataset,
+from .base import BaseHierDataset
+from .splitting import (
     resolve_split_seed,
     resolve_val_split_ratio,
     stratified_train_val_indices,
 )
+from .types import DatasetLabelSpace
 
 # B-CNN manually groups CIFAR-100's 20 official coarse classes into 8
 # coarse-1 classes. This edge is absent from the dataset and therefore must
@@ -109,11 +110,22 @@ class CIFAR100Dataset(BaseHierDataset):
         """Default hierarchy names used when config does not provide levels."""
         return ["coarse1", "coarse2", "fine"]
 
-    def __init__(self, cfg: Any, split: str, transform=None):
+    def __init__(
+        self,
+        cfg: Any,
+        split: str,
+        transform=None,
+        label_space: Optional[DatasetLabelSpace] = None,
+    ):
         """Initialize CIFAR storage used for index-based image retrieval."""
         self._cifar_images = None
         self._cifar_targets: List[int] = []
-        super().__init__(cfg=cfg, split=split, transform=transform)
+        super().__init__(
+            cfg=cfg,
+            split=split,
+            transform=transform,
+            label_space=label_space,
+        )
 
     def _label_path(self, fine: int, coarse: int) -> List[int]:
         """Build hierarchical labels for the configured depth (2 or 3 levels)."""

@@ -96,6 +96,7 @@ class LHDNNModel(nn.Module):
         image_size: int = 32,
         projection_cfg: Optional[Dict[str, Any]] = None,
         in_channels: int = 3,
+        adaptive_pool_size: Optional[int] = None,
     ):
         super().__init__()
         self.num_classes_per_level = [int(v) for v in num_classes_per_level]
@@ -119,6 +120,18 @@ class LHDNNModel(nn.Module):
         self.image_size = int(image_size)
         if self.image_size <= 0:
             raise ValueError("`image_size` must be > 0.")
+        self.adaptive_pool_size = (
+            None if adaptive_pool_size is None else int(adaptive_pool_size)
+        )
+        if self.adaptive_pool_size is not None and self.adaptive_pool_size <= 0:
+            raise ValueError("`model.adaptive_pool_size` must be > 0 when provided.")
+        self.adaptive_pool = (
+            nn.Identity()
+            if self.adaptive_pool_size is None
+            else nn.AdaptiveAvgPool2d(
+                (self.adaptive_pool_size, self.adaptive_pool_size)
+            )
+        )
 
         self.projection_eps = float(projection_cfg.get("eps", 1e-6))
         if self.projection_eps <= 0.0:
@@ -167,6 +180,7 @@ class LHDNNModel(nn.Module):
             out = dummy
             for stage in self.stages:
                 out = stage(out)
+            out = self.adaptive_pool(out)
         flat = int(out[0].numel())
         if flat <= 0:
             raise ValueError(
@@ -216,6 +230,7 @@ class LHDNNModel(nn.Module):
         h = x
         for stage in self.stages:
             h = stage(h)
+        h = self.adaptive_pool(h)
 
         flat = h.flatten(1)
         shared_input = flat.to(dtype=self.shared_linear.weight.dtype)
