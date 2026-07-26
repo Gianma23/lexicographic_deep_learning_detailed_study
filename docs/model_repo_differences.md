@@ -89,10 +89,10 @@ samples, or choose models on test data.
 
 - The paper evaluates CIFAR-10, CIFAR-100, and Fashion-MNIST, not CUB or
   Aircraft.
-- CUB/Aircraft keep the large topology but add explicit 2×2 adaptive average
-  pooling after the last convolutional stage. This preserves the paper’s
-  pre-head geometry at 224 px and avoids an accidental dense-layer parameter
-  explosion.
+- CUB/Aircraft keep the large topology but reduce the 14×14 final feature map
+  to 2×2 with a deterministic 7×7 average pool. For this geometry it is
+  equivalent to 2×2 adaptive average pooling, preserves the paper’s pre-head
+  geometry at 224 px, and avoids an accidental dense-layer parameter explosion.
 - CUB/Aircraft transforms and optimizer regularization are local choices and
   must not be reported as paper settings.
 

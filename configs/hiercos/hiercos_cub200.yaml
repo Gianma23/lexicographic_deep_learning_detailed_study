@@ -73,4 +73,3 @@ scheduler:
 
 runtime:
   deterministic: true
-  protocol: corrected_unified_v1

@@ -1,6 +1,12 @@
 from typing import Any, Dict, List, Optional
 
-from models.orthonormal_plugin.config import is_enabled, parse_bool, plugin_section, validate_disabled_mixup
+from models.orthonormal_plugin.config import (
+    is_enabled,
+    parse_bool,
+    plugin_section,
+    section_to_dict,
+    validate_disabled_mixup,
+)
 
 from .model import HierCosModel
 
@@ -28,6 +34,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
             plugin_cfg.get("fixed_frame_per_level", model_cfg.get("fixed_frame_per_level", False)),
             default=False,
         ),
+        projection_cfg=section_to_dict(model_cfg.get("projection", None)),
         wide_depth=int(model_cfg.get("wide_depth", 28)),
         wide_widen_factor=int(model_cfg.get("wide_widen_factor", 8)),
         wide_drop_rate=float(model_cfg.get("wide_drop_rate", 0.0)),

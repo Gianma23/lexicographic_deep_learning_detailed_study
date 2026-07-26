@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the selected Hier-COS transformation-layer ablation matrix:
-# - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
-# - model.weight_mode=${WEIGHT_MODE}
-# - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
-# - train.lexicographic.enabled=true
-# - train.lexicographic.start_epoch=0
-# - train.lexicographic.projection_mode=coarse_first
-# - train.lexicographic.projection_rule=orthogonalize_all
+# Runs Hier-COS with an LH-style projection after the complete transform:
+# - full transform mode retains its final residual skip
+# - projection uses A=[W_1; ...; W_(l-1)] with no activation derivative
+# - each projected level uses a learnable FC head
+# - the three FC outputs are concatenated before the global fixed frame
+# - LH-DNN advantage baselines are selected by ADVANTAGE_ENABLED
+# - model.loss=level_softmax_ce_reg
+# - model.projection.enabled=true
+# - model.projection.eps=${PROJECTION_EPS}
 # - model.transform_mode selected by TRANSFORM_MODES
-# The matching full-transform reference is produced by
-# scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh.
-# Defaults: cub200/aircraft/cifar100 with final_only.
+# - model.fixed_frame_mode=${FIXED_FRAME_MODE}
+# - train.lexicographic.enabled=false
+#
+# Examples:
+#   ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
+#   DATASETS="cub200 aircraft" NUM_RUNS=3 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
+#   ADVANTAGE_ENABLED=true DATASETS=cifar100 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
+#   FIXED_FRAME_MODE=identity DATASETS=cub200 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -27,19 +32,10 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-equal}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
-FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-0}"
-
-case "$LOSS_MODE" in
-  global_softmax_ce_reg|level_softmax_ce_reg) ;;
-  *)
-    echo "Unsupported LOSS_MODE: $LOSS_MODE" >&2
-    echo "Expected global_softmax_ce_reg or level_softmax_ce_reg." >&2
-    exit 1
-    ;;
-esac
+PROJECTION_EPS="${PROJECTION_EPS:-1.0e-6}"
+ADVANTAGE_ENABLED="${ADVANTAGE_ENABLED:-false}"
 
 case "$WEIGHT_MODE" in
   equal|kl_leaf|kl_coarse) ;;
@@ -51,23 +47,22 @@ case "$WEIGHT_MODE" in
 esac
 
 case "$FIXED_FRAME_MODE" in
-  orthonormal_random|orthonormal_block_random|identity) ;;
+  orthonormal_random|identity) ;;
   *)
     echo "Unsupported FIXED_FRAME_MODE: $FIXED_FRAME_MODE" >&2
-    echo "Expected orthonormal_random, orthonormal_block_random, or identity." >&2
+    echo "Expected orthonormal_random or identity." >&2
     exit 1
     ;;
 esac
 
-case "$FIXED_FRAME_PER_LEVEL" in
-  0|1|true|false|True|False) ;;
+case "$ADVANTAGE_ENABLED" in
+  true|false) ;;
   *)
-    echo "Unsupported FIXED_FRAME_PER_LEVEL: $FIXED_FRAME_PER_LEVEL" >&2
-    echo "Expected 0, 1, true, or false." >&2
+    echo "Unsupported ADVANTAGE_ENABLED: $ADVANTAGE_ENABLED" >&2
+    echo "Expected true or false." >&2
     exit 1
     ;;
 esac
-normalize_bool_like "$FIXED_FRAME_PER_LEVEL" FIXED_FRAME_PER_LEVEL_OVERRIDE
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -91,16 +86,11 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-# Notebook-compatible outputs root.
-# Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_transform_ablation.sh
-#   LOSS_MODE=level_softmax_ce_reg WEIGHT_MODE=equal FIXED_FRAME_MODE=identity \
-#     ./scripts/hiercos/run_hiercos_transform_ablation.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cifar100" DATASETS \
+parse_choice_list DATASETS "aircraft cub200" DATASETS \
   cifar100 cub200 aircraft inat19
-parse_choice_list TRANSFORM_MODES "bn_linear" TRANSFORM_MODES \
+parse_choice_list TRANSFORM_MODES "full" TRANSFORM_MODES \
   full bn_linear final_only
 
 config_for_dataset() {
@@ -170,28 +160,34 @@ run_output_dir() {
   local ds="$1"
   local transform_mode="$2"
   local weight_suffix=""
+  local transform_suffix=""
   local frame_suffix=""
-  local per_level="$FIXED_FRAME_PER_LEVEL"
+  local advantage_suffix=""
   if [[ "$WEIGHT_MODE" != "equal" ]]; then
     weight_suffix="_${WEIGHT_MODE}"
   fi
-  if [[ "$FIXED_FRAME_MODE" == "identity" && "$per_level" =~ ^(1|true|True)$ ]]; then
-    frame_suffix="_identity_per_level"
-  elif [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
+  if [[ "$transform_mode" != "full" ]]; then
+    transform_suffix="_${transform_mode}"
+  fi
+  if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_orthogonalize_all_coarse_first_${transform_mode}${weight_suffix}${frame_suffix}"
+  if [[ "$ADVANTAGE_ENABLED" == "true" ]]; then
+    advantage_suffix="_advantage"
+  fi
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_level_softmax_ce_reg_projection${weight_suffix}${transform_suffix}${frame_suffix}${advantage_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Transform modes: %s\n' "${TRANSFORM_MODES[*]}"
-printf 'Loss: %s\n' "$LOSS_MODE"
+printf 'Loss: level_softmax_ce_reg\n'
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
-printf 'Fixed frame per level: %s\n' "$FIXED_FRAME_PER_LEVEL"
-printf 'Projection mode: coarse_first\n'
-printf 'Projection rule: orthogonalize_all\n'
+printf 'LH-style stacked-weight projection: enabled\n'
+printf 'LH-DNN advantage baselines: %s\n' "$ADVANTAGE_ENABLED"
+printf 'Projection epsilon: %s\n' "$PROJECTION_EPS"
+printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -202,15 +198,15 @@ for ds in "${DATASETS[@]}"; do
 
   for transform_mode in "${TRANSFORM_MODES[@]}"; do
     run_seeded_train "$cfg" "$(run_output_dir "$ds" "$transform_mode")" \
-      "model.loss=$LOSS_MODE" \
+      "model.loss=level_softmax_ce_reg" \
       "model.weight_mode=$WEIGHT_MODE" \
       "model.transform_mode=$transform_mode" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
-      "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
-      "train.lexicographic.enabled=true" \
-      "train.lexicographic.start_epoch=0" \
-      "train.lexicographic.projection_mode=coarse_first" \
-      "train.lexicographic.projection_rule=orthogonalize_all"
+      "model.fixed_frame_per_level=false" \
+      "model.projection.enabled=true" \
+      "model.projection.advantage_enabled=$ADVANTAGE_ENABLED" \
+      "model.projection.eps=$PROJECTION_EPS" \
+      "train.lexicographic.enabled=false"
   done
 done
 
@@ -225,4 +221,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS transform ablation runs.\n'
+printf 'Completed all requested Hier-COS LH-DNN projection runs.\n'

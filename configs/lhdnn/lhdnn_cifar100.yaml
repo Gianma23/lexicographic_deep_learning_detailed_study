@@ -47,7 +47,7 @@ dataloader:
   batch_size: 128
   num_workers: 8
   pin_memory: true
-  drop_last_train: false
+  drop_last_train: true
   windows_spawn_safe: true
 
 train:
@@ -62,7 +62,8 @@ train:
   smoothing: 0.0
 
 optim:
-  # Inherited from B-CNN reference setup used by LH-DNN paper.
+  # The LH-DNN paper keeps the B-CNN optimizer family; its reference code uses
+  # SGD with momentum 0.9, Nesterov enabled, and no explicit weight decay.
   name: sgd
   lr: 0.001
   weight_decay: 0.0
@@ -86,4 +87,3 @@ scheduler:
 
 runtime:
   deterministic: true
-  protocol: corrected_unified_v1

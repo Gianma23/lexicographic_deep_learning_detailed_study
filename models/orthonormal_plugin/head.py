@@ -24,12 +24,13 @@ def _parse_bool_like(value: Any, default: bool = False) -> bool:
 
 
 class FrozenBlockDiagonalClassifier(nn.Module):
-    """Frozen block-diagonal classifier with one independent block per level."""
+    """Block-diagonal classifier with one independent block per level."""
 
     def __init__(
         self,
         block_sizes: Sequence[int],
         mode: str = "orthonormal_random",
+        trainable: bool = False,
         owner: str = "Orthonormal plugin",
     ):
         super().__init__()
@@ -52,7 +53,7 @@ class FrozenBlockDiagonalClassifier(nn.Module):
                     block.weight.copy_(q)
                 else:
                     block.weight.copy_(torch.eye(block_size))
-            block.weight.requires_grad_(False)
+            block.weight.requires_grad_(bool(trainable))
             blocks.append(block)
         self.blocks = nn.ModuleList(blocks)
 
@@ -115,7 +116,7 @@ def init_fixed_classifier(
                 f"Unsupported {owner} fixed_frame_mode '{mode}'. "
                 "Expected one of ['orthonormal_random', 'orthonormal_block_random', 'identity']."
             )
-    classifier.weight.requires_grad_(False)
+    classifier.weight.requires_grad_(mode == "learnable_orthonormal")
 
 
 def build_fixed_classifier(
@@ -126,6 +127,9 @@ def build_fixed_classifier(
     owner: str = "Orthonormal plugin",
 ) -> nn.Module:
     resolved_mode = str(mode)
+    trainable = resolved_mode == "learnable_orthonormal"
+    if trainable:
+        resolved_mode = "orthonormal_random"
     resolved_per_level = _parse_bool_like(fixed_frame_per_level, default=False)
     if resolved_mode == "orthonormal_block_random":
         resolved_mode = "orthonormal_random"
@@ -134,13 +138,18 @@ def build_fixed_classifier(
     if resolved_per_level:
         if block_sizes is None:
             raise ValueError(f"{owner} fixed_frame_per_level=true requires block sizes.")
-        return FrozenBlockDiagonalClassifier(block_sizes=block_sizes, mode=resolved_mode, owner=owner)
+        return FrozenBlockDiagonalClassifier(
+            block_sizes=block_sizes,
+            mode=resolved_mode,
+            trainable=trainable,
+            owner=owner,
+        )
 
     classifier = nn.Linear(int(width), int(width), bias=False)
     init_fixed_classifier(
         classifier=classifier,
         width=int(width),
-        mode=resolved_mode,
+        mode="learnable_orthonormal" if trainable else resolved_mode,
         block_sizes=block_sizes,
         owner=owner,
     )
@@ -230,9 +239,13 @@ class OrthonormalPluginHead(nn.Module):
             if self.transform_mode != "final_only"
             else []
         )
-        if not transform_params:
-            return []
-        return [{"params": transform_params, "lr": float(base_lr) * float(transform_lr_scale)}]
+        classifier_params = [p for p in self.fixed_classifier.parameters() if p.requires_grad]
+        groups = []
+        if transform_params:
+            groups.append({"params": transform_params, "lr": float(base_lr) * float(transform_lr_scale)})
+        if classifier_params:
+            groups.append({"params": classifier_params, "lr": float(base_lr)})
+        return groups
 
     def level_node_ids(self) -> List[torch.Tensor]:
         return [getattr(self, name) for name in self.level_node_id_names]

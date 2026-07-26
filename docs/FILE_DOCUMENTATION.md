@@ -90,7 +90,7 @@ fatal errors.
 
 - `models/lhdnn/model.py` — paper-derived large topology, forward-pass
   projection blocks, advantage topology, and explicit optional large-image
-  adaptive pooling.
+  deterministic average pooling.
 - `models/lhdnn/losses.py` — unweighted sum of level cross-entropies.
 - `models/lhdnn/factory.py` — config and taxonomy adapter.
 
@@ -113,7 +113,8 @@ fatal errors.
 ### Hier-COS and the orthonormal plugin
 
 - `models/hiercos/model.py` — fixed-frame node-space model with WideResNet or
-  ResNet-50 backbone.
+  ResNet-50 backbone and optional LH-projected learnable level heads, detached
+  advantage baselines, and a global fixed frame.
 - `models/hiercos/factory.py` — model/plugin config adapter.
 - `models/hiercos/losses.py` — compatibility export for shared fixed-frame
   losses.
@@ -172,9 +173,11 @@ Runtime modules:
 - `scripts/run_matrix_utils.sh` — whitespace-separated environment matrix
   parsing and allowed-value validation.
 - `scripts/hcast/` — base, HCC, lexicographic, and plugin studies.
+- `scripts/lhdnn/` — paper-aligned CIFAR-100 baseline plus explicit
+  CUB/Aircraft protocol extrapolations.
 - `scripts/hrn/` — base and plugin studies.
-- `scripts/hiercos/` — decomposed-loss baselines, two lexicographic rules, and
-  transform ablation.
+- `scripts/hiercos/` — decomposed-loss baselines, two lexicographic rules,
+  transform ablation, and the LH-projected learnable-head study.
 - `scripts/data/prepare_inat19_mbm_splits.py` — iNat Making Better Mistakes
   manifest preparation.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
@@ -195,6 +198,7 @@ narrow defaults are printed during `DRY_RUN`.
 - `notebooks/hcast_analysis.ipynb`
 - `notebooks/hcc_internal_diagnostics.ipynb`
 - `notebooks/hiercos_analysis.ipynb`
+- `notebooks/lhdnn_analysis.ipynb`
 - `notebooks/hrn_analysis.ipynb`
 - `notebooks/model_comparison_all_datasets.ipynb`
 - `notebooks/hcast_analysis_utils.py`

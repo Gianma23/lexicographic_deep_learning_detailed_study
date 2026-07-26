@@ -64,6 +64,7 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "transform_lr_scale",
         "fixed_frame_mode",
         "fixed_frame_per_level",
+        "projection",
         "wide_depth",
         "wide_widen_factor",
         "wide_drop_rate",
@@ -222,7 +223,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "double_step",
         "num_iterations",
     },
-    "model.projection": {"eps"},
+    "model.projection": {"enabled", "advantage_enabled", "eps"},
     "model.loss": {
         "globalkl",
         "gk_weight",
@@ -337,8 +338,8 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
     optim = _require_mapping(payload, "optim")
     scheduler = _require_mapping(payload, "scheduler")
     runtime = _require_mapping(payload, "runtime")
-    protocol = runtime.get("protocol")
-    legacy_resume = protocol is None and bool(str(train.get("resume", "")).strip())
+    protocol = runtime.get("protocol", "corrected_unified_v1")
+    legacy_resume = "protocol" not in runtime and bool(str(train.get("resume", "")).strip())
 
     dataset_name = _require_enum(dataset.get("name"), "dataset.name", SUPPORTED_DATASETS)
     depth = _positive_int(dataset.get("hierarchy_depth"), "dataset.hierarchy_depth", minimum=2)
@@ -467,11 +468,6 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
             "runtime.protocol",
             {"corrected_unified_v1"},
         )
-    elif not legacy_resume:
-        raise ValueError(
-            "`runtime.protocol` is required for new runs. An untagged config is "
-            "accepted only when strictly resuming a legacy checkpoint."
-        )
 
     if bool(dataloader.get("drop_last_eval", False)) and not legacy_resume:
         raise ValueError(
@@ -513,6 +509,7 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
     train = _require_mapping(payload, "train")
     model_name = _require_enum(model.get("name"), "model.name", SUPPORTED_MODELS)
     depth = int(dataset["hierarchy_depth"])
+    hiercos_projection_enabled = False
 
     if model_name in {"hcast", "hrn"} and depth != 3:
         raise ValueError(f"{model_name} requires exactly three hierarchy levels.")
@@ -597,6 +594,16 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         projection = model.get("projection")
         if not isinstance(projection, Mapping):
             raise ValueError("LH-DNN requires `model.projection` to be a mapping.")
+        if "enabled" in projection and not _require_bool(
+            projection.get("enabled"),
+            "model.projection.enabled",
+        ):
+            raise ValueError("LH-DNN projection is always enabled.")
+        if "advantage_enabled" in projection and not _require_bool(
+            projection.get("advantage_enabled"),
+            "model.projection.advantage_enabled",
+        ):
+            raise ValueError("LH-DNN advantage is always enabled.")
         if _finite_float(projection.get("eps", 0.0), "model.projection.eps") <= 0.0:
             raise ValueError("LH-DNN projection epsilon must be > 0.")
         adaptive_pool_size = model.get("adaptive_pool_size")
@@ -639,6 +646,25 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         )
         if not isinstance(model.get("fixed_frame_per_level", False), bool):
             raise ValueError("`model.fixed_frame_per_level` must be boolean.")
+        projection = model.get("projection")
+        if projection is not None:
+            if not isinstance(projection, Mapping):
+                raise ValueError("Hier-COS `model.projection` must be a mapping.")
+            hiercos_projection_enabled = _require_bool(
+                projection.get("enabled", False),
+                "model.projection.enabled",
+            )
+            advantage_enabled = _require_bool(
+                projection.get("advantage_enabled", False),
+                "model.projection.advantage_enabled",
+            )
+            if advantage_enabled and not hiercos_projection_enabled:
+                raise ValueError(
+                    "Hier-COS `model.projection.advantage_enabled=true` requires "
+                    "`model.projection.enabled=true`."
+                )
+            if _finite_float(projection.get("eps", 1e-6), "model.projection.eps") <= 0.0:
+                raise ValueError("Hier-COS projection epsilon must be > 0.")
         if variant == "haframe_resnet50":
             _require_enum(model.get("pool", "max"), "model.pool", {"max", "average"})
         else:
@@ -715,6 +741,18 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         if _finite_float(plugin.get("alpha", 0.05), "orthonormal_plugin.alpha") < 0.0:
             raise ValueError("`orthonormal_plugin.alpha` must be >= 0.")
 
+    if hiercos_projection_enabled:
+        effective_loss = (
+            plugin.get("loss", "global_softmax_ce_reg")
+            if plugin_enabled
+            else model.get("loss", "kl_reg")
+        )
+        if effective_loss != "level_softmax_ce_reg":
+            raise ValueError(
+                "Enabled Hier-COS LH-style projection requires `level_softmax_ce_reg` "
+                "so each level loss uses its projected branch."
+            )
+
     lex = train.get("lexicographic")
     lex_enabled = False
     if lex is not None and not isinstance(lex, Mapping):
@@ -735,6 +773,11 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             minimum=0,
         )
     if lex_enabled:
+        if hiercos_projection_enabled:
+            raise ValueError(
+                "Hier-COS `model.projection.enabled=true` is mutually exclusive with "
+                "`train.lexicographic.enabled=true`."
+            )
         if depth != 3:
             raise ValueError("Lexicographic training requires exactly three hierarchy levels.")
         if not plugin_enabled and model_name not in {"hcast", "hiercos"}:

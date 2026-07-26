@@ -2103,11 +2103,18 @@ class HCastAnalysis:
             plt.tight_layout()
             plt.show()
 
-    def show_final_test_tables(self, include_topdown: Optional[bool] = None) -> None:
+    def show_final_test_tables(
+        self,
+        include_topdown: Optional[bool] = None,
+        allow_single_run: bool = False,
+    ) -> None:
         include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
-            if len(dataset_runs) < 2:
+            if not dataset_runs:
+                print(f"[{dataset_key}] Skipping final test table: no selected runs.")
+                continue
+            if len(dataset_runs) < 2 and not allow_single_run:
                 print(f"[{dataset_key}] Skipping final test table: need at least two runs (base + comparison).")
                 continue
 

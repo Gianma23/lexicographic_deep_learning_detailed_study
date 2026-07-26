@@ -1,5 +1,6 @@
 import math
 import warnings
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -7,7 +8,7 @@ import torch.nn as nn
 
 from models.orthonormal_plugin.config import parse_bool
 from models.orthonormal_plugin.head import FrozenBlockDiagonalClassifier, build_fixed_classifier
-from models.orthonormal_plugin.topology import build_topology
+from models.orthonormal_plugin.topology import build_topology, normalize_parent_of
 from models.orthonormal_plugin.transforms import build_transformation_module
 
 
@@ -227,7 +228,7 @@ class _ResNet50NodeBackbone(nn.Module):
 
 
 class HierCosModel(nn.Module):
-    """Hier-COS model with fixed orthonormal node frame and taxonomy-driven subspaces."""
+    """Hier-COS fixed-frame model with optional LH-projected learnable level heads."""
 
     def __init__(
         self,
@@ -241,6 +242,7 @@ class HierCosModel(nn.Module):
         transform_lr_scale: float = 1.0,
         fixed_frame_mode: str = "orthonormal_random",
         fixed_frame_per_level: bool = False,
+        projection_cfg: Optional[Dict[str, Any]] = None,
         wide_depth: int = 28,
         wide_widen_factor: int = 8,
         wide_drop_rate: float = 0.0,
@@ -323,6 +325,43 @@ class HierCosModel(nn.Module):
             block_sizes=self.num_classes_per_level,
             owner="Hier-COS model",
         )
+        projection_cfg = dict(projection_cfg or {})
+        self.projection_enabled = parse_bool(projection_cfg.get("enabled", False), default=False)
+        self.advantage_enabled = parse_bool(
+            projection_cfg.get("advantage_enabled", False),
+            default=False,
+        )
+        if self.advantage_enabled and not self.projection_enabled:
+            raise ValueError(
+                "Hier-COS `model.projection.advantage_enabled=true` requires "
+                "`model.projection.enabled=true`."
+            )
+        self.projection_eps = float(projection_cfg.get("eps", 1e-6))
+        if self.projection_eps <= 0.0:
+            raise ValueError("Hier-COS `model.projection.eps` must be > 0.")
+        self.projection_heads = nn.ModuleList(
+            [
+                nn.Linear(self.total_nodes, int(num_classes))
+                for num_classes in self.num_classes_per_level
+            ]
+            if self.projection_enabled
+            else []
+        )
+        self.parent_index_buffer_names: List[Optional[str]] = [None] * self.depth
+        if self.advantage_enabled:
+            parent_of = normalize_parent_of(taxonomy, owner="Hier-COS advantage topology")
+            for level in range(1, self.depth):
+                mapping = parent_of[level]
+                parent_index = torch.tensor(
+                    [
+                        int(mapping[child])
+                        for child in range(self.num_classes_per_level[level])
+                    ],
+                    dtype=torch.long,
+                )
+                buffer_name = f"parent_index_level_{level}"
+                self.register_buffer(buffer_name, parent_index, persistent=False)
+                self.parent_index_buffer_names[level] = buffer_name
 
     def parameter_groups(
         self,
@@ -341,7 +380,12 @@ class HierCosModel(nn.Module):
             if self.transform_mode != "final_only"
             else []
         )
-        classifier_params = [p for p in self.fixed_classifier.parameters() if p.requires_grad]
+        classifier_params = [
+            p
+            for module in (self.fixed_classifier, self.projection_heads)
+            for p in module.parameters()
+            if p.requires_grad
+        ]
 
         if self.variant == "haframe_wide_resnet":
             # Upstream wraps the WideResNet transformation head inside features_2,
@@ -372,14 +416,105 @@ class HierCosModel(nn.Module):
     def _level_node_ids(self) -> List[torch.Tensor]:
         return [getattr(self, name) for name in self.level_node_id_names]
 
+    def _parent_baseline(self, level: int, previous_logits: torch.Tensor) -> torch.Tensor:
+        if level <= 0:
+            raise ValueError("Hier-COS advantage is defined only for levels greater than zero.")
+        buffer_name = self.parent_index_buffer_names[level]
+        if buffer_name is None:
+            raise RuntimeError(f"Missing Hier-COS advantage parent indices for level {level}.")
+        parent_index = getattr(self, buffer_name).to(device=previous_logits.device)
+        return previous_logits.index_select(dim=1, index=parent_index)
+
+    @staticmethod
+    def _compute_projection_component(
+        z: torch.Tensor,
+        prev_weights: torch.Tensor,
+        eps: float,
+    ) -> torch.Tensor:
+        # A^(l) is the row-wise stack [W_1; ...; W_(l-1)] with no
+        # activation-derivative factor.
+        az = torch.matmul(z, prev_weights.transpose(0, 1).contiguous())
+        gram = torch.matmul(prev_weights, prev_weights.transpose(0, 1).contiguous())
+        eye = torch.eye(gram.size(-1), dtype=gram.dtype, device=gram.device)
+        gram = gram + float(eps) * eye
+        coefficients = torch.linalg.solve(gram, az.transpose(0, 1).contiguous())
+        return torch.matmul(
+            coefficients.transpose(0, 1).contiguous(),
+            prev_weights,
+        )
+
+    def _projected_branch_logits_per_level(
+        self,
+        z: torch.Tensor,
+    ) -> List[torch.Tensor]:
+        if len(self.projection_heads) != self.depth:
+            raise RuntimeError(
+                "Enabled Hier-COS LH-DNN projection requires one learnable head per hierarchy level."
+            )
+
+        compute_dtype = torch.float32 if z.dtype in {torch.float16, torch.bfloat16} else z.dtype
+        autocast_off = nullcontext()
+        if z.device.type in {"cpu", "cuda", "xpu", "mps"}:
+            autocast_off = torch.autocast(device_type=z.device.type, enabled=False)
+
+        logits_per_level: List[torch.Tensor] = []
+        with autocast_off:
+            z_work = z.to(dtype=compute_dtype)
+
+            for level, head in enumerate(self.projection_heads):
+                if level == 0:
+                    z_level = z
+                else:
+                    previous_weights = torch.cat(
+                        [
+                            self.projection_heads[previous_level].weight.detach().to(
+                                dtype=compute_dtype
+                            )
+                            for previous_level in range(level)
+                        ],
+                        dim=0,
+                    )
+                    c_level = self._compute_projection_component(
+                        z=z_work,
+                        prev_weights=previous_weights,
+                        eps=self.projection_eps,
+                    ).to(dtype=z.dtype)
+                    z_level = z - c_level + c_level.detach()
+
+                head_input = z_level.to(dtype=head.weight.dtype)
+                logits_level = torch.matmul(
+                    head_input,
+                    head.weight.transpose(0, 1).contiguous(),
+                )
+                if head.bias is not None:
+                    logits_level = logits_level + head.bias
+                if self.advantage_enabled and level > 0:
+                    logits_level = logits_level + self._parent_baseline(
+                        level=level,
+                        previous_logits=logits_per_level[level - 1].detach(),
+                    )
+                logits_per_level.append(logits_level)
+        return logits_per_level
+
     def forward(self, x: torch.Tensor) -> Dict[str, Any]:
         z = self.backbone(x)
-        transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
-        node_logits = self.fixed_classifier(transformed)
-        if isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
-            node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))
+        if self.projection_enabled:
+            transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
+            branch_logits_per_level = self._projected_branch_logits_per_level(
+                z=transformed,
+            )
+            fixed_input = torch.cat(branch_logits_per_level, dim=1)
+            node_logits = self.fixed_classifier(fixed_input)
+            node_logits_per_level = list(
+                torch.split(node_logits, self.num_classes_per_level, dim=1)
+            )
         else:
-            node_logits_per_level = None
+            transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
+            node_logits = self.fixed_classifier(transformed)
+            if isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
+                node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))
+            else:
+                node_logits_per_level = None
         logits_per_level = self._level_subspace_scores(node_logits)
         effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
 

@@ -125,13 +125,6 @@ class LHDNNModel(nn.Module):
         )
         if self.adaptive_pool_size is not None and self.adaptive_pool_size <= 0:
             raise ValueError("`model.adaptive_pool_size` must be > 0 when provided.")
-        self.adaptive_pool = (
-            nn.Identity()
-            if self.adaptive_pool_size is None
-            else nn.AdaptiveAvgPool2d(
-                (self.adaptive_pool_size, self.adaptive_pool_size)
-            )
-        )
 
         self.projection_eps = float(projection_cfg.get("eps", 1e-6))
         if self.projection_eps <= 0.0:
@@ -148,6 +141,7 @@ class LHDNNModel(nn.Module):
             self.stages.append(_ConvStage(current_in, out_ch))
             current_in = out_ch
 
+        self.adaptive_pool = self._build_deterministic_pool()
         self.flattened_dim = self._infer_flattened_dim(image_size=self.image_size, in_channels=int(in_channels))
         self.shared_linear = nn.Linear(self.flattened_dim, self.shared_dim)
         self.shared_relu = nn.ReLU(inplace=False)
@@ -173,6 +167,28 @@ class LHDNNModel(nn.Module):
             buffer_name = f"parent_index_level_{level}"
             self.register_buffer(buffer_name, parent_idx_per_level[level], persistent=False)
             self.parent_index_buffers.append(buffer_name)
+
+    def _build_deterministic_pool(self) -> nn.Module:
+        if self.adaptive_pool_size is None:
+            return nn.Identity()
+
+        spatial_size = self.image_size
+        for _ in self.stages:
+            spatial_size //= 2
+        target_size = self.adaptive_pool_size
+        if spatial_size < target_size or spatial_size % target_size != 0:
+            raise ValueError(
+                "Deterministic LH-DNN pooling requires the post-stage spatial "
+                f"size ({spatial_size}) to be divisible by adaptive_pool_size "
+                f"({target_size})."
+            )
+
+        # For the shipped 224 px presets, the four max-pool stages produce a
+        # 14x14 map. AdaptiveAvgPool2d(2) is therefore exactly equivalent to a
+        # non-overlapping 7x7 average pool, whose CUDA backward supports strict
+        # deterministic algorithms.
+        kernel_size = spatial_size // target_size
+        return nn.AvgPool2d(kernel_size=kernel_size, stride=kernel_size)
 
     def _infer_flattened_dim(self, image_size: int, in_channels: int) -> int:
         dummy = torch.zeros(1, int(in_channels), int(image_size), int(image_size))

@@ -18,22 +18,12 @@ dataset:
   # Keep repo workflow (not paper-exact protocol) for best-checkpoint selection.
   split_seed: 0
   transforms:
-    use_timm: true
+    # Protocol extrapolation: the cited B-CNN/LH-DNN setup does not augment
+    # training images. Deterministic resizing to 224 px is dataset-specific.
+    use_timm: false
     normalization: torchvision
-    timm:
-      color_jitter: 0.3
-      auto_augment: rand-m9-mstd0.5-inc1
-      train_interpolation: bicubic
-      random_erase:
-        prob: 0.25
-        mode: pixel
-        count: 1
-      # For image_size <= 32, timm train crop is replaced with RandomCrop(image_size, padding=4).
-      small_image_random_crop_padding: 4
-    eval:
-      resize_mode: auto
-      crop_ratio: 0.875
-      interpolation: bicubic
+    fixed_resize_only: true
+    fixed_resize_interpolation: bicubic
     # Extrapolated LH-DNN setup: no MixUp/CutMix.
     mixup: 0.0
     cutmix: 0.0
@@ -50,25 +40,26 @@ dataloader:
   windows_spawn_safe: true
 
 train:
-  # Extrapolation choice for Aircraft: short LH-DNN horizon, consistent with paper style.
-  epochs: 20
+  # Extrapolation: carry over the paper's large CIFAR-100 LH-DNN horizon.
+  epochs: 15
   seed: 0
   device: ${oc.env:TRAIN_DEVICE,cuda}
-  amp: true
+  amp: false
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/lhdnn_aircraft
   smoothing: 0.0
 
 optim:
-  # Inherited training family from LH-DNN paper (SGD + momentum), extrapolated to Aircraft.
+  # Extrapolation of the paper/reference optimizer: SGD, momentum 0.9,
+  # Nesterov enabled, and no explicit weight decay.
   name: sgd
   lr: 0.001
-  weight_decay: 0.0005
+  weight_decay: 0.0
   momentum: 0.9
   nesterov: true
 
 scheduler:
-  # Extrapolation for Aircraft: same two-stage style used in paper-reported CIFAR runs.
+  # Extrapolation of the large CIFAR-100 LH-DNN schedule: switch at epoch 11.
   name: step
   warmup_lr: 0.001
   min_lr: 0.0002
@@ -84,4 +75,3 @@ scheduler:
 
 runtime:
   deterministic: true
-  protocol: corrected_unified_v1

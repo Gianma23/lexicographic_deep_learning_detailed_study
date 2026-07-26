@@ -186,10 +186,12 @@ lower-priority gradients.
 - `configs/lhdnn/lhdnn_aircraft.yaml`
 
 The CIFAR-100 preset uses the paper’s large topology and 15-epoch schedule.
-CUB and Aircraft retain that topology but explicitly add 2×2 adaptive average
-pooling before the shared layer. This preserves the paper’s pre-head geometry
-without creating an unintended ~51-million-parameter dense layer at 224 px.
-Those two presets remain local extrapolations.
+CUB and Aircraft retain that topology but reduce the 14×14 final feature map
+to 2×2 with deterministic 7×7 average pooling. For this divisible geometry it
+is equivalent to 2×2 adaptive average pooling, while supporting strict
+deterministic CUDA backward. It preserves the paper’s pre-head geometry without
+creating an unintended ~51-million-parameter dense layer at 224 px. Those two
+presets remain local extrapolations.
 
 ### HT-CapsNet
 
@@ -226,6 +228,16 @@ Baseline presets default to the upstream-aligned `model.loss: kl_reg` and
 differentiable level objectives and are selected explicitly by lexicographic
 runner overrides. CUB is an extrapolation; CIFAR and iNat use this repository’s
 three-level hierarchy instead of the upstream full-depth protocols.
+
+The optional `model.projection.enabled: true` path gives each level an
+LH-DNN-style projected learnable FC head. It concatenates the three head
+outputs and applies one global frozen Hier-COS frame to the combined vector.
+The projection retains the complete transformation, including its final
+residual skip, and uses the stacked preceding head weights directly without an
+activation-derivative factor.
+Set `model.projection.advantage_enabled: true` to additionally propagate
+detached parent-class logits as LH-DNN advantage baselines. This path requires
+`model.loss: level_softmax_ce_reg`.
 
 ## Dataset behavior
 
@@ -298,7 +310,7 @@ Run logs also contain model-specific loss and diagnostic fields. See:
 
 ## Experiment launchers
 
-Launchers are under `scripts/hcast/`, `scripts/hrn/`, and
+Launchers are under `scripts/hcast/`, `scripts/lhdnn/`, `scripts/hrn/`, and
 `scripts/hiercos/`. They support:
 
 ```text
@@ -323,6 +335,20 @@ Hier-COS and plugin launchers similarly accept `LEX_PROJECTION_MODES` and
 `TRANSFORM_MODES`. Each launcher prints the selected matrix. Narrow defaults
 remain narrow so invoking a script cannot unexpectedly start the full
 expensive grid.
+
+Run the paper-aligned LH-DNN CIFAR-100 preset and the two explicitly
+extrapolated large-image presets with:
+
+```bash
+scripts/lhdnn/run_lhdnn_baselines.sh
+```
+
+Run the Hier-COS model with LH-DNN-style projected learnable heads followed by
+the global fixed frame with:
+
+```bash
+scripts/hiercos/run_hiercos_lhdnn_projection.sh
+```
 
 ## Verification
 
