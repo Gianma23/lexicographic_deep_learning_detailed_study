@@ -1,6 +1,6 @@
 # Template for the `dataset:` section in experiment configs.
 dataset:
-  name: cifar-100                    # Dataset id (strict): cifar-100 | cub-200-2011 | fgvc-aircraft | inat19
+  name: cifar-100                    # Dataset id (strict): cifar-100 | cub-200-2011 | fgvc-aircraft
   root: ${oc.env:CIFAR100_ROOT,./data/cifar100} # Select the matching dataset env variable
   hierarchy_depth: 3                 # Number of hierarchy levels expected in labels
   image_size: 32                     # Target input size (single int; square image)
@@ -8,7 +8,7 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]      # Channel std (used when normalization=torchvision)
   levels: [coarse1, coarse2, fine]   # Human-readable hierarchy level names
   download: true                     # Adapter-specific auto-download toggle (if supported)
-  split_policy: official_val_test    # iNat19: official_val_test | explicit
+  split_policy: official_val_test    # official_val_test | explicit
   val_split_ratio: 0.1               # Corrected default: CIFAR .10; CUB presets use .15
   split_seed: 0                      # Fixed data partition seed, independent of training seed
 

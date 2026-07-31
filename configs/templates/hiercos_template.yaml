@@ -16,16 +16,21 @@ model:
   fixed_frame_mode: orthonormal_random # orthonormal_random | identity; legacy: orthonormal_block_random
   fixed_frame_per_level: false      # false = one global fixed layer; true = one frozen block per hierarchy level
 
-  # Optional LH-style projection after the complete transform (including the
-  # final residual skip when transform_mode=full).
+  # Optional LH-style projection after the complete transform. Projection keeps
+  # the transform's PReLU activations and residual skips unchanged; the level
+  # branches read the transform output directly unless rho_enabled inserts a
+  # shared PReLU and adds its derivative to the projection matrix.
   # Each projected branch has a learnable FC head; the level outputs are
-  # concatenated and passed through the global fixed Hier-COS frame.
+  # concatenated and passed through an identity or per-level block-diagonal
+  # fixed frame; a dense global frame would mix the independent LH branches.
   # It requires loss=level_softmax_ce_reg and cannot use
   # train.lexicographic.enabled=true.
   projection:
-    enabled: false                  # true uses A=[W_1; ...; W_(l-1)] with no activation-derivative factor
+    enabled: false                  # true enables the projected learnable level heads
+    rho_enabled: false              # true uses per-sample A[b]=[W_1; ...; W_(l-1)] * rho'(k[b])
     advantage_enabled: false        # true adds detached parent logits as LH-DNN advantage baselines
-    eps: 1.0e-6                     # Stabilizer for each per-sample projection solve
+    feature_dim: 256                # Shared width, projection only; 0 restores sum(num_classes_per_level)
+    eps: 1.0e-6                     # Stabilizer for the projection solve
 
   # Used only when variant=haframe_wide_resnet
   wide_depth: 28                    # WideResNet depth; must satisfy (depth - 4) % 6 == 0

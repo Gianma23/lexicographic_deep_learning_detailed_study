@@ -57,7 +57,6 @@ The implementation choices below follow the selected clean-protocol constraints 
 - **Aligned**:
   - CIFAR path: HAFrame WideResNet (`haframe_wide_resnet`) with hierarchical node-space backbone.
   - Aircraft path: HAFrame ResNet-50 (`haframe_resnet50`) with ImageNet-pretrained trunk.
-  - iNat19 path: HAFrame ResNet-50 (`haframe_resnet50`) with ImageNet-pretrained trunk, average pooling, `kl_reg`/`kl_leaf`, `alpha=0.001`, batch size 256, 100 epochs, SGD/cosine, and upstream iNaturalist19-224 hyperparameters where compatible.
   - A single fixed orthonormal Hier-COS frame with taxonomy-driven subspace scores is supported.
 
 ### Loss
@@ -71,13 +70,11 @@ The implementation choices below follow the selected clean-protocol constraints 
 ### Optimizer + Scheduler
 - **Aligned for parity presets**:
   - SGD with backbone at `0.1x` LR and cosine schedule equivalent to upstream custom-sgd cosine behavior.
-  - The iNat19 preset additionally matches upstream `--larger-backbone` behavior by training the transform head at `0.1x` LR.
 
 ### Data Transforms
 - **Aligned + explicit FGVC parity option**:
   - CIFAR parity: reflect-padded random crop + horizontal flip + CIFAR normalization.
   - FGVC-Aircraft parity: `Resize(224) -> RandomCrop(224,padding=4) -> HFlip -> FGVC normalization`.
-  - iNat19 parity: upstream iNat19 normalization with 224-pixel random resized crops for training and 224-pixel resize for validation/test.
   - Added shared transform option `dataset.transforms.manual.crop_bottom_pixels`; parity FGVC config uses `20` to reproduce upstream preprocessing that removes the bottom banner.
 
 ### Split/Evaluation Protocol
@@ -88,9 +85,8 @@ The implementation choices below follow the selected clean-protocol constraints 
 ## Intentional Divergences Kept In This Pass
 
 1. Hier-COS CIFAR remains 3-level in this repo (not upstream 5-level CIFAR protocol).
-2. Hier-COS iNat19 uses this repo's local 3-level family/genus/species projection, not the upstream full 7-level iNaturalist19 taxonomy.
-3. HRN partial-label (`proportion`) experiments are not implemented in this pass.
-4. Checkpoint selection remains `FPA/TICE/weighted AP` to preserve repository-wide comparability.
+2. HRN partial-label (`proportion`) experiments are not implemented in this pass.
+3. Checkpoint selection remains `FPA/TICE/weighted AP` to preserve repository-wide comparability.
 
 ## Active presets
 
@@ -100,6 +96,5 @@ The implementation choices below follow the selected clean-protocol constraints 
 - `configs/hiercos/hiercos_cifar100.yaml`
 - `configs/hiercos/hiercos_cub200.yaml` (local extrapolation)
 - `configs/hiercos/hiercos_aircraft.yaml`
-- `configs/hiercos/hiercos_inat19.yaml` (local 3-level iNat19 projection)
 
 These are the HRN/Hier-COS presets kept in their folders for this alignment pass.

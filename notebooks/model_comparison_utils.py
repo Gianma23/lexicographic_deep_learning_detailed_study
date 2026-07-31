@@ -65,7 +65,6 @@ _DATASET_IDS = {
     "cifar-100",
     "cub-200-2011",
     "fgvc-aircraft",
-    "inat19",
 }
 
 _DATASET_CANONICAL_ALIASES = {
@@ -78,17 +77,12 @@ _DATASET_CANONICAL_ALIASES = {
     "fgvc-aircraft": "fgvc-aircraft",
     "fgvcaircraft": "fgvc-aircraft",
     "aircraft": "fgvc-aircraft",
-    "inat19": "inat19",
-    "inat-19": "inat19",
-    "inat2019": "inat19",
-    "inaturalist-2019": "inat19",
 }
 
 _DATASET_DISPLAY = {
     "cifar-100": "CIFAR-100",
     "cub-200-2011": "CUB-200-2011",
     "fgvc-aircraft": "FGVC-Aircraft",
-    "inat19": "iNat19",
 }
 
 _MODEL_IDS = {
@@ -137,7 +131,6 @@ _DATASET_RUN_NAME_TOKENS = {
     "cifar-100": ("cifar100", "cifar-100"),
     "cub-200-2011": ("cub200", "cub-200-2011", "cub2002011"),
     "fgvc-aircraft": ("aircraft", "fgvc-aircraft", "fgvcaircraft"),
-    "inat19": ("inat19", "inat-19", "inaturalist-2019"),
 }
 
 
@@ -192,7 +185,7 @@ def canonical_dataset_name(name: Optional[str]) -> str:
         return alias
     raise ValueError(
         f"Unsupported dataset_name '{name}'. "
-        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat19']."
+        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft']."
     )
 
 
@@ -1044,7 +1037,7 @@ class ModelComparisonConfig:
     include_topdown_metrics: bool = True
 
     preferred_dataset_order: List[str] = field(
-        default_factory=lambda: ["cifar-100", "cub-200-2011", "fgvc-aircraft", "inat19"]
+        default_factory=lambda: ["cifar-100", "cub-200-2011", "fgvc-aircraft"]
     )
     preferred_model_order: List[str] = field(
         default_factory=lambda: ["hcast", "lhdnn", "hrn", "ht_capsnet", "hiercos"]

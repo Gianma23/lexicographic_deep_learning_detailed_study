@@ -160,7 +160,7 @@ samples, or choose models on test data.
 ### Important source ambiguity
 
 - The upstream Aircraft script named `hier-cos.sh` passes
-  `--feature_space haf++`, unlike the CIFAR/iNat scripts that pass
+  `--feature_space haf++`, unlike the CIFAR script that passes
   `--feature_space hier-cos`. Aircraft behavior therefore cannot be described
   as an unambiguous exact Hier-COS recipe. The local Aircraft preset is a
   consistent Hier-COS adaptation and is labeled accordingly.
@@ -171,8 +171,7 @@ samples, or choose models on test data.
   that expose exact per-level objectives for diagnostics and lexicographic
   projection. Baseline presets remain `kl_reg`; launchers override the loss
   explicitly for these studies.
-- The repository uses three CIFAR levels instead of upstream’s five and three
-  iNat levels instead of upstream’s seven.
+- The repository uses three CIFAR levels instead of upstream’s five.
 - CUB is not an upstream Hier-COS experiment and is an extrapolation.
 - The shared orthonormal plugin generalizes the fixed-frame objective to other
   host models; it is not part of upstream Hier-COS.

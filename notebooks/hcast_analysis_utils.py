@@ -472,11 +472,11 @@ def _normalize_dataset_key(value: Optional[str]) -> Optional[str]:
         return None
     if not isinstance(value, str):
         raise ValueError("dataset key must be a string.")
-    if value in {"cifar-100", "cub-200-2011", "fgvc-aircraft", "inat19"}:
+    if value in {"cifar-100", "cub-200-2011", "fgvc-aircraft"}:
         return value
     raise ValueError(
         f"Unsupported dataset key '{value}'. "
-        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft', 'inat19']."
+        "Expected one of ['cifar-100', 'cub-200-2011', 'fgvc-aircraft']."
     )
 
 

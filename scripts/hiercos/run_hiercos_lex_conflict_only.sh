@@ -10,7 +10,7 @@ set -euo pipefail
 # - train.lexicographic.start_epoch=0
 # - train.lexicographic.projection_mode in {coarse_first, fine_first}
 # - train.lexicographic.projection_rule=conflict_only
-# for: cifar100, cub200, aircraft, inat19.
+# for: cifar100, cub200, aircraft.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -84,8 +84,8 @@ trap handle_exit EXIT
 #     ./scripts/hiercos/run_hiercos_lex_conflict_only.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cifar100 cub200 aircraft inat19" DATASETS \
-  cifar100 cub200 aircraft inat19
+parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
+  cifar100 cub200 aircraft
 parse_choice_list LEX_PROJECTION_MODES "coarse_first fine_first" LEX_PROJECTION_MODES \
   coarse_first fine_first pairwise_orthogonal
 
@@ -94,7 +94,6 @@ config_for_dataset() {
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
     cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
     aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
-    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1

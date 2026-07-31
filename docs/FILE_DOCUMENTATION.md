@@ -19,13 +19,12 @@ There is no tracked `TODO.md`.
 
 Runnable experiments:
 
-- `configs/hcast/` — four base H-CAST presets, three HCC presets, and three
+- `configs/hcast/` — three base H-CAST presets, three HCC presets, and three
   explicit lexicographic presets.
 - `configs/lhdnn/` — CIFAR-100 plus CUB/Aircraft extrapolation presets.
 - `configs/capsnet/` — HT-CapsNet presets for CIFAR-100, CUB, and Aircraft.
 - `configs/hrn/` — HRN presets for CIFAR-100, CUB, and Aircraft.
-- `configs/hiercos/` — Hier-COS presets for CIFAR-100, CUB, Aircraft, and
-  iNat19.
+- `configs/hiercos/` — Hier-COS presets for CIFAR-100, CUB, and Aircraft.
 
 All runnable configs contain the standard sections `model`, `dataset`,
 `dataloader`, `train`, `optim`, `scheduler`, and `runtime`, and are tagged
@@ -65,8 +64,6 @@ There is no separate `hcc_template.yaml`.
 - `datasets/cub_tree.py` — retained H-CAST order/family/species taxonomy.
 - `datasets/aircraft.py` — official class lists and parallel
   manufacturer/family/variant annotations with completeness checks.
-- `datasets/inat.py` — official COCO/JSON-in-tar and normalized explicit iNat19
-  manifests projected to family/genus/species.
 
 Validation and test datasets always reuse the training/authoritative label
 space. Explicit missing annotations and previously silent malformed rows are
@@ -113,8 +110,10 @@ fatal errors.
 ### Hier-COS and the orthonormal plugin
 
 - `models/hiercos/model.py` — fixed-frame node-space model with WideResNet or
-  ResNet-50 backbone and optional LH-projected learnable level heads, detached
-  advantage baselines, and a global fixed frame.
+  ResNet-50 backbone, optional LH-projected learnable level heads reading the
+  transform output directly or through an LH-DNN-style shared PReLU/rho
+  derivative, detached advantage baselines, and an independent identity or
+  per-level block-diagonal fixed frame.
 - `models/hiercos/factory.py` — model/plugin config adapter.
 - `models/hiercos/losses.py` — compatibility export for shared fixed-frame
   losses.
@@ -178,8 +177,6 @@ Runtime modules:
 - `scripts/hrn/` — base and plugin studies.
 - `scripts/hiercos/` — decomposed-loss baselines, two lexicographic rules,
   transform ablation, and the LH-projected learnable-head study.
-- `scripts/data/prepare_inat19_mbm_splits.py` — iNat Making Better Mistakes
-  manifest preparation.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
   nesting migration.
 

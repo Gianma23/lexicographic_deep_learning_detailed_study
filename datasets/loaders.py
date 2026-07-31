@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 from .aircraft import AircraftDataset
 from .cifar100 import CIFAR100Dataset
 from .cub import CUBDataset
-from .inat import INat19Dataset
 from .transforms import build_transforms
 from .types import DatasetLabelSpace, DatasetMetadata
 
@@ -20,7 +19,6 @@ from .types import DatasetLabelSpace, DatasetMetadata
 _DATASET_REGISTRY = {
     "cub-200-2011": CUBDataset,
     "fgvc-aircraft": AircraftDataset,
-    "inat19": INat19Dataset,
     "cifar-100": CIFAR100Dataset,
 }
 

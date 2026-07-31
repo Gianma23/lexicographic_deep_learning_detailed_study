@@ -99,7 +99,7 @@ trap handle_exit EXIT
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
 parse_choice_list DATASETS "cifar100" DATASETS \
-  cifar100 cub200 aircraft inat19
+  cifar100 cub200 aircraft
 parse_choice_list TRANSFORM_MODES "bn_linear" TRANSFORM_MODES \
   full bn_linear final_only
 
@@ -108,7 +108,6 @@ config_for_dataset() {
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
     cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
     aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
-    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1

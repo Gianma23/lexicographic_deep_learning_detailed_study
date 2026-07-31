@@ -5,6 +5,7 @@ set -euo pipefail
 # - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
+# - model.projection.feature_dim=${FEATURE_DIM}
 # - model.transform_mode=full
 # - train.lexicographic.enabled=false
 # Default dataset: aircraft. Override DATASETS to select any supported subset.
@@ -21,9 +22,10 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
-WEIGHT_MODE="${WEIGHT_MODE:-equal}"
-FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
+LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
+WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
+FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
+FEATURE_DIM="${FEATURE_DIM:-512}"
 
 case "$LOSS_MODE" in
   global_softmax_ce_reg|level_softmax_ce_reg) ;;
@@ -52,6 +54,12 @@ case "$FIXED_FRAME_MODE" in
     ;;
 esac
 
+if [[ ! "$FEATURE_DIM" =~ ^[0-9]+$ ]]; then
+  echo "Unsupported FEATURE_DIM: $FEATURE_DIM" >&2
+  echo "Expected a non-negative integer; use 0 for the dataset taxonomy width." >&2
+  exit 1
+fi
+
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
 }
@@ -77,18 +85,17 @@ trap handle_exit EXIT
 # Notebook-compatible outputs root.
 # Example:
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_baselines.sh
-#   LOSS_MODE=level_softmax_ce_reg WEIGHT_MODE=equal FIXED_FRAME_MODE=identity \
+#   LOSS_MODE=level_softmax_ce_reg WEIGHT_MODE=equal FIXED_FRAME_MODE=identity FEATURE_DIM=512 \
 #     ./scripts/hiercos/run_hiercos_baselines.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(aircraft)
+DATASETS=(cifar100)
 
 config_for_dataset() {
   case "$1" in
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
     cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
     aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
-    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -149,10 +156,14 @@ run_train() {
 run_output_dir() {
   local ds="$1"
   local frame_suffix=""
+  local dimension_suffix=""
+  if [[ "$FEATURE_DIM" != "0" ]]; then
+    dimension_suffix="_d${FEATURE_DIM}"
+  fi
   if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_baseline_${WEIGHT_MODE}${frame_suffix}"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_baseline_${WEIGHT_MODE}${dimension_suffix}${frame_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -160,6 +171,11 @@ printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
+if [[ "$FEATURE_DIM" == "0" ]]; then
+  printf 'Projection feature dimension: auto (sum of classes across levels)\n'
+else
+  printf 'Projection feature dimension: %s\n' "$FEATURE_DIM"
+fi
 printf 'Transform mode: full\n'
 printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
@@ -175,6 +191,7 @@ for ds in "${DATASETS[@]}"; do
     "model.weight_mode=$WEIGHT_MODE" \
     "model.transform_mode=full" \
     "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
+    "model.projection.feature_dim=$FEATURE_DIM" \
     "train.lexicographic.enabled=false"
 done
 

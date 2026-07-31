@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 
 
 SUPPORTED_MODELS = {"hcast", "lhdnn", "ht_capsnet", "hrn", "hiercos"}
-SUPPORTED_DATASETS = {"cifar-100", "cub-200-2011", "fgvc-aircraft", "inat19"}
+SUPPORTED_DATASETS = {"cifar-100", "cub-200-2011", "fgvc-aircraft"}
 
 _MODEL_KEYS: Dict[str, Set[str]] = {
     "hcast": {
@@ -223,7 +223,13 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "double_step",
         "num_iterations",
     },
-    "model.projection": {"enabled", "advantage_enabled", "eps"},
+    "model.projection": {
+        "enabled",
+        "rho_enabled",
+        "advantage_enabled",
+        "feature_dim",
+        "eps",
+    },
     "model.loss": {
         "globalkl",
         "gk_weight",
@@ -594,6 +600,15 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         projection = model.get("projection")
         if not isinstance(projection, Mapping):
             raise ValueError("LH-DNN requires `model.projection` to be a mapping.")
+        if "feature_dim" in projection:
+            raise ValueError(
+                "`model.projection.feature_dim` is supported only for model.name='hiercos'."
+            )
+        if "rho_enabled" in projection:
+            raise ValueError(
+                "`model.projection.rho_enabled` is supported only for model.name='hiercos'; "
+                "LH-DNN always includes its ReLU derivative."
+            )
         if "enabled" in projection and not _require_bool(
             projection.get("enabled"),
             "model.projection.enabled",
@@ -654,6 +669,15 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                 projection.get("enabled", False),
                 "model.projection.enabled",
             )
+            rho_enabled = _require_bool(
+                projection.get("rho_enabled", False),
+                "model.projection.rho_enabled",
+            )
+            if rho_enabled and not hiercos_projection_enabled:
+                raise ValueError(
+                    "Hier-COS `model.projection.rho_enabled=true` requires "
+                    "`model.projection.enabled=true`."
+                )
             advantage_enabled = _require_bool(
                 projection.get("advantage_enabled", False),
                 "model.projection.advantage_enabled",
@@ -662,6 +686,16 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                 raise ValueError(
                     "Hier-COS `model.projection.advantage_enabled=true` requires "
                     "`model.projection.enabled=true`."
+                )
+            feature_dim = projection.get("feature_dim", 256)
+            if (
+                isinstance(feature_dim, bool)
+                or not isinstance(feature_dim, int)
+                or feature_dim < 0
+            ):
+                raise ValueError(
+                    "`model.projection.feature_dim` must be a non-negative "
+                    "integer; use 0 for sum(num_classes_per_level)."
                 )
             if _finite_float(projection.get("eps", 1e-6), "model.projection.eps") <= 0.0:
                 raise ValueError("Hier-COS projection epsilon must be > 0.")
@@ -751,6 +785,25 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             raise ValueError(
                 "Enabled Hier-COS LH-style projection requires `level_softmax_ce_reg` "
                 "so each level loss uses its projected branch."
+            )
+        effective_frame_mode = (
+            plugin.get("fixed_frame_mode", "orthonormal_random")
+            if plugin_enabled
+            else model.get("fixed_frame_mode", "orthonormal_random")
+        )
+        effective_frame_per_level = (
+            plugin.get("fixed_frame_per_level", False)
+            if plugin_enabled
+            else model.get("fixed_frame_per_level", False)
+        )
+        if (
+            effective_frame_mode != "identity"
+            and effective_frame_mode != "orthonormal_block_random"
+            and not effective_frame_per_level
+        ):
+            raise ValueError(
+                "Enabled Hier-COS LH-style projection requires an identity or "
+                "per-level block-diagonal fixed frame so level heads remain independent."
             )
 
     lex = train.get("lexicographic")

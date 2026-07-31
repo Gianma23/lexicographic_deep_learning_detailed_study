@@ -28,8 +28,6 @@ The protocol fixes the comparison rules that are shared across model families:
 - CUB uses 13 orders → 38 families → 200 species;
 - FGVC-Aircraft uses the official 30 manufacturers → 70 families → 100
   variants annotations;
-- iNat19 uses the local 57 families → 72 genera → 1010 species projection in
-  the configured Making Better Mistakes manifests;
 - validation and test never drop incomplete batches;
 - checkpoints are selected on validation data, separately for top-down and
   independent decoding;
@@ -45,13 +43,13 @@ hierarchy depth. Existing historical results are not silently relabeled as
 
 ## Supported matrix
 
-| Model id | CIFAR-100 | CUB-200 | Aircraft | iNat19 | Main qualification |
-|---|---:|---:|---:|---:|---|
-| `hcast` | yes | yes | yes | yes | upstream core plus local HCC/lex extensions |
-| `lhdnn` | yes | yes | yes | no | paper-derived; CUB/Aircraft are extrapolations |
-| `ht_capsnet` | yes | yes | yes | no | TensorFlow-to-PyTorch port; Aircraft extrapolation |
-| `hrn` | yes | yes | yes | no | exactly three levels; CIFAR extrapolation |
-| `hiercos` | yes | yes | yes | yes | fixed-frame core; local three-level protocol |
+| Model id | CIFAR-100 | CUB-200 | Aircraft | Main qualification |
+|---|---:|---:|---:|---|
+| `hcast` | yes | yes | yes | upstream core plus local HCC/lex extensions |
+| `lhdnn` | yes | yes | yes | paper-derived; CUB/Aircraft are extrapolations |
+| `ht_capsnet` | yes | yes | yes | TensorFlow-to-PyTorch port; Aircraft extrapolation |
+| `hrn` | yes | yes | yes | exactly three levels; CIFAR extrapolation |
+| `hiercos` | yes | yes | yes | fixed-frame core; local three-level protocol |
 
 “Supported” means that a runnable preset exists. It does not mean that the
 dataset/model pair was reported by the original paper.
@@ -84,7 +82,6 @@ The relevant variables are:
 CIFAR100_ROOT=/path/to/cifar100
 CUB200_ROOT=/path/to/CUB_200_2011
 AIRCRAFT_ROOT=/path/to/fgvc-aircraft-2013b
-INAT19_ROOT=/path/to/inat19
 OUTPUTS_ROOT=/path/to/outputs
 TRAIN_DEVICE=cuda
 ```
@@ -160,7 +157,6 @@ Base:
 - `configs/hcast/hcast_cifar100.yaml`
 - `configs/hcast/hcast_cub200.yaml`
 - `configs/hcast/hcast_aircraft.yaml`
-- `configs/hcast/hcast_inat19.yaml`
 
 HCC:
 
@@ -220,21 +216,28 @@ selects checkpoints on validation data. CIFAR-100 is an extrapolation.
 - `configs/hiercos/hiercos_cifar100.yaml`
 - `configs/hiercos/hiercos_cub200.yaml`
 - `configs/hiercos/hiercos_aircraft.yaml`
-- `configs/hiercos/hiercos_inat19.yaml`
 
 Baseline presets default to the upstream-aligned `model.loss: kl_reg` and
 `model.weight_mode: kl_leaf`. The local
 `global_softmax_ce_reg` and `level_softmax_ce_reg` modes expose three
 differentiable level objectives and are selected explicitly by lexicographic
-runner overrides. CUB is an extrapolation; CIFAR and iNat use this repository’s
-three-level hierarchy instead of the upstream full-depth protocols.
+runner overrides. CUB is an extrapolation; CIFAR uses this repository’s
+three-level hierarchy instead of the upstream full-depth protocol.
 
 The optional `model.projection.enabled: true` path gives each level an
 LH-DNN-style projected learnable FC head. It concatenates the three head
-outputs and applies one global frozen Hier-COS frame to the combined vector.
-The projection retains the complete transformation, including its final
-residual skip, and uses the stacked preceding head weights directly without an
-activation-derivative factor.
+outputs and applies an identity or per-level block-diagonal frozen Hier-COS
+frame to the combined vector; a dense global frame is rejected because it
+would mix the independent LH-DNN branches.
+The projection retains the complete transformation, including its PReLU
+activations and both residual skips in `full` mode. By default, the level
+branches read the transform output directly and the projection matrix stacks
+the preceding detached head weights, making `A` shared by the whole batch.
+Set `model.projection.rho_enabled: true` to insert a shared channel-wise PReLU
+before the level heads and use the LH-DNN form
+`A[b] = W_previous * rho_prime(k[b])`; this makes the projection matrix
+sample-dependent. The launcher names this variant `projection_rho` and uses
+plain `projection` for the direct-head form.
 Set `model.projection.advantage_enabled: true` to additionally propagate
 detached parent-class logits as LH-DNN advantage baselines. This path requires
 `model.loss: level_softmax_ce_reg`.
@@ -250,10 +253,6 @@ Native metadata is used unless a config explicitly supplies annotations:
   come from the retained H-CAST mapping.
 - Aircraft accepts only a complete official download and joins the parallel
   variant/family/manufacturer files for every official split.
-- iNat19 supports official COCO JSON/JSON-in-tar data and normalized explicit
-  manifests. COCO family/genus names receive stable split-independent raw IDs,
-  and the category table defines the authoritative taxonomy. Shipped iNat
-  presets use `split_policy: explicit`.
 
 Every row must provide an existing image and exactly the configured number of
 non-negative integer labels. A child may have only one parent. Validation/test
@@ -343,12 +342,23 @@ extrapolated large-image presets with:
 scripts/lhdnn/run_lhdnn_baselines.sh
 ```
 
-Run the Hier-COS model with LH-DNN-style projected learnable heads followed by
-the global fixed frame with:
+Run the Hier-COS model with projected learnable level heads and the optional
+shared PReLU/rho derivative with:
 
 ```bash
 scripts/hiercos/run_hiercos_lhdnn_projection.sh
 ```
+
+Projected Hier-COS uses `model.projection.feature_dim` for the shared backbone
+and transform width (model default `256`; the projection launcher defaults to
+`0`, which selects the dataset taxonomy width).
+It applies only when `model.projection.enabled: true`; with the projection off
+the width stays at `sum(num_classes_per_level)`. Each level head reduces that feature
+vector to its class count before the outputs enter the taxonomy-width fixed
+frame. Set it to `0` to restore the previous taxonomy width,
+`sum(num_classes_per_level)`. The launcher exposes the setting as
+`FEATURE_DIM`, so `FEATURE_DIM=0` works across datasets with different
+hierarchy widths.
 
 ## Verification
 

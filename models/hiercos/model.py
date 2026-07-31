@@ -263,6 +263,60 @@ class HierCosModel(nn.Module):
         self.backbone_lr_scale = float(backbone_lr_scale)
         self.transform_lr_scale = float(transform_lr_scale)
 
+        projection_cfg = dict(projection_cfg or {})
+        self.projection_enabled = parse_bool(projection_cfg.get("enabled", False), default=False)
+        self.projection_rho_enabled = parse_bool(
+            projection_cfg.get("rho_enabled", False),
+            default=False,
+        )
+        self.advantage_enabled = parse_bool(
+            projection_cfg.get("advantage_enabled", False),
+            default=False,
+        )
+        if self.projection_rho_enabled and not self.projection_enabled:
+            raise ValueError(
+                "Hier-COS `model.projection.rho_enabled=true` requires "
+                "`model.projection.enabled=true`."
+            )
+        if self.advantage_enabled and not self.projection_enabled:
+            raise ValueError(
+                "Hier-COS `model.projection.advantage_enabled=true` requires "
+                "`model.projection.enabled=true`."
+            )
+
+        projection_feature_dim = projection_cfg.get("feature_dim", 256)
+        if (
+            isinstance(projection_feature_dim, bool)
+            or not isinstance(projection_feature_dim, int)
+            or projection_feature_dim < 0
+        ):
+            raise ValueError(
+                "Hier-COS `model.projection.feature_dim` must be a non-negative "
+                "integer; use 0 for sum(num_classes_per_level)."
+            )
+        resolved_projection_feature_dim = (
+            self.total_nodes
+            if int(projection_feature_dim) == 0
+            else int(projection_feature_dim)
+        )
+        self.feature_dim = (
+            resolved_projection_feature_dim
+            if self.projection_enabled
+            else self.total_nodes
+        )
+        if self.projection_enabled:
+            protected_rows = int(sum(self.num_classes_per_level[:-1]))
+            if self.feature_dim <= protected_rows:
+                raise ValueError(
+                    "Hier-COS projection non-triviality condition violated: "
+                    f"model.projection.feature_dim ({self.feature_dim}) must be greater than "
+                    f"sum(num_classes_per_level[:-1]) ({protected_rows})."
+                )
+
+        self.projection_eps = float(projection_cfg.get("eps", 1e-6))
+        if self.projection_eps <= 0.0:
+            raise ValueError("Hier-COS `model.projection.eps` must be > 0.")
+
         self.level_node_id_names: List[str] = []
         self.level_subspace_mask_names: List[str] = []
         for level in range(self.depth):
@@ -291,14 +345,14 @@ class HierCosModel(nn.Module):
 
         if self.variant == "haframe_wide_resnet":
             self.backbone = _WideResNetNodeBackbone(
-                out_dim=self.total_nodes,
+                out_dim=self.feature_dim,
                 depth=int(wide_depth),
                 widen_factor=int(wide_widen_factor),
                 drop_rate=float(wide_drop_rate),
             )
         elif self.variant == "haframe_resnet50":
             self.backbone = _ResNet50NodeBackbone(
-                out_dim=self.total_nodes,
+                out_dim=self.feature_dim,
                 pretrained=bool(pretrained),
                 pool=pool,
             )
@@ -309,7 +363,7 @@ class HierCosModel(nn.Module):
             )
 
         self.f_theta = build_transformation_module(
-            self.total_nodes,
+            self.feature_dim,
             mode=self.transform_mode,
             owner="Hier-COS model",
         )
@@ -318,6 +372,15 @@ class HierCosModel(nn.Module):
             parse_bool(fixed_frame_per_level, default=False)
             or fixed_frame_mode == "orthonormal_block_random"
         )
+        if (
+            self.projection_enabled
+            and self.fixed_frame_mode != "identity"
+            and not self.fixed_frame_per_level
+        ):
+            raise ValueError(
+                "Hier-COS LH-DNN projection requires an identity or per-level "
+                "block-diagonal fixed frame so the level heads remain independent."
+            )
         self.fixed_classifier = build_fixed_classifier(
             width=self.total_nodes,
             mode=fixed_frame_mode,
@@ -325,27 +388,18 @@ class HierCosModel(nn.Module):
             block_sizes=self.num_classes_per_level,
             owner="Hier-COS model",
         )
-        projection_cfg = dict(projection_cfg or {})
-        self.projection_enabled = parse_bool(projection_cfg.get("enabled", False), default=False)
-        self.advantage_enabled = parse_bool(
-            projection_cfg.get("advantage_enabled", False),
-            default=False,
-        )
-        if self.advantage_enabled and not self.projection_enabled:
-            raise ValueError(
-                "Hier-COS `model.projection.advantage_enabled=true` requires "
-                "`model.projection.enabled=true`."
-            )
-        self.projection_eps = float(projection_cfg.get("eps", 1e-6))
-        if self.projection_eps <= 0.0:
-            raise ValueError("Hier-COS `model.projection.eps` must be > 0.")
         self.projection_heads = nn.ModuleList(
             [
-                nn.Linear(self.total_nodes, int(num_classes))
+                nn.Linear(self.feature_dim, int(num_classes))
                 for num_classes in self.num_classes_per_level
             ]
             if self.projection_enabled
             else []
+        )
+        self.projection_rho = (
+            nn.PReLU(num_parameters=self.feature_dim)
+            if self.projection_rho_enabled
+            else nn.Identity()
         )
         self.parent_index_buffer_names: List[Optional[str]] = [None] * self.depth
         if self.advantage_enabled:
@@ -379,6 +433,9 @@ class HierCosModel(nn.Module):
             [p for p in self.f_theta.parameters() if p.requires_grad]
             if self.transform_mode != "final_only"
             else []
+        )
+        transform_params.extend(
+            p for p in self.projection_rho.parameters() if p.requires_grad
         )
         classifier_params = [
             p
@@ -430,22 +487,43 @@ class HierCosModel(nn.Module):
         z: torch.Tensor,
         prev_weights: torch.Tensor,
         eps: float,
+        rho_prime: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # A^(l) is the row-wise stack [W_1; ...; W_(l-1)] with no
-        # activation-derivative factor.
-        az = torch.matmul(z, prev_weights.transpose(0, 1).contiguous())
-        gram = torch.matmul(prev_weights, prev_weights.transpose(0, 1).contiguous())
-        eye = torch.eye(gram.size(-1), dtype=gram.dtype, device=gram.device)
-        gram = gram + float(eps) * eye
-        coefficients = torch.linalg.solve(gram, az.transpose(0, 1).contiguous())
+        if rho_prime is None:
+            # A^(l) is the shared row-wise stack [W_1; ...; W_(l-1)].
+            az = torch.matmul(z, prev_weights.transpose(0, 1).contiguous())
+            gram = torch.matmul(prev_weights, prev_weights.transpose(0, 1).contiguous())
+            eye = torch.eye(gram.size(-1), dtype=gram.dtype, device=gram.device)
+            coefficients = torch.linalg.solve(
+                gram + float(eps) * eye,
+                az.transpose(0, 1).contiguous(),
+            )
+            return torch.matmul(
+                coefficients.transpose(0, 1).contiguous(),
+                prev_weights,
+            )
+
+        # LH-DNN rho variant: A[b] = W_previous * rho_prime[b]. The PReLU
+        # derivative makes the protected subspace sample-dependent.
+        if rho_prime.shape != z.shape:
+            raise ValueError(
+                "Hier-COS projection rho derivative must have the same shape as "
+                f"the projected features; got {tuple(rho_prime.shape)} and {tuple(z.shape)}."
+            )
+        a = prev_weights.unsqueeze(0) * rho_prime.unsqueeze(1)
+        az = torch.matmul(a, z.unsqueeze(-1))
+        gram = torch.matmul(a, a.transpose(1, 2).contiguous())
+        eye = torch.eye(gram.size(-1), dtype=gram.dtype, device=gram.device).unsqueeze(0)
+        coefficients = torch.linalg.solve(gram + float(eps) * eye, az)
         return torch.matmul(
-            coefficients.transpose(0, 1).contiguous(),
-            prev_weights,
-        )
+            a.transpose(1, 2).contiguous(),
+            coefficients,
+        ).squeeze(-1)
 
     def _projected_branch_logits_per_level(
         self,
         z: torch.Tensor,
+        rho_prime: Optional[torch.Tensor] = None,
     ) -> List[torch.Tensor]:
         if len(self.projection_heads) != self.depth:
             raise RuntimeError(
@@ -460,6 +538,11 @@ class HierCosModel(nn.Module):
         logits_per_level: List[torch.Tensor] = []
         with autocast_off:
             z_work = z.to(dtype=compute_dtype)
+            rho_work = (
+                None
+                if rho_prime is None
+                else rho_prime.detach().to(dtype=compute_dtype)
+            )
 
             for level, head in enumerate(self.projection_heads):
                 if level == 0:
@@ -478,6 +561,7 @@ class HierCosModel(nn.Module):
                         z=z_work,
                         prev_weights=previous_weights,
                         eps=self.projection_eps,
+                        rho_prime=rho_work,
                     ).to(dtype=z.dtype)
                     z_level = z - c_level + c_level.detach()
 
@@ -500,8 +584,22 @@ class HierCosModel(nn.Module):
         z = self.backbone(x)
         if self.projection_enabled:
             transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
+            rho_prime = None
+            projected_features = transformed
+            if self.projection_rho_enabled:
+                projected_features = self.projection_rho(transformed)
+                negative_slope = self.projection_rho.weight.detach().to(
+                    device=transformed.device,
+                    dtype=transformed.dtype,
+                ).unsqueeze(0)
+                rho_prime = torch.where(
+                    transformed > 0,
+                    torch.ones_like(transformed),
+                    negative_slope,
+                )
             branch_logits_per_level = self._projected_branch_logits_per_level(
-                z=transformed,
+                z=projected_features,
+                rho_prime=rho_prime,
             )
             fixed_input = torch.cat(branch_logits_per_level, dim=1)
             node_logits = self.fixed_classifier(fixed_input)

@@ -34,7 +34,6 @@ The method combined:
 | Medium | Applying the CIFAR LH-DNN topology directly at 224 px created a very large flattened dense layer. | CUB/Aircraft explicitly adapt the last map to 2×2 before the shared layer. |
 | Medium | HT-CapsNet could run without a complete taxonomy and lose its defining routing constraint. | Factory now requires every child at every transition to have a valid parent. |
 | Medium | CUB validation ratios and split seeds differed by model family. | Corrected presets use CUB ratio 0.15, CIFAR ratio 0.10, and split seed 0. |
-| Medium | Official iNat COCO family/genus IDs were enumerated independently within each annotation file. | Taxon names now receive stable raw IDs and COCO category tables provide the authoritative taxonomy. |
 | Medium | Hier-COS baseline docs claimed `kl_reg`, while presets actually selected a local decomposed CE loss. | Baseline presets now use `kl_reg`; lex launchers explicitly override decomposed loss modes. |
 | Low | Launcher comments advertised matrices that hard-coded arrays could not reach. | Matrices are validated environment lists; actual narrow defaults are printed. |
 | Low | README and file documentation referenced nonexistent parity configs, templates, TODO, and notebooks. | Documentation was rebuilt from the current tree and protected by path tests. |
@@ -48,7 +47,6 @@ Real adapters were constructed without modifying source data:
 | CIFAR-100 | 45,000 | 5,000 | 10,000 | 8 / 20 / 100 |
 | CUB-200-2011 | 5,194 | 800 | 5,794 | 13 / 38 / 200 |
 | FGVC-Aircraft | 3,334 | 3,333 | 3,333 | 30 / 70 / 100 |
-| iNat19 manifests | 187,385 | 40,121 | 40,737 | 57 / 72 / 1010 |
 
 For each dataset, validation/test construction reused training metadata,
 taxonomy sizes matched, and a transformed sample was loaded from every split.

@@ -17,7 +17,7 @@ from .hierarchy import (
     normalize_samples,
     taxonomy_from_parent_of,
 )
-from .splitting import (  # compatibility exports used by iNat and older callers
+from .splitting import (  # compatibility exports used by older callers
     resolve_split_seed,
     resolve_val_split_ratio,
     split_train_val_samples,

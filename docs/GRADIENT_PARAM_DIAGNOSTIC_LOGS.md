@@ -157,9 +157,6 @@ Scanned runs: `hcast*` with `run_log.jsonl` present.
   - `param_norm_t1`, `delta_param_norm_t1`
 - These t1 cosine names are still supported by the current analysis utilities.
 
-5. **0 keys** (no trunk diagnostics logged):
-- Seen in: `hcast_inat21mini`.
-
 ### Why counts differ across runs
 
 Counts differ because metric emission is mask-dependent. If a run has no active `t2`, `t3`, `t2t1`, or `t3t2t1` masks, those keys are not logged.

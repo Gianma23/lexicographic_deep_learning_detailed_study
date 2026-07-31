@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Runs plain H-CAST baselines:
 # - hcast_<dataset>
-# for: cifar100, cub200, aircraft, inat19.
+# for: cifar100, cub200, aircraft.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -45,15 +45,14 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_baselines.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cifar100 cub200 aircraft inat19" DATASETS \
-  cifar100 cub200 aircraft inat19
+parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
+  cifar100 cub200 aircraft
 
 config_for_dataset() {
   case "$1" in
     cifar100) echo "configs/hcast/hcast_cifar100.yaml" ;;
     cub200) echo "configs/hcast/hcast_cub200.yaml" ;;
     aircraft) echo "configs/hcast/hcast_aircraft.yaml" ;;
-    inat19) echo "configs/hcast/hcast_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -117,7 +116,6 @@ run_output_dir() {
     cifar100) echo "$OUTPUTS_ROOT/hcast_cifar100" ;;
     cub200) echo "$OUTPUTS_ROOT/hcast_cub200" ;;
     aircraft) echo "$OUTPUTS_ROOT/hcast_aircraft_nokl" ;;
-    inat19) echo "$OUTPUTS_ROOT/hcast_inat19" ;;
     *)
       echo "Unknown dataset: $ds" >&2
       exit 1

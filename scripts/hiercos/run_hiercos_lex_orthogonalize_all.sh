@@ -11,7 +11,7 @@ set -euo pipefail
 # - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
 # - train.lexicographic.projection_rule=orthogonalize_all
 # Defaults: aircraft/cub200/cifar100 with coarse_first. Environment matrices
-# can opt into iNat19 and the other supported projection modes.
+# can opt into the other supported projection modes.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -93,7 +93,6 @@ config_for_dataset() {
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
     cub200) echo "configs/hiercos/hiercos_cub200.yaml" ;;
     aircraft) echo "configs/hiercos/hiercos_aircraft.yaml" ;;
-    inat19) echo "configs/hiercos/hiercos_inat19.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
