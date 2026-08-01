@@ -13,6 +13,8 @@ docs/figures/**
 .VSCodeCounter/
 .codex
 .vscode/
+.agents/
+.tmp_hiercos_upstream/**
 AGENTS.md
 
 # Distribution / packaging
