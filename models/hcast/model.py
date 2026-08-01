@@ -1,5 +1,4 @@
 import math
-import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -48,6 +47,12 @@ class HCASTModel(nn.Module):
             raise ValueError("model.segments.mode must be a string.")
         if self.segment_mode not in {"grid", "seeds"}:
             raise ValueError("model.segments.mode must be one of ['grid', 'seeds'].")
+        if self.segment_mode == "seeds" and not supports_seeds():
+            raise RuntimeError(
+                "H-CAST SEEDS mode requires OpenCV ximgproc with "
+                "createSuperpixelSEEDS. Install opencv-contrib-python; "
+                "SEEDS mode does not fall back to patch-grid segments."
+            )
         self.segment_patch_size = int(segments_cfg.get("patch_size", 8))
         self.segment_mean = list(segments_cfg.get("mean", [0.485, 0.456, 0.406]))
         self.segment_std = list(segments_cfg.get("std", [0.229, 0.224, 0.225]))
@@ -57,7 +62,6 @@ class HCASTModel(nn.Module):
         self.seeds_histogram_bins = int(segments_cfg.get("histogram_bins", 5))
         self.seeds_double_step = bool(segments_cfg.get("double_step", False))
         self.seeds_num_iterations = int(segments_cfg.get("num_iterations", 15))
-        self._seeds_warned = False
         self._current_epoch = 0
         try:
             parsed_train_epochs = int(train_epochs)
@@ -315,20 +319,16 @@ class HCASTModel(nn.Module):
             )
             if segments is not None:
                 return segments
-            if not self._seeds_warned:
-                self._seeds_warned = True
-                if not supports_seeds():
-                    warnings.warn(
-                        "H-CAST SEEDS mode requested, but OpenCV ximgproc is unavailable. "
-                        "Falling back to patch-grid segments.",
-                        RuntimeWarning,
-                    )
-                else:
-                    warnings.warn(
-                        "H-CAST SEEDS mode requested, but SEEDS generation failed on this input. "
-                        "Falling back to patch-grid segments.",
-                        RuntimeWarning,
-                    )
+            if not supports_seeds():
+                raise RuntimeError(
+                    "H-CAST SEEDS became unavailable at runtime. "
+                    "SEEDS mode does not fall back to patch-grid segments."
+                )
+            raise RuntimeError(
+                "H-CAST SEEDS generation failed for the current input. "
+                "Expected RGB images and three matching normalization mean/std values; "
+                "SEEDS mode does not fall back to patch-grid segments."
+            )
 
         return self._build_grid_segments(images, patch_size=self.segment_patch_size)
 

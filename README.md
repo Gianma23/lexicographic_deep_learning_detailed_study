@@ -274,6 +274,45 @@ Independent decoding takes an argmax at every level. Top-down decoding first
 chooses the coarse class and restricts each later argmax to children of the
 selected parent. Do not mix decoding modes in comparisons.
 
+### Checkpoint-only inference comparison
+
+Existing checkpoints can be tested without retraining using the tools in the
+top-level `evaluation/` package:
+
+```bash
+INFERENCE_MODE=both  # normal | hiercos | node_softmax | both
+python -m evaluation.evaluate_checkpoints \
+  --run-dir /scratch/$USER/outputs/<run>/seed_0 \
+  --inference-mode "$INFERENCE_MODE"
+```
+
+For H-CAST, HRN, and other non-Hier-COS models, `both` compares normal
+inference with post-hoc identity-frame Hier-COS distance inference. For native
+Hier-COS, `both` compares its normal distance inference with direct values from
+one global `softmax(abs(node_logits))`, selected by hierarchy level without
+constructing subspace scores.
+
+By default the command evaluates both `best_topdown.pt` and
+`best_independent.pt` on the test split. Use
+`--checkpoint-mode topdown` or `--checkpoint-mode independent` to select only
+one. Results are saved to `posthoc_inference_test_metrics.yaml` inside the run
+directory; an existing file is preserved unless `--overwrite` is passed.
+
+The post-hoc rule concatenates the model's native raw logits in taxonomy-node
+order, assumes an identity orthonormal frame, computes the Hier-COS L2 norm of
+each ancestors+self+descendants subspace, and predicts directly from those raw
+scores. It does not load an orthonormal plugin, change the loss, update model
+parameters, or claim that the source model was trained in a Hier-COS space.
+
+The paired multi-model analysis notebook is
+`notebooks/posthoc_hiercos_inference_comparison.ipynb`. It runs matched H-CAST,
+HRN, and Hier-COS baselines across CIFAR-100, CUB, and Aircraft; preserves
+top-down/independent checkpoint selection; and reports the mean, sample
+standard deviation, and seed count for absolute metrics and direction-aware
+paired gains. Its execution cell invokes
+`python -m evaluation.evaluate_checkpoints` directly for every completed seed.
+Each seed's result remains in its own run directory beside its checkpoints.
+
 Checkpoint ranking uses the exact tuple:
 
 ```text

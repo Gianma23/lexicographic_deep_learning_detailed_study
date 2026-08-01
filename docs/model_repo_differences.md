@@ -152,6 +152,9 @@ samples, or choose models on test data.
 - A random orthonormal fixed classifier represents the upstream
   `opts.orthonormal_basis_vectors`; subspace projection masks operate in the
   resulting coordinate space.
+- Independent inference ranks the raw subspace projection norms directly,
+  matching upstream `get_distances(...)` followed by `topk`; it does not
+  softmax those scores before prediction.
 - `kl_reg` combines the global absolute-score path-distribution objective with
   the levelwise cosine regularizer.
 - ResNet-50/WideResNet families, fixed frames, Aircraft bottom crop, and

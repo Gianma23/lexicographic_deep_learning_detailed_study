@@ -273,13 +273,13 @@ class OrthonormalPluginHead(nn.Module):
             node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))
         else:
             node_logits_per_level = None
+        # Hier-COS decodes the raw taxonomy-subspace projection norms returned
+        # by `get_distances`; softmax is not part of its prediction rule.
         logits_per_level = self._level_subspace_scores(node_logits)
-        effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
         level_node_ids = self.level_node_ids()
 
         return {
             "logits_per_level": logits_per_level,
-            "effective_probs_per_level": effective_probs_per_level,
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,
             "orthonormal_plugin_node_logits": node_logits,
@@ -303,11 +303,9 @@ class OrthonormalPluginHead(nn.Module):
             node_logits_per_level = self.fixed_classifier.forward_chunks(scores)
             node_logits = torch.cat(node_logits_per_level, dim=1)
             logits_per_level = self._level_subspace_scores(node_logits)
-            effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
             level_node_ids = self.level_node_ids()
             return {
                 "logits_per_level": logits_per_level,
-                "effective_probs_per_level": effective_probs_per_level,
                 "leaf_logits": logits_per_level[-1],
                 "node_logits": node_logits,
                 "orthonormal_plugin_node_logits": node_logits,

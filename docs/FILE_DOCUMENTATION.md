@@ -164,6 +164,17 @@ Runtime modules:
 - `train/runtime/finetune.py` — trusted finetune/checkpoint loading.
 - `train/runtime/common.py` — configuration conversion helpers.
 
+## Checkpoint-only inference evaluation
+
+- `evaluation/README.md` — modes, command, checkpoint rule, and output
+  contract for inference-only comparisons.
+- `evaluation/posthoc_inference.py` — inference-only identity-frame Hier-COS
+  distance transform for native model logits and direct node-softmax transform
+  for native Hier-COS.
+- `evaluation/evaluate_checkpoints.py` — CLI for comparing inference rules on
+  existing `best_topdown.pt` and `best_independent.pt` checkpoints without
+  constructing a loss or optimizer.
+
 ## Experiment and data scripts
 
 - `scripts/load_env.sh` — shell `.env` loading with process-environment
@@ -198,6 +209,7 @@ narrow defaults are printed during `DRY_RUN`.
 - `notebooks/lhdnn_analysis.ipynb`
 - `notebooks/hrn_analysis.ipynb`
 - `notebooks/model_comparison_all_datasets.ipynb`
+- `notebooks/posthoc_hiercos_inference_comparison.ipynb`
 - `notebooks/hcast_analysis_utils.py`
 - `notebooks/model_comparison_utils.py`
 - `notebooks/multiseed_utils.py`

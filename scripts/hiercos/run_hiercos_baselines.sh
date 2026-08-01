@@ -22,10 +22,10 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
+LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
-FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
-FEATURE_DIM="${FEATURE_DIM:-512}"
+FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
+FEATURE_DIM="${FEATURE_DIM:-0}"
 
 case "$LOSS_MODE" in
   global_softmax_ce_reg|level_softmax_ce_reg) ;;
@@ -89,7 +89,7 @@ trap handle_exit EXIT
 #     ./scripts/hiercos/run_hiercos_baselines.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100)
+DATASETS=(aircraft cub200 cifar100)
 
 config_for_dataset() {
   case "$1" in

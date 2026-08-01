@@ -613,13 +613,14 @@ class HierCosModel(nn.Module):
                 node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))
             else:
                 node_logits_per_level = None
+        # Match upstream Hier-COS inference: `get_distances` returns the
+        # projection norm for every taxonomy subspace and predictions are made
+        # directly from those scores.  Do not softmax the subspace scores here.
         logits_per_level = self._level_subspace_scores(node_logits)
-        effective_probs_per_level = [torch.softmax(level_logits, dim=-1) for level_logits in logits_per_level]
 
         level_node_ids = self._level_node_ids()
         return {
             "logits_per_level": logits_per_level,
-            "effective_probs_per_level": effective_probs_per_level,
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,
             "orthonormal_plugin_node_logits": node_logits,

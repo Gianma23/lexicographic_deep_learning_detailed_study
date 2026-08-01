@@ -175,7 +175,16 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "eps",
         "log_metrics",
     },
-    "optim": {"name", "lr", "weight_decay", "momentum", "nesterov", "opt_eps", "opt_betas"},
+    "optim": {
+        "name",
+        "lr",
+        "lr_base",
+        "weight_decay",
+        "momentum",
+        "nesterov",
+        "opt_eps",
+        "opt_betas",
+    },
     "scheduler": {
         "name",
         "base_lr",
@@ -499,6 +508,11 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
     _validate_optional_bool(optim, "nesterov", "optim.nesterov")
     if _finite_float(optim.get("lr"), "optim.lr") <= 0.0:
         raise ValueError("`optim.lr` must be > 0.")
+    # `train.train._apply_lr_scaling_if_enabled` records the pre-scaling LR in
+    # resolved run configs. Accept and validate that provenance field so saved
+    # configs remain loadable for checkpoint-only evaluation and analysis.
+    if "lr_base" in optim and _finite_float(optim["lr_base"], "optim.lr_base") <= 0.0:
+        raise ValueError("`optim.lr_base` must be > 0 when provided.")
     if _finite_float(optim.get("weight_decay", 0.0), "optim.weight_decay") < 0.0:
         raise ValueError("`optim.weight_decay` must be >= 0.")
     _require_enum(

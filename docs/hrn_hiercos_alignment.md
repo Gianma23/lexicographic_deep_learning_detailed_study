@@ -58,6 +58,9 @@ The implementation choices below follow the selected clean-protocol constraints 
   - CIFAR path: HAFrame WideResNet (`haframe_wide_resnet`) with hierarchical node-space backbone.
   - Aircraft path: HAFrame ResNet-50 (`haframe_resnet50`) with ImageNet-pretrained trunk.
   - A single fixed orthonormal Hier-COS frame with taxonomy-driven subspace scores is supported.
+  - Inference takes `argmax` directly over the raw taxonomy-subspace projection
+    norms, matching upstream `get_distances(...).topk(...)`; softmax is used by
+    the loss and probability diagnostics, not as a prediction transform.
 
 ### Loss
 - **Aligned**:
