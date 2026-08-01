@@ -18,7 +18,25 @@ This file documents the `train_metrics` keys written to `run_log.jsonl` by the *
 
 Important: mask-dependent keys are emitted only when the corresponding mask is active (`any(mask)` in code).
 Pairwise cosine keys listed below are emitted for every epoch summary.
-For Hier-COS, these diagnostics require a loss mode with differentiable per-level losses (`model.loss: global_softmax_ce_reg` or `level_softmax_ce_reg`); plain `model.loss: kl_reg` does not expose per-level loss tensors. Both decomposed modes use weighted target CE plus the same unweighted level regularizer and differ only by global-taxonomy versus per-level softmax normalization. Logged `loss_level_*` values exactly match the tensors used by lexicographic optimization.
+The native model requirements are:
+
+- H-CAST exposes its three raw per-level objectives and requires
+  `model.loss.globalkl: false` in lex mode.
+- HT-CapsNet exposes its three raw capsule margin losses. Its lex launcher uses
+  `model.loss.weight_mode: none` for unit weights; other configured scalar
+  weights do not change the raw tensors consumed by lex projection.
+- HRN requires `model.loss: level_marginal`, which exposes coarse and middle
+  tree-marginal NLLs plus a fine tree-marginal NLL with the original leaf CE
+  term.
+- Hier-COS requires `model.loss: global_softmax_ce_reg` or
+  `level_softmax_ce_reg`; plain `kl_reg` does not expose per-level loss tensors.
+  Both decomposed modes use weighted target CE plus the same unweighted level
+  regularizer and differ only by global-taxonomy versus per-level softmax
+  normalization.
+- LH-DNN is not supported, including through the orthonormal plugin.
+
+Logged `loss_level_*` values match the tensors used by lexicographic
+optimization.
 
 ## A) Standard Trunk Metrics (non-lex and lex)
 

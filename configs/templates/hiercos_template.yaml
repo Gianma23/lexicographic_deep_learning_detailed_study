@@ -29,7 +29,7 @@ model:
     enabled: false                  # true enables the projected learnable level heads
     rho_enabled: false              # true uses per-sample A[b]=[W_1; ...; W_(l-1)] * rho'(k[b])
     advantage_enabled: false        # true adds detached parent logits as LH-DNN advantage baselines
-    feature_dim: 256                # Shared width, projection only; 0 restores sum(num_classes_per_level)
+    feature_dim: 0                  # Shared width, projection only; 0 uses sum(num_classes_per_level)
     eps: 1.0e-6                     # Stabilizer for the projection solve
 
   # Used only when variant=haframe_wide_resnet

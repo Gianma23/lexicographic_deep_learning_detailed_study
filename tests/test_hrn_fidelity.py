@@ -50,6 +50,55 @@ class HRNFidelityTests(unittest.TestCase):
                 taxonomy={"parent_of": parent_of},
             )
 
+    def test_level_marginal_loss_exposes_three_native_hrn_objectives(self):
+        parent_of = {
+            1: {0: 0, 1: 0, 2: 1},
+            2: {0: 0, 1: 1, 2: 1, 3: 2},
+        }
+        tree_logits = [
+            torch.randn(2, count, requires_grad=True)
+            for count in (2, 3, 4)
+        ]
+        species_ce_logits = torch.randn(2, 4, requires_grad=True)
+        output = {
+            "logits_per_level": [tree_logits[0], tree_logits[1], species_ce_logits],
+            "tree_scores_per_level": [torch.sigmoid(value) for value in tree_logits],
+            "species_ce_logits": species_ce_logits,
+        }
+        targets = torch.tensor([[0, 0, 0], [1, 2, 3]])
+
+        native_total, native_metrics, native_aux = compute_loss(
+            output,
+            targets,
+            SimpleNamespace(),
+            taxonomy={"parent_of": parent_of},
+            return_aux=True,
+        )
+        self.assertNotIn("level_losses", native_aux)
+        self.assertNotIn("loss_level_0", native_metrics)
+
+        total, metrics, aux = compute_loss(
+            output,
+            targets,
+            SimpleNamespace(model={"loss": "level_marginal"}),
+            taxonomy={"parent_of": parent_of},
+            return_aux=True,
+        )
+        self.assertEqual(len(aux["level_losses"]), 3)
+        self.assertEqual(len(aux["tree_level_losses"]), 3)
+        self.assertTrue(all(loss.ndim == 0 and loss.requires_grad for loss in aux["level_losses"]))
+        self.assertTrue(all(torch.isfinite(loss) for loss in aux["level_losses"]))
+        torch.testing.assert_close(total, torch.stack(aux["level_losses"]).sum())
+        # The fine lexicographic objective preserves the complete native HRN
+        # objective: leaf tree marginal plus unit-weight species CE.
+        torch.testing.assert_close(aux["level_losses"][2], native_total)
+        self.assertAlmostEqual(metrics["loss_level_2"], float(native_total.detach()), places=7)
+
+        total.backward()
+        self.assertTrue(all(value.grad is not None and torch.isfinite(value.grad).all() for value in tree_logits))
+        self.assertIsNotNone(species_ce_logits.grad)
+        self.assertTrue(torch.isfinite(species_ce_logits.grad).all())
+
     def test_parameter_groups_and_level_specific_effective_scores(self):
         try:
             model = HRNModel([2, 3, 4], pretrained=False)

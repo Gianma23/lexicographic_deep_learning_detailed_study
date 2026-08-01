@@ -434,6 +434,47 @@ no canonical weights, which is precisely the gap the lexicographic method addres
 5. **Fix or document the regulariser's implicit `sqrt(C_l)` weighting** before running the
    comparison, otherwise the study measures a confounded objective.
 
+## 10b. Evidence that the weight choice is a large effect, not a detail
+
+Measured from existing runs in `/scratch/g.saggini1/outputs`, `global_softmax_ce_reg`,
+top-down decoding, test metrics at the top-down-selected checkpoint, 3 seeds unless noted.
+Fine-level (L2) top-1 accuracy, percentage points:
+
+| dataset | baseline `kl_leaf` | baseline `equal` | delta from weights alone |
+|---|---|---|---|
+| CIFAR-100 | 77.80 | 76.60 | **-1.20** |
+| CUB-200 | 76.21 | 74.24 | **-1.97** |
+| FGVC-Aircraft | 81.74 | 79.59 | **-2.15** |
+
+Both columns are non-lex runs differing only in `model.weight_mode`, so the delta isolates
+the weight vector. Weighted AP moves with it (CUB 79.44 -> 77.83; Aircraft 85.60 -> 84.00)
+and AHD degrades (CUB 0.3649 -> 0.3865; Aircraft 0.3778 -> 0.4170; lower is better).
+
+**Interpretation.** Changing only the level weights, from `equal` to the `kl_leaf` vector,
+is worth roughly 1.2-2.2 percentage points of fine accuracy and 0.9-1.6 points of weighted
+AP on these datasets. The weight vector is therefore among the larger levers in the model,
+and it is currently set by an undocumented composition of `exp(1/(h+1-l))`, an L2
+normalisation and a squaring step (Section 1). This is the empirical case for the proposal:
+the objection is not that the weights are inelegant, it is that a quantity worth ~2 points
+of accuracy has no derivation.
+
+**Secondary observation, relevant to the lexicographic study.** The same runs decompose the
+fine-level change between the `kl_leaf` baseline and the lexicographic presets, which
+currently use `equal`:
+
+| dataset | weights only (`kl_leaf`->`equal`, no lex) | lex only (weights held at `equal`) | total |
+|---|---|---|---|
+| CIFAR-100 | -1.20 | +0.75 | -0.45 |
+| CUB-200 | -1.97 | -0.10 | -2.07 |
+| FGVC-Aircraft | -2.15 | -0.32 | -2.47 |
+
+Nearly all of the apparent lexicographic regression is attributable to the weight change,
+not to gradient projection. Matched `kl_leaf` lexicographic runs give -0.60 (CUB) and
+-0.19 (Aircraft) on fine, but are n=1 and should not be quoted without more seeds.
+
+*Caveats:* single dataset-split protocol, 3 seeds, one loss mode. The `level_softmax_ce_reg`
+decomposition cannot be computed because no `baseline_equal` run exists for that mode.
+
 ## 11. Proposed experiments
 
 Isolating one variable — the level weight vector — on the existing presets:
@@ -450,6 +491,19 @@ Isolating one variable — the level weight vector — on the existing presets:
   metric-aligned weights do *not* win their own metric, the scalarisation is too loose to
   control the metric — which is itself a publishable observation and a direct argument for
   the lexicographic route.
+- Second pre-registered prediction, discriminating between "any leaf-heavy vector works"
+  and the metric-aligned derivation. Fine-level mass under each scheme is `equal` 0.333,
+  `kl_leaf` 0.613, and `∝ C_l` 0.781 (CIFAR) / 0.797 (CUB) / **0.500 (Aircraft)**. Because
+  Aircraft's hierarchy is flat (30/70/100), the wAP-aligned weight gives fine *less* mass
+  than `kl_leaf`. If fine accuracy were simply monotone in fine mass, `∝ C_l` would beat
+  `kl_leaf` on CIFAR and CUB but land between `equal` and `kl_leaf` on Aircraft. Aircraft
+  is therefore the discriminating dataset, and this is a prediction the depth-only
+  `exp(1/(h+1-l))` scheme cannot make at all.
+
+Also worth correcting in the existing experimental setup: the lexicographic presets run at
+`model.weight_mode: equal` while the Hier-COS baseline presets run at `kl_leaf`. Per
+Section 10b that is a ~2 point handicap on fine accuracy unrelated to lexicographic
+optimisation, so the baseline-vs-lex table should be regenerated at matched weights.
 
 A secondary ablation with `level_softmax_ce_reg` would test whether the `1/log C_l`
 normaliser matters once the softmax is per-level.

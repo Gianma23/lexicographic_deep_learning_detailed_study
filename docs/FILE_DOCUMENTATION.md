@@ -186,7 +186,9 @@ Runtime modules:
 - `scripts/hcast/` — base, HCC, lexicographic, and plugin studies.
 - `scripts/lhdnn/` — paper-aligned CIFAR-100 baseline plus explicit
   CUB/Aircraft protocol extrapolations.
-- `scripts/hrn/` — base and plugin studies.
+- `scripts/capsnet/` — native HT-CapsNet lexicographic studies with unit level
+  weights.
+- `scripts/hrn/` — base, native level-marginal lexicographic, and plugin studies.
 - `scripts/hiercos/` — decomposed-loss baselines, two lexicographic rules,
   transform ablation, and the LH-projected learnable-head study.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output

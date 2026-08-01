@@ -2,6 +2,7 @@
 # Constraint: HRN supports exactly three hierarchy levels.
 model:
   name: hrn                         # Model registry id. Must be exactly: hrn
+  loss: native                      # native | level_marginal; HRN lex requires level_marginal
   backbone: resnet50                # Supported: resnet50
   pretrained: true                  # If true, ImageNet weights are mandatory (no random fallback)
   branch_hidden_dim: 1024           # Hidden width inside each HRN branch conv/fc stack

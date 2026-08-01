@@ -51,6 +51,7 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "embedding_dim",
         "dropout",
         "trunk_lr_scale",
+        "loss",
     },
     "hiercos": {
         "name",
@@ -659,6 +660,11 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
     if model_name == "hrn":
         _require_enum(model.get("backbone", "resnet50"), "model.backbone", {"resnet50"})
         _validate_optional_bool(model, "pretrained", "model.pretrained")
+        _require_enum(
+            model.get("loss", "native"),
+            "model.loss",
+            {"native", "level_marginal"},
+        )
         dropout = _finite_float(model.get("dropout", 0.0), "model.dropout")
         if dropout < 0.0 or dropout >= 1.0:
             raise ValueError("`model.dropout` must be in [0, 1).")
@@ -718,7 +724,7 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                     "Hier-COS `model.projection.advantage_enabled=true` requires "
                     "`model.projection.enabled=true`."
                 )
-            feature_dim = projection.get("feature_dim", 256)
+            feature_dim = projection.get("feature_dim", 0)
             if (
                 isinstance(feature_dim, bool)
                 or not isinstance(feature_dim, int)
@@ -857,6 +863,8 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             minimum=0,
         )
     if lex_enabled:
+        if model_name == "lhdnn":
+            raise ValueError("Lexicographic training is not supported for LH-DNN.")
         if hiercos_projection_enabled:
             raise ValueError(
                 "Hier-COS `model.projection.enabled=true` is mutually exclusive with "
@@ -864,9 +872,10 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             )
         if depth != 3:
             raise ValueError("Lexicographic training requires exactly three hierarchy levels.")
-        if not plugin_enabled and model_name not in {"hcast", "hiercos"}:
+        if not plugin_enabled and model_name not in {"hcast", "hiercos", "ht_capsnet", "hrn"}:
             raise ValueError(
-                "Lexicographic training requires H-CAST, Hier-COS, or the orthonormal plugin."
+                "Lexicographic training requires H-CAST, Hier-COS, HT-CapsNet, HRN, "
+                "or the orthonormal plugin."
             )
         _require_enum(
             lex.get("projection_mode", "coarse_first"),
@@ -887,8 +896,14 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             loss = model["loss"]
             if bool(loss.get("globalkl", False)):
                 raise ValueError("Lexicographic H-CAST requires model.loss.globalkl=false.")
-        elif model.get("loss") not in {"global_softmax_ce_reg", "level_softmax_ce_reg"}:
-            raise ValueError("Lexicographic Hier-COS requires a decomposed CE loss.")
+        elif model_name == "hiercos":
+            if model.get("loss") not in {"global_softmax_ce_reg", "level_softmax_ce_reg"}:
+                raise ValueError("Lexicographic Hier-COS requires a decomposed CE loss.")
+        elif model_name == "hrn" and model.get("loss", "native") != "level_marginal":
+            raise ValueError(
+                "Lexicographic HRN requires model.loss=level_marginal to expose "
+                "coarse, middle, and fine objectives."
+            )
 
 
 def validate_config(

@@ -284,7 +284,7 @@ class HierCosModel(nn.Module):
                 "`model.projection.enabled=true`."
             )
 
-        projection_feature_dim = projection_cfg.get("feature_dim", 256)
+        projection_feature_dim = projection_cfg.get("feature_dim", 0)
         if (
             isinstance(projection_feature_dim, bool)
             or not isinstance(projection_feature_dim, int)

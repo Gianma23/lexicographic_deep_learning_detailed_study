@@ -174,7 +174,9 @@ Explicit gradient-space lexicographic training:
 HCC is an output-space affine hierarchy constraint. It changes the objective’s
 logits but does not explicitly project parameter gradients. Explicit
 lexicographic training is enabled by `train.lexicographic.enabled` and projects
-lower-priority gradients.
+lower-priority gradients. Native lexicographic training is supported for
+H-CAST, HT-CapsNet, HRN, and decomposed-loss Hier-COS. LH-DNN is excluded,
+including when the orthonormal plugin is enabled.
 
 ### LH-DNN
 
@@ -206,6 +208,9 @@ it is not an exact reproduction of the paper's 39/123/200 run. Aircraft is a
 default; runs never silently reuse an old checkpoint.
 Older local HT-CapsNet checkpoints predate the corrected attention projections
 and loss-weight buffer and must not be resumed for these fidelity runs.
+Native lexicographic HT-CapsNet uses the same three capsule margin losses. The
+lex launcher selects `model.loss.weight_mode: none`, which is the existing
+unit-weight mode; the paper-baseline configs retain their dynamic weighting.
 
 ### HRN
 
@@ -220,6 +225,11 @@ selects checkpoints on validation data. CIFAR-100 is a dataset-native 32 px
 extrapolation for comparability with the other CIFAR presets; it is not an HRN
 paper setting. All HRN presets are full-label only, and requested ImageNet
 initialization never falls back to random weights.
+When omitted, `model.loss` defaults to the paper-aligned `native` objective
+(leaf-observed joint tree marginal plus leaf CE). The local
+`model.loss: level_marginal` mode exposes coarse, middle, and fine tree-marginal
+objectives; the fine objective also retains the unit-weight leaf CE. Native HRN
+lexicographic training requires this decomposed mode.
 
 ### Hier-COS
 
@@ -358,8 +368,8 @@ Run logs also contain model-specific loss and diagnostic fields. See:
 
 ## Experiment launchers
 
-Launchers are under `scripts/hcast/`, `scripts/lhdnn/`, `scripts/hrn/`, and
-`scripts/hiercos/`. They support:
+Launchers are under `scripts/hcast/`, `scripts/lhdnn/`, `scripts/capsnet/`,
+`scripts/hrn/`, and `scripts/hiercos/`. They support:
 
 ```text
 DRY_RUN=1
@@ -384,6 +394,19 @@ Hier-COS and plugin launchers similarly accept `LEX_PROJECTION_MODES` and
 remain narrow so invoking a script cannot unexpectedly start the full
 expensive grid.
 
+Run native HT-CapsNet and HRN lexicographic training on the three baseline
+dataset configurations with:
+
+```bash
+scripts/capsnet/run_ht_capsnet_lex.sh
+scripts/hrn/run_hrn_lex.sh
+```
+
+Both default to start@0, coarse-first, and orthogonalize-all. Override
+`DATASETS`, `LEX_START_EPOCH`, `LEX_PROJECTION_MODE`, or
+`LEX_PROJECTION_RULE` to select another validated run without adding a dataset
+config. The HRN launcher also enforces hard targets.
+
 Run the paper-aligned LH-DNN CIFAR-100 preset and the two explicitly
 extrapolated large-image presets with:
 
@@ -399,12 +422,12 @@ scripts/hiercos/run_hiercos_lhdnn_projection.sh
 ```
 
 Projected Hier-COS uses `model.projection.feature_dim` for the shared backbone
-and transform width (model default `256`; the projection launcher defaults to
-`0`, which selects the dataset taxonomy width).
+and transform width (model and projection-launcher default `0`, which selects
+the dataset taxonomy width).
 It applies only when `model.projection.enabled: true`; with the projection off
 the width stays at `sum(num_classes_per_level)`. Each level head reduces that feature
 vector to its class count before the outputs enter the taxonomy-width fixed
-frame. Set it to `0` to restore the previous taxonomy width,
+frame. Keep it at `0` to use the taxonomy width,
 `sum(num_classes_per_level)`. The launcher exposes the setting as
 `FEATURE_DIM`, so `FEATURE_DIM=0` works across datasets with different
 hierarchy widths.

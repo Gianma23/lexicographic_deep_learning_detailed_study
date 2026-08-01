@@ -135,6 +135,27 @@ class RoutingAndLossTests(unittest.TestCase):
         expected = votes * torch.sigmoid((agreement * gate.unsqueeze(1)).sum(dim=-1, keepdim=True))
         torch.testing.assert_close(actual, expected)
 
+    def test_unit_weight_mode_exposes_three_raw_margin_objectives(self):
+        cfg = _loss_cfg()
+        cfg.model.loss["weight_mode"] = "none"
+        logits = [
+            torch.randn(2, count, requires_grad=True)
+            for count in (2, 3, 4)
+        ]
+        targets = torch.tensor([[0, 0, 0], [1, 2, 3]])
+
+        total, metrics, aux = compute_loss(
+            {"logits_per_level": logits},
+            targets,
+            cfg,
+            return_aux=True,
+        )
+        self.assertEqual(len(aux["level_losses"]), 3)
+        self.assertTrue(all(loss.ndim == 0 and loss.requires_grad for loss in aux["level_losses"]))
+        torch.testing.assert_close(total, torch.stack(aux["level_losses"]).sum())
+        for level in range(3):
+            self.assertEqual(metrics[f"loss_weight_level_{level}"], 1.0)
+
 
 class HTCapsNetStateTests(unittest.TestCase):
     def _model(self):

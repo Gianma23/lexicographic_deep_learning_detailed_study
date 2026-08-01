@@ -129,10 +129,13 @@ def validate_lexicographic_requirements(cfg: Any, level_losses: List[torch.Tenso
     if not isinstance(model_name, str):
         raise ValueError("model.name must be a string.")
     plugin_loss_mode = _resolve_orthonormal_plugin_loss_mode(cfg)
-    if plugin_loss_mode is None and model_name not in {"hcast", "hiercos"}:
+    if model_name == "lhdnn":
+        raise ValueError("train.lexicographic.enabled=true is not supported for LH-DNN.")
+    if plugin_loss_mode is None and model_name not in {"hcast", "hiercos", "ht_capsnet", "hrn"}:
         raise ValueError(
             "train.lexicographic.enabled=true is currently supported only for "
-            "model.name in ['hcast', 'hiercos'] or orthonormal_plugin.enabled=true."
+            "model.name in ['hcast', 'hiercos', 'ht_capsnet', 'hrn'] or "
+            "orthonormal_plugin.enabled=true."
         )
 
     if plugin_loss_mode is not None and plugin_loss_mode not in {
@@ -163,6 +166,12 @@ def validate_lexicographic_requirements(cfg: Any, level_losses: List[torch.Tenso
             "`model.loss: global_softmax_ce_reg` or `model.loss: level_softmax_ce_reg`; "
             "plain `kl_reg` does not expose "
             "differentiable per-level losses."
+        )
+
+    if plugin_loss_mode is None and model_name == "hrn" and model_cfg.get("loss", "native") != "level_marginal":
+        raise ValueError(
+            "train.lexicographic.enabled=true with model.name='hrn' requires "
+            "`model.loss: level_marginal` to expose coarse, middle, and fine objectives."
         )
 
     if len(level_losses) != 3:

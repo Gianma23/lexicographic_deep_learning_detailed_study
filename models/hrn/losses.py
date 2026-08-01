@@ -24,6 +24,16 @@ def _hard_targets_from_input(targets: HrnTargets) -> torch.Tensor:
     raise TypeError("HRN expected `hard_targets` (or legacy `labels_a`) tensor in target dict.")
 
 
+def _resolve_loss_mode(cfg: Any) -> str:
+    model_cfg = getattr(cfg, "model", None)
+    raw_mode = model_cfg.get("loss", "native") if hasattr(model_cfg, "get") else "native"
+    if raw_mode is None:
+        raw_mode = "native"
+    if not isinstance(raw_mode, str) or raw_mode not in {"native", "level_marginal"}:
+        raise ValueError("HRN model.loss must be one of ['native', 'level_marginal'].")
+    return raw_mode
+
+
 def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
     if not taxonomy or "parent_of" not in taxonomy:
         return {}
@@ -146,6 +156,24 @@ def _hierarchical_loss(tree_scores_per_level: List[torch.Tensor], observed_globa
     return (-torch.log(marginal / z)).to(dtype=torch.float64).mean()
 
 
+def _level_marginal_tree_losses(
+    tree_scores_per_level: List[torch.Tensor],
+    hard_targets: torch.Tensor,
+    state_space: torch.Tensor,
+    fine_tree_loss: torch.Tensor,
+) -> List[torch.Tensor]:
+    offsets = _level_offsets([int(scores.size(-1)) for scores in tree_scores_per_level])
+    higher_level_losses = [
+        _hierarchical_loss(
+            tree_scores_per_level=tree_scores_per_level,
+            observed_global=hard_targets[:, level].long() + int(offsets[level]),
+            state_space=state_space,
+        )
+        for level in range(2)
+    ]
+    return [*higher_level_losses, fine_tree_loss]
+
+
 def compute_loss(
     output: Dict[str, Any],
     targets: HrnTargets,
@@ -162,6 +190,7 @@ def compute_loss(
             "partial/relabeling targets and mixup/cutmix target dictionaries are unsupported."
         )
 
+    loss_mode = _resolve_loss_mode(cfg)
     hard_targets = _hard_targets_from_input(targets)
     if hard_targets.ndim != 2 or int(hard_targets.size(1)) != 3:
         raise ValueError(f"HRN expects hard targets of shape [B, 3], got {tuple(hard_targets.shape)}.")
@@ -193,7 +222,11 @@ def compute_loss(
         raise ValueError("HRN combinatorial loss requires a complete 3-level taxonomy (`parent_of` maps for levels 1 and 2).")
 
     observed_global, observed_level = _resolve_observed_indices(hard_targets=hard_targets, num_classes_per_level=num_classes_per_level, targets=targets)
-    hier_loss = _hierarchical_loss(tree_scores_per_level=tree_scores_per_level, observed_global=observed_global, state_space=state_space)
+    fine_tree_loss = _hierarchical_loss(
+        tree_scores_per_level=tree_scores_per_level,
+        observed_global=observed_global,
+        state_space=state_space,
+    )
 
     leaf_mask = observed_level == 2
     if bool(leaf_mask.any()):
@@ -202,7 +235,45 @@ def compute_loss(
             hard_targets[leaf_mask, 2].long(),
         )
     else:
-        ce_loss = hier_loss.new_zeros(())
+        ce_loss = fine_tree_loss.new_zeros(())
+
+    if loss_mode == "level_marginal":
+        tree_level_losses = _level_marginal_tree_losses(
+            tree_scores_per_level=tree_scores_per_level,
+            hard_targets=hard_targets,
+            state_space=state_space,
+            fine_tree_loss=fine_tree_loss,
+        )
+        level_losses = [
+            tree_level_losses[0],
+            tree_level_losses[1],
+            tree_level_losses[2] + ce_loss,
+        ]
+        hier_loss = torch.stack(tree_level_losses).sum()
+        total = torch.stack(level_losses).sum()
+
+        metrics = {
+            "total": float(total.detach().item()),
+            "hier_loss": float(hier_loss.detach().item()),
+            "ce_loss_leaf": float(ce_loss.detach().item()),
+            "tree_loss": float(hier_loss.detach().item()),
+            "fine_ce": float(ce_loss.detach().item()),
+        }
+        for level, (tree_level_loss, level_loss) in enumerate(zip(tree_level_losses, level_losses)):
+            metrics[f"tree_loss_level_{level}"] = float(tree_level_loss.detach().item())
+            metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
+
+        if not return_aux:
+            return total, metrics
+        return total, metrics, {
+            "observed_global_index": observed_global,
+            "observed_level": observed_level,
+            "leaf_mask": leaf_mask,
+            "level_losses": level_losses,
+            "tree_level_losses": tree_level_losses,
+        }
+
+    hier_loss = fine_tree_loss
     total = hier_loss + ce_loss
 
     metrics = {
