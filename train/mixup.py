@@ -81,16 +81,32 @@ def mixup_mode(cfg: Any) -> str:
     return mode
 
 
+def mixup_pairing(cfg: Any) -> str:
+    pairing = _transforms_cfg(cfg).get("mixup_pairing", "flip")
+    if not isinstance(pairing, str):
+        raise ValueError("dataset.transforms.mixup_pairing must be a string.")
+    if pairing not in {"flip", "random"}:
+        raise ValueError("dataset.transforms.mixup_pairing must be one of ['flip', 'random'].")
+    return pairing
+
+
 def one_hot(x: torch.Tensor, num_classes: int, on_value: float = 1.0, off_value: float = 0.0) -> torch.Tensor:
     x = x.long().view(-1, 1)
     return torch.full((x.size(0), num_classes), off_value, device=x.device).scatter_(1, x, on_value)
 
 
-def mixup_target(target: torch.Tensor, num_classes: int, lam=1.0, smoothing: float = 0.0) -> torch.Tensor:
+def mixup_target(
+    target: torch.Tensor,
+    num_classes: int,
+    lam=1.0,
+    smoothing: float = 0.0,
+    partner_indices: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     off_value = smoothing / num_classes
     on_value = 1.0 - smoothing + off_value
     y1 = one_hot(target, num_classes, on_value=on_value, off_value=off_value)
-    y2 = one_hot(target.flip(0), num_classes, on_value=on_value, off_value=off_value)
+    partner_target = target.flip(0) if partner_indices is None else target[partner_indices]
+    y2 = one_hot(partner_target, num_classes, on_value=on_value, off_value=off_value)
     return y1 * lam + y2 * (1.0 - lam)
 
 
@@ -151,6 +167,7 @@ class Mixup:
         correct_lam: bool = True,
         label_smoothing: float = 0.1,
         num_classes: Optional[List[int]] = None,
+        pairing: str = "flip",
     ):
         self.mixup_alpha = mixup_alpha
         self.cutmix_alpha = cutmix_alpha
@@ -164,6 +181,16 @@ class Mixup:
         self.num_classes = num_classes or []
         self.mode = mode
         self.correct_lam = correct_lam
+        self.pairing = pairing
+        if self.pairing not in {"flip", "random"}:
+            raise ValueError("Mixup pairing must be 'flip' or 'random'.")
+        if self.pairing == "random" and self.mode != "elem":
+            raise ValueError("Random MixUp pairing requires mode='elem'.")
+
+    def _partner_indices(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        if self.pairing == "random":
+            return torch.randperm(batch_size, device=device)
+        return torch.arange(batch_size - 1, -1, -1, device=device)
 
     def _params_per_elem(self, batch_size: int):
         lam = np.ones(batch_size, dtype=np.float32)
@@ -210,12 +237,13 @@ class Mixup:
             lam = float(lam_mix)
         return lam, use_cutmix
 
-    def _mix_elem(self, x: torch.Tensor) -> torch.Tensor:
+    def _mix_elem(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         batch_size = len(x)
         lam_batch, use_cutmix = self._params_per_elem(batch_size)
         x_orig = x.clone()
+        partner_indices = self._partner_indices(batch_size, x.device)
         for i in range(batch_size):
-            j = batch_size - i - 1
+            j = int(partner_indices[i].item())
             lam = lam_batch[i]
             if lam != 1.0:
                 if use_cutmix[i]:
@@ -229,7 +257,8 @@ class Mixup:
                     lam_batch[i] = lam
                 else:
                     x[i] = x[i] * lam + x_orig[j] * (1.0 - lam)
-        return torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
+        lam_tensor = torch.tensor(lam_batch, device=x.device, dtype=x.dtype).unsqueeze(1)
+        return lam_tensor, partner_indices
 
     def _mix_pair(self, x: torch.Tensor) -> torch.Tensor:
         batch_size = len(x)
@@ -274,8 +303,9 @@ class Mixup:
 
     def __call__(self, x: torch.Tensor, target: List[torch.Tensor]):
         assert len(x) % 2 == 0, "Batch size should be even when using this"
+        partner_indices = None
         if self.mode == "elem":
-            lam = self._mix_elem(x)
+            lam, partner_indices = self._mix_elem(x)
         elif self.mode == "pair":
             lam = self._mix_pair(x)
         else:
@@ -284,7 +314,13 @@ class Mixup:
         mixed_targets = []
         for level, level_target in enumerate(target):
             mixed_targets.append(
-                mixup_target(level_target, int(self.num_classes[level]), lam, self.label_smoothing)
+                mixup_target(
+                    level_target,
+                    int(self.num_classes[level]),
+                    lam,
+                    self.label_smoothing,
+                    partner_indices=partner_indices,
+                )
             )
         return (x, *mixed_targets)
 
@@ -308,6 +344,7 @@ def build_mixup_fn(cfg: Any, num_classes_per_level: Optional[List[int]] = None) 
         prob=mixup_prob(cfg),
         switch_prob=mixup_switch_prob(cfg),
         mode=mixup_mode(cfg),
+        pairing=mixup_pairing(cfg),
         label_smoothing=float(cfg.train.get("smoothing", 0.1)),
         num_classes=[int(x) for x in num_classes_per_level],
     )

@@ -156,8 +156,11 @@ def compute_loss(
     Tuple[torch.Tensor, Dict[str, float]],
     Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
 ]:
-    if isinstance(targets, dict) and targets.get("soft_targets_per_level") is not None:
-        raise ValueError("HRN parity loss does not support mixup/cutmix soft targets. Disable mixup/cutmix for HRN.")
+    if isinstance(targets, dict):
+        raise ValueError(
+            "HRN paper-reproduction mode supports full leaf-labeled samples only; "
+            "partial/relabeling targets and mixup/cutmix target dictionaries are unsupported."
+        )
 
     hard_targets = _hard_targets_from_input(targets)
     if hard_targets.ndim != 2 or int(hard_targets.size(1)) != 3:

@@ -73,7 +73,7 @@ def taxonomy_guided_routing_weights(
         taxonomy_temperature * (weighted_taxonomy - mask_center)
     ) + mask_threshold_low  # [B, N_parent, N_out]
 
-    replicated = soft_taxonomy.repeat(1, max(1, repeats), 1)
+    replicated = soft_taxonomy.repeat(1, repeats, 1)
     remaining = n_in - (repeats * parent_classes)
     if remaining > 0:
         remainder = soft_taxonomy[:, :1, :].repeat(1, remaining, 1)

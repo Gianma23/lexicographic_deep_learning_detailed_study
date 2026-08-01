@@ -1,4 +1,3 @@
-import warnings
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -55,17 +54,11 @@ def _build_resnet50_backbone(pretrained: bool):
 
         return resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
     except Exception as exc:
-        warnings.warn(
-            f"HRN pretrained ResNet-50 unavailable ({exc}). Falling back to random initialization.",
-            RuntimeWarning,
-        )
-        try:
-            return resnet50(pretrained=True)
-        except Exception:
-            try:
-                return resnet50(weights=None)
-            except TypeError:
-                return resnet50(pretrained=False)
+        raise RuntimeError(
+            "HRN paper reproduction requires ImageNet-pretrained ResNet-50 weights, "
+            "but torchvision could not load them. Cache/download the weights or set "
+            "model.pretrained=false for a deliberately non-paper run."
+        ) from exc
 
 
 class HRNModel(nn.Module):
@@ -196,7 +189,13 @@ class HRNModel(nn.Module):
         species_sig = torch.sigmoid(species_tree_logits)
 
         logits_per_level: List[torch.Tensor] = [order_logits, family_logits, species_ce_logits]
-        effective_probs_per_level = [F.softmax(logits, dim=-1) for logits in logits_per_level]
+        # Upstream HRN evaluates the tree heads as independent sigmoid scores
+        # and the auxiliary leaf CE head as a class distribution.
+        effective_probs_per_level = [
+            order_sig,
+            family_sig,
+            F.softmax(species_ce_logits, dim=-1),
+        ]
 
         return {
             "logits_per_level": logits_per_level,

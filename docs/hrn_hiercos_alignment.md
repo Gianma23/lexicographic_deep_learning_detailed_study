@@ -1,6 +1,6 @@
 # HRN + Hier-COS Alignment Audit
 
-Updated: 2026-07-20
+Updated: 2026-08-01
 
 This note audits local `hrn` and `hiercos` implementations against upstream repositories:
 
@@ -25,6 +25,7 @@ The implementation choices below follow the selected clean-protocol constraints 
   - FC heads `2048 -> 1024 -> 512` with BN/ELU.
   - Residual fusion path `order`, `family+order`, `species+family+order`.
   - Separate species logits for CE (`classifier_3_1`) and tree branch (`classifier_3` with sigmoid).
+  - Effective evaluation scores use sigmoid at order/family and softmax at species.
 
 ### Loss
 - **Aligned (full-label mode)**: local `models/hrn/losses.py` matches upstream tree loss + species CE behavior.
@@ -44,6 +45,9 @@ The implementation choices below follow the selected clean-protocol constraints 
 - **Aligned for CUB/Aircraft parity presets**:
   - `Resize(550,550) -> RandomCrop(448,padding=8) -> RandomHorizontalFlip -> Normalize(0.5,0.5,0.5)` for train.
   - `Resize(550,550) -> CenterCrop(448) -> Normalize(0.5,0.5,0.5)` for eval.
+- **Dataset-native CIFAR extrapolation**:
+  - 32 px reflect-padded random crop and CIFAR normalization, matching the
+    repository's other CIFAR-100 baselines rather than the HRN FGVC recipe.
 
 ### Split/Evaluation Protocol
 - **Intentionally different**:
@@ -90,6 +94,9 @@ The implementation choices below follow the selected clean-protocol constraints 
 1. Hier-COS CIFAR remains 3-level in this repo (not upstream 5-level CIFAR protocol).
 2. HRN partial-label (`proportion`) experiments are not implemented in this pass.
 3. Checkpoint selection remains `FPA/TICE/weighted AP` to preserve repository-wide comparability.
+4. CIFAR-100 is an explicit native-32 px extrapolation because upstream HRN
+   does not report CIFAR-100; it prioritizes unified CIFAR comparability over
+   the paper's 448 px FGVC geometry.
 
 ## Active presets
 

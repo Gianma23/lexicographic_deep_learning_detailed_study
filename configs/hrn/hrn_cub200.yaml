@@ -53,7 +53,7 @@ dataloader:
   drop_last_eval: false
 
 train:
-  epochs: 100
+  epochs: 200
   seed: 0
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false

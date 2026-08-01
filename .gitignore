@@ -15,6 +15,7 @@ docs/figures/**
 .vscode/
 .agents/
 .tmp_hiercos_upstream/**
+.claude/
 AGENTS.md
 
 # Distribution / packaging

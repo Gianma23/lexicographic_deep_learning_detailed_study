@@ -1,6 +1,6 @@
 # Model fidelity and upstream delta log
 
-Audit date: 20 July 2026
+Audit date: 1 August 2026
 
 This document records which behavior is source-aligned and which behavior is a
 framework adaptation, verified correction, unified-protocol choice, local
@@ -19,6 +19,11 @@ results across frameworks, library versions, seeds, or hardware.
 
 The revisions are evidence anchors. They are not fetched during normal
 training.
+
+Paper run settings were checked against the
+[HRN CVPR 2022 paper](https://openaccess.thecvf.com/content/CVPR2022/html/Chen_Label_Relation_Graphs_Enhanced_Hierarchical_Residual_Network_for_Hierarchical_Multi-Granularity_CVPR_2022_paper.html)
+and the
+[HT-CapsNet Knowledge-Based Systems paper](https://doi.org/10.1016/j.knosys.2025.114444).
 
 ## Shared corrected-unified choices
 
@@ -109,19 +114,40 @@ samples, or choose models on test data.
   inconsistent.
 - Secondary dimensions `[64, 32, 16]`, three routing iterations, per-image
   standardization, and MixUp alpha `0.2` follow the source experiment family.
+- Cross-capsule attention keeps Keras semantics (`16` heads with independent
+  `key_dim=value_dim=32`) through PyTorch scaled-dot-product attention; Q/K/V
+  width is therefore 512 at every level rather than being divided from the
+  capsule dimension.
+- Primary features are flattened in NHWC order, EfficientNet applies the
+  source model's embedded `1/255` rescaling, and `tf_efficientnet_b7` supplies
+  the final spatial `forward_features` map.
+- Dynamic loss weights are checkpointed model buffers: each batch uses the
+  weights produced after the preceding batch, matching the Keras callback.
+  Where the paper's written weighting equation and callback differ, the port
+  follows the source callback exactly: `tau_i = 1 - acc_i * initial_i`, then
+  `(1 - dynamic_weight) * tau_i / sum(tau)`.
+- MixUp samples one beta coefficient per example with random pairing. The
+  epoch-indexed source schedule holds `0.001` through epoch index 10 and uses
+  `0.00095` at index 11.
 - The shipped horizon is 200 epochs, matching the upstream launcher rather
   than the shorter README example.
 
 ### Framework adaptations and limits
 
 - Keras/TensorFlow layers and callbacks are represented by native PyTorch
-  modules and batch-local loss computations.
+  modules; PyTorch's optimized scaled-dot-product primitive performs attention.
 - A complete taxonomy and deterministic mode are mandatory locally; missing
   taxonomy cannot silently degrade the model into an ordinary capsule network.
-- CIFAR-100 and CUB are upstream datasets. Aircraft is a local extrapolation;
-  the upstream repository reports Stanford Cars rather than Aircraft.
-- Backbone fallback paths are practical compatibility behavior, not source
-  parity. Any fallback is warned.
+- CIFAR-100 and CUB are upstream datasets. Aircraft is a local extrapolation
+  ported from the paper's 64 px fine-grained recipe; the paper reports Stanford
+  Cars rather than Aircraft.
+- Local CUB keeps the unified 13/38/200 taxonomy, not the paper's 39/123/200
+  construction, so it is a protocol adaptation rather than an exact paper run.
+- Requested ImageNet backbones are mandatory. Missing weights fail clearly and
+  never silently produce a random-initialized paper-labeled run.
+- Corrected attention projection shapes and checkpointed loss-weight buffers
+  intentionally make older local HT-CapsNet checkpoints incompatible; fidelity
+  runs must start from fresh initialization.
 
 ## HRN
 
@@ -129,9 +155,11 @@ samples, or choose models on test data.
 
 - ResNet-50 trunk, three RFM branches, 1024 branch features, 512 embeddings,
   sigmoid tree scores, leaf CE logits, and residual fusion follow upstream.
+- Inference exposes sigmoid order/family scores and softmax species scores,
+  matching the upstream evaluation path.
 - The local state-space/tree objective and leaf-only CE reproduce full-label
   HRN semantics.
-- CUB/Aircraft preprocessing uses the source-style 550 resize, 448 crop,
+- CUB/Aircraft use the source-style 550 resize, 448 crop,
   `[0.5, 0.5, 0.5]` normalization, SGD/cosine schedule, and 0.1× trunk LR.
 
 ### Unified-protocol choices and extrapolations
@@ -141,7 +169,10 @@ samples, or choose models on test data.
 - Upstream scripts can select/report on test data. Local checkpoints are
   selected only on validation data.
 - Partial-label HRN branches are out of scope.
-- CIFAR-100 is a local extrapolation.
+- CIFAR-100 is a local extrapolation that retains the repository-wide native
+  32 px CIFAR preprocessing for cross-model comparability. Consequently it is
+  not an input-resolution reproduction of an HRN paper run.
+- Requested ImageNet initialization is mandatory; unavailable weights fail.
 
 ## Hier-COS
 

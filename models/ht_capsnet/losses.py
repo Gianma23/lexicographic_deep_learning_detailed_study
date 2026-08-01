@@ -152,8 +152,8 @@ def _dynamic_level_weights(
 
 
 def _level_weights(
+    output: Dict[str, Any],
     logits_per_level: List[torch.Tensor],
-    target_indices_per_level: List[torch.Tensor],
     cfg: Any,
 ) -> List[float]:
     num_levels = len(logits_per_level)
@@ -163,11 +163,11 @@ def _level_weights(
         raise ValueError("HT-CapsNet model.loss.weight_mode must be a string.")
 
     if mode == "dynamic":
-        return _dynamic_level_weights(
-            logits_per_level=logits_per_level,
-            target_indices_per_level=target_indices_per_level,
-            decay=float(loss_cfg.get("dynamic_weight", 0.0)),
-        )
+        current = output.get("level_loss_weights")
+        if isinstance(current, torch.Tensor) and current.numel() == num_levels:
+            return [float(value) for value in current.detach().view(-1).cpu().tolist()]
+        initial = _initial_level_weights([int(logits.size(-1)) for logits in logits_per_level])
+        return initial if len(initial) == num_levels else [1.0 for _ in range(num_levels)]
     if mode == "static":
         static_weights = _initial_level_weights([int(logits.size(-1)) for logits in logits_per_level])
         return static_weights if len(static_weights) == num_levels else [1.0 for _ in range(num_levels)]
@@ -201,7 +201,7 @@ def compute_loss(
     m_neg = float(loss_cfg.get("margin_m_neg", 0.1))
     lambda_down = float(loss_cfg.get("lambda_downweight", 0.5))
 
-    weights = _level_weights(logits_per_level, target_indices, cfg)
+    weights = _level_weights(output, logits_per_level, cfg)
 
     level_losses: List[torch.Tensor] = []
     weighted_level_losses: List[torch.Tensor] = []
@@ -219,8 +219,20 @@ def compute_loss(
     }
     for level, level_loss in enumerate(level_losses):
         metrics[f"loss_level_{level}"] = float(level_loss.detach().item())
+        metrics[f"loss_weight_level_{level}"] = float(weights[level])
     if not return_aux:
         return total, metrics
 
     aux_payload: Dict[str, Any] = {"level_losses": list(level_losses)}
+    if str(loss_cfg.get("weight_mode", "dynamic")) == "dynamic":
+        next_weights = _dynamic_level_weights(
+            logits_per_level=logits_per_level,
+            target_indices_per_level=target_indices,
+            decay=float(loss_cfg.get("dynamic_weight", 0.0)),
+        )
+        aux_payload["next_level_loss_weights"] = torch.tensor(
+            next_weights,
+            device=logits_per_level[0].device,
+            dtype=logits_per_level[0].dtype,
+        )
     return total, metrics, aux_payload

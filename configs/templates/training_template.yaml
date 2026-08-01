@@ -38,6 +38,7 @@ scheduler:
   # Supported families:
   # - none
   # - hiercos_cosine (custom scheduler; uses base_lr and train.epochs)
+  # - ht_capsnet_exponential (uses start_epoch and decay_rate)
   # - timm schedulers via timm.create_scheduler_v2 (e.g., cosine, step)
   name: cosine
 
@@ -56,6 +57,7 @@ scheduler:
   cooldown_epochs: 10
   patience_epochs: 10
   decay_rate: 0.1
+  start_epoch: 10                   # HT-CapsNet: epoch index where exponent starts at zero
 
 runtime:
   deterministic: true               # Enable deterministic algorithms / reproducibility guards

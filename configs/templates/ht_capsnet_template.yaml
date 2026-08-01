@@ -27,7 +27,8 @@ model:
 
   # Cross-level attention controls
   attn_heads: 16                   # Requested number of attention heads per level
-  attn_dropout: 0.0                # Dropout inside MultiheadAttention
+  attn_key_dim: 32                 # Per-head Q/K/V width, matching Keras key_dim
+  attn_dropout: 0.0                # Dropout inside scaled dot-product attention
   attn_postprocess: layernorm      # Post-attention fusion: layernorm | squash
 
   loss:

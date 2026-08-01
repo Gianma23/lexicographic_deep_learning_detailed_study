@@ -19,7 +19,9 @@ model:
 
   # Cross-capsule attention
   attn_heads: 16
+  attn_key_dim: 32
   attn_dropout: 0.0
+  attn_postprocess: layernorm
   loss:
     margin_m_pos: 0.9
     margin_m_neg: 0.1
@@ -31,8 +33,8 @@ dataset:
   name: cifar-100
   root: ${oc.env:CIFAR100_ROOT,/scratch/g.saggini1/datasets/cifar100}
   hierarchy_depth: 3
-  # Upstream parser default input_size is (64, 64, 3) unless explicitly overridden.
-  image_size: 64
+  # Paper/source CIFAR-100 run uses native 32x32 images.
+  image_size: 32
   mean: [0.5071, 0.4867, 0.4408]
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
@@ -51,7 +53,8 @@ dataset:
     cutmix_minmax: null
     mixup_prob: 1.0
     mixup_switch_prob: 0.0
-    mixup_mode: batch
+    mixup_mode: elem
+    mixup_pairing: random
 
 dataloader:
   # run-HT-CapsNet.sh sets batch_size=32.
@@ -65,7 +68,7 @@ train:
   epochs: 200
   seed: 42
   device: ${oc.env:TRAIN_DEVICE,cuda}
-  amp: true
+  amp: false
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/capsnet_cifar100
   smoothing: 0.0
@@ -76,22 +79,12 @@ optim:
   lr: 0.001
   weight_decay: 0.0
   momentum: 0.9
-  opt_eps: 1.0e-8
+  opt_eps: 1.0e-7
   opt_betas: null
 
 scheduler:
-  # Paper setting: LR_ExponentialDecay(initial_lr=0.001, start_epoch=10, decay=0.95).
-  name: step
-  warmup_lr: 0.001
-  min_lr: 0.000001
-  noise: null
-  noise_pct: 0.67
-  noise_std: 1.0
-  noise_seed: 42
-  decay_epochs: 1
-  warmup_epochs: 10
-  cooldown_epochs: 0
-  patience_epochs: 10
+  name: ht_capsnet_exponential
+  start_epoch: 10
   decay_rate: 0.95
 
 runtime:

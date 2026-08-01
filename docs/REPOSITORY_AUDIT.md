@@ -57,7 +57,7 @@ taxonomy sizes matched, and a transformed sample was loaded from every split.
 |---|---|---|
 | H-CAST | source-aligned core plus verified Aircraft correction and local HCC/lex extensions | vendored shape guards prevent byte-identical upstream code |
 | LH-DNN | paper-derived CIFAR implementation | no official code; CUB/Aircraft are extrapolations |
-| HT-CapsNet | equation/architecture-aligned TensorFlow-to-PyTorch port | framework numerical equivalence and Aircraft extrapolation |
+| HT-CapsNet | source-aligned TensorFlow-to-PyTorch port with Keras-shaped SDPA attention | framework numerical equivalence, unified CUB taxonomy, and Aircraft extrapolation |
 | HRN | source-aligned full-label architecture/loss | unified validation/full-eval protocol differs from upstream |
 | Hier-COS | source-aligned fixed-frame/KL core plus local CE/lex modes | local hierarchy depths and ambiguous upstream Aircraft script |
 | Orthonormal plugin | local extension | no upstream-equivalence claim |

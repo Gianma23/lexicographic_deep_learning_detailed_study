@@ -38,6 +38,7 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "mask_temperature",
         "mask_center",
         "attn_heads",
+        "attn_key_dim",
         "attn_dropout",
         "attn_postprocess",
         "loss",
@@ -116,6 +117,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "mixup_prob",
         "mixup_switch_prob",
         "mixup_mode",
+        "mixup_pairing",
     },
     "dataset.transforms.timm": {
         "color_jitter",
@@ -199,6 +201,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "cooldown_epochs",
         "patience_epochs",
         "decay_rate",
+        "start_epoch",
     },
     "runtime": {"deterministic", "protocol"},
     "hcc": {
@@ -467,6 +470,13 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
         "dataset.transforms.mixup_mode",
         {"batch", "pair", "elem"},
     )
+    _require_enum(
+        transforms.get("mixup_pairing", "flip"),
+        "dataset.transforms.mixup_pairing",
+        {"flip", "random"},
+    )
+    if transforms.get("mixup_pairing", "flip") == "random" and transforms.get("mixup_mode", "batch") != "elem":
+        raise ValueError("dataset.transforms.mixup_pairing=random requires mixup_mode=elem.")
 
     _positive_int(dataloader.get("batch_size"), "dataloader.batch_size")
     _positive_int(dataloader.get("num_workers", 0), "dataloader.num_workers", minimum=0)
@@ -518,8 +528,13 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
     _require_enum(
         scheduler.get("name"),
         "scheduler.name",
-        {"none", "cosine", "step", "hiercos_cosine"},
+        {"none", "cosine", "step", "hiercos_cosine", "ht_capsnet_exponential"},
     )
+    if scheduler.get("name") == "ht_capsnet_exponential":
+        _positive_int(scheduler.get("start_epoch", 10), "scheduler.start_epoch", minimum=0)
+        decay_rate = _finite_float(scheduler.get("decay_rate", 0.95), "scheduler.decay_rate")
+        if decay_rate <= 0.0 or decay_rate > 1.0:
+            raise ValueError("HT-CapsNet scheduler.decay_rate must be in (0, 1].")
     _require_bool(runtime.get("deterministic", True), "runtime.deterministic")
 
 
@@ -593,6 +608,8 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         dropout = _finite_float(model.get("attn_dropout", 0.0), "model.attn_dropout")
         if dropout < 0.0 or dropout >= 1.0:
             raise ValueError("`model.attn_dropout` must be in [0, 1).")
+        _positive_int(model.get("attn_heads", 16), "model.attn_heads")
+        _positive_int(model.get("attn_key_dim", 32), "model.attn_key_dim")
         loss = model.get("loss")
         if not isinstance(loss, Mapping):
             raise ValueError("HT-CapsNet requires `model.loss` to be a mapping.")

@@ -93,11 +93,12 @@ fatal errors.
 
 ### HT-CapsNet
 
-- `models/ht_capsnet/model.py` — PyTorch capsule architecture, backbones, and
-  cross-capsule attention.
+- `models/ht_capsnet/model.py` — PyTorch capsule architecture, final-feature
+  EfficientNet wrapper, Keras-shaped SDPA attention, and checkpointed dynamic
+  loss-weight state.
 - `models/ht_capsnet/routing.py` — taxonomy-guided routing.
-- `models/ht_capsnet/losses.py` — capsule margin loss and dynamic/static level
-  weighting.
+- `models/ht_capsnet/losses.py` — capsule margin loss and next-batch
+  dynamic/static level weighting.
 - `models/ht_capsnet/factory.py` — deterministic and complete-taxonomy checks.
 
 ### HRN

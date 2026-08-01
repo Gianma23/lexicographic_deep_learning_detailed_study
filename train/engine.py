@@ -32,6 +32,17 @@ def _set_model_epoch(model: torch.nn.Module, epoch: int) -> None:
         wrapped_model.set_epoch(epoch)
 
 
+def _post_optimizer_step(model: torch.nn.Module, loss_aux: Any) -> None:
+    """Run an optional model callback after an optimizer batch update."""
+    target = getattr(model, "module", model)
+    if hasattr(target, "post_optimizer_step"):
+        target.post_optimizer_step(loss_aux)
+        return
+    base_model = getattr(target, "base_model", None)
+    if base_model is not None and hasattr(base_model, "post_optimizer_step"):
+        base_model.post_optimizer_step(loss_aux)
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     loader,
@@ -156,6 +167,8 @@ def train_one_epoch(
             else:
                 loss.backward()
                 optimizer.step()
+
+        _post_optimizer_step(model, loss_aux)
 
         batch_weight = int(labels.size(0))
         loss_vals.append(loss_dict)

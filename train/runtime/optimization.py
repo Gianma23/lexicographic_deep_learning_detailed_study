@@ -85,6 +85,68 @@ class HierCosCosineScheduler:
         self.step(self.last_t)
 
 
+class HTCapsNetExponentialScheduler:
+    """Official HT-CapsNet epoch-indexed exponential schedule."""
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        initial_lr: float,
+        start_epoch: int = 10,
+        decay_rate: float = 0.95,
+    ):
+        self.optimizer = optimizer
+        self.initial_lr = float(initial_lr)
+        self.start_epoch = int(start_epoch)
+        self.decay_rate = float(decay_rate)
+        if self.initial_lr <= 0.0:
+            raise ValueError("HT-CapsNet scheduler initial_lr must be > 0.")
+        if self.start_epoch < 0:
+            raise ValueError("HT-CapsNet scheduler start_epoch must be >= 0.")
+        if not 0.0 < self.decay_rate <= 1.0:
+            raise ValueError("HT-CapsNet scheduler decay_rate must be in (0, 1].")
+        self.group_scales = [
+            float(group.get("lr", self.initial_lr)) / self.initial_lr
+            for group in self.optimizer.param_groups
+        ]
+        self.last_epoch = 0
+
+    def _lr_at(self, epoch: int) -> float:
+        exponent = max(int(epoch) - self.start_epoch, 0)
+        return float(self.initial_lr * (self.decay_rate ** exponent))
+
+    def step(self, epoch: Optional[float] = None, _metric: Optional[float] = None) -> None:
+        if epoch is None:
+            epoch_index = self.last_epoch + 1
+        else:
+            epoch_index = int(epoch)
+        self.last_epoch = epoch_index
+        scheduled_lr = self._lr_at(epoch_index)
+        for group, scale in zip(self.optimizer.param_groups, self.group_scales):
+            group["lr"] = float(scheduled_lr * scale)
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "initial_lr": self.initial_lr,
+            "start_epoch": self.start_epoch,
+            "decay_rate": self.decay_rate,
+            "group_scales": list(self.group_scales),
+            "last_epoch": self.last_epoch,
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        if not isinstance(state_dict, dict):
+            return
+        self.initial_lr = float(state_dict.get("initial_lr", self.initial_lr))
+        self.start_epoch = int(state_dict.get("start_epoch", self.start_epoch))
+        self.decay_rate = float(state_dict.get("decay_rate", self.decay_rate))
+        saved_scales = state_dict.get("group_scales")
+        if isinstance(saved_scales, (list, tuple)) and len(saved_scales) == len(self.optimizer.param_groups):
+            self.group_scales = [float(value) for value in saved_scales]
+        self.last_epoch = int(state_dict.get("last_epoch", 0))
+        self.step(self.last_epoch)
+
+
 def build_optimizer(cfg: Any, model: torch.nn.Module):
     """Build an optimizer from cfg.optim."""
     name = cfg.optim.name
@@ -185,6 +247,13 @@ def build_scheduler(cfg: Any, optimizer: torch.optim.Optimizer):
             optimizer=optimizer,
             num_epochs=int(cfg.train.epochs),
             base_lr=base_lr,
+        )
+    if name == "ht_capsnet_exponential":
+        return HTCapsNetExponentialScheduler(
+            optimizer=optimizer,
+            initial_lr=float(cfg.optim.get("lr", 0.001)),
+            start_epoch=int(sched_cfg.get("start_epoch", 10)),
+            decay_rate=float(sched_cfg.get("decay_rate", 0.95)),
         )
     model_cfg = section_to_dict(getattr(cfg, "model", None))
     model_name = model_cfg.get("name", "")

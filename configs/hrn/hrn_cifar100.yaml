@@ -16,7 +16,7 @@ dataset:
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
   download: true
-  # Local extrapolation: HRN upstream does not provide CIFAR-100 experiments.
+  # Local extrapolation: preserve the unified repository's native CIFAR input protocol.
   val_split_ratio: 0.1
   split_seed: 0
   transforms:
@@ -48,7 +48,7 @@ dataloader:
   drop_last_eval: false
 
 train:
-  epochs: 100
+  epochs: 200
   seed: 0
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false

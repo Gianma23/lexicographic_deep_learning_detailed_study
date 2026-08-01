@@ -56,7 +56,8 @@ dataset/model pair was reported by the original paper.
 
 ## Installation
 
-Use Python 3.10 or newer. Install a PyTorch/torchvision build appropriate for
+Use Python 3.10 or newer and PyTorch 2.0 or newer (HT-CapsNet uses native
+scaled-dot-product attention). Install a PyTorch/torchvision build appropriate for
 the machine first, then install the repository dependencies:
 
 ```bash
@@ -196,9 +197,15 @@ presets remain local extrapolations.
 - `configs/capsnet/capsnet_aircraft.yaml`
 
 The presets use the upstream runner’s 200-epoch horizon, taxonomy temperature
-`0.5`, deterministic execution, capsule margin loss, and dynamic level
-weights. `train.resume` is empty by default; runs never silently reuse an old
-checkpoint.
+`0.5`, 16×32 Keras-shaped attention, per-example MixUp, the exact source
+exponential schedule, deterministic execution, capsule margin loss, and
+next-batch dynamic level weights. CIFAR uses 32 px; CUB and Aircraft use 64 px.
+The CUB preset deliberately retains this repository's 13/38/200 taxonomy, so
+it is not an exact reproduction of the paper's 39/123/200 run. Aircraft is a
+64 px extrapolation from the paper datasets. `train.resume` is empty by
+default; runs never silently reuse an old checkpoint.
+Older local HT-CapsNet checkpoints predate the corrected attention projections
+and loss-weight buffer and must not be resumed for these fidelity runs.
 
 ### HRN
 
@@ -209,7 +216,10 @@ checkpoint.
 HRN supports exactly three levels. CUB and Aircraft preserve the upstream
 ResNet-50/RFM architecture, 448 px preprocessing, tree loss, leaf CE, and
 trunk LR scaling. The unified protocol deliberately evaluates every sample and
-selects checkpoints on validation data. CIFAR-100 is an extrapolation.
+selects checkpoints on validation data. CIFAR-100 is a dataset-native 32 px
+extrapolation for comparability with the other CIFAR presets; it is not an HRN
+paper setting. All HRN presets are full-label only, and requested ImageNet
+initialization never falls back to random weights.
 
 ### Hier-COS
 
