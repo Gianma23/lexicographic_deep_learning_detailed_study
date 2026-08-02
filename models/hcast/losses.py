@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 
+from ..common.hcc import select_effective_logits
 
 HcastTargets = Union[torch.Tensor, Dict[str, Any]]
 _EPS = 1e-12
@@ -165,22 +166,6 @@ def _level_losses_from_scores(
     ]
 
 
-def _resolve_score_source(output: Dict[str, Any]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-    """Choose raw logits or HCC effective logits as the loss score source."""
-    logits_per_level = output["logits_per_level"]
-    if not isinstance(logits_per_level, list) or not logits_per_level:
-        raise ValueError("H-CAST output must contain non-empty `logits_per_level`.")
-
-    effective_logits = output.get("effective_logits_per_level")
-    if effective_logits is not None:
-        if not isinstance(effective_logits, list) or len(effective_logits) != len(logits_per_level):
-            raise ValueError("`effective_logits_per_level` must be None or a list aligned with `logits_per_level`.")
-        return logits_per_level, effective_logits
-
-    # Before HCC activates, or when HCC is disabled, downstream loss stays on raw logits.
-    return logits_per_level, logits_per_level
-
-
 def _resolve_level_weights(
     loss_cfg: Dict[str, Any],
     score_source_per_level: List[torch.Tensor],
@@ -228,7 +213,7 @@ def compute_loss(
 
     # If effective_logits_per_level is present, training uses HCC logits;
     # otherwise training uses raw logits.
-    logits_per_level, score_source_per_level = _resolve_score_source(output)
+    logits_per_level, score_source_per_level = select_effective_logits(output)
     target_probs_per_level = _soft_targets_from_input(score_source_per_level, targets)
     hard_targets = _hard_targets_from_input(targets, num_levels=len(logits_per_level))
 

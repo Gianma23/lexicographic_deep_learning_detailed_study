@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..common.hcc import HccController
+
 
 class BasicConv(nn.Module):
     """Post-activation conv block used by upstream HRN."""
@@ -73,6 +75,9 @@ class HRNModel(nn.Module):
         embedding_dim: int = 512,
         dropout: float = 0.0,
         trunk_lr_scale: float = 0.1,
+        taxonomy: Optional[Dict[str, Any]] = None,
+        hcc_cfg: Optional[Dict[str, Any]] = None,
+        train_epochs: int = 1,
     ):
         super().__init__()
         self.num_classes_per_level = [int(n) for n in num_classes_per_level]
@@ -113,6 +118,19 @@ class HRNModel(nn.Module):
         self.classifier_2 = nn.Linear(int(embedding_dim), self.num_classes_per_level[1])
         self.classifier_3 = nn.Linear(int(embedding_dim), self.num_classes_per_level[2])
         self.classifier_3_1 = nn.Linear(int(embedding_dim), self.num_classes_per_level[2])
+
+        self.hcc = HccController(
+            num_classes_per_level=self.num_classes_per_level,
+            taxonomy=taxonomy,
+            hcc_cfg=hcc_cfg,
+            train_epochs=train_epochs,
+        )
+
+    def set_epoch(self, epoch: int) -> None:
+        self.hcc.set_epoch(epoch)
+
+    def set_hcc_final_test_active(self, active: bool) -> None:
+        self.hcc.set_final_test_active(active)
 
     def _build_fc_block(self, branch_hidden_dim: int, embedding_dim: int, dropout: float) -> nn.Module:
         layers: List[nn.Module] = [
@@ -197,11 +215,28 @@ class HRNModel(nn.Module):
             F.softmax(species_ce_logits, dim=-1),
         ]
 
+        # HCC corrects the pre-sigmoid tree branch (classifier_1/2/3), the
+        # affine logits that actually drive `_hierarchical_loss`; the separate
+        # leaf-only `species_ce_logits` head (classifier_3_1) is untouched.
+        tree_logits_per_level = [order_logits, family_logits, species_tree_logits]
+        hcc_output = self.hcc.apply(tree_logits_per_level)
+        effective_tree_logits_per_level = hcc_output["effective_logits_per_level"]
+        effective_tree_scores_per_level = (
+            [torch.sigmoid(logits) for logits in effective_tree_logits_per_level]
+            if effective_tree_logits_per_level is not None
+            else None
+        )
+
         return {
             "logits_per_level": logits_per_level,
             "orthonormal_plugin_scores_per_level": [order_logits, family_logits, species_ce_logits],
             "effective_probs_per_level": effective_probs_per_level,
             "tree_scores_per_level": [order_sig, family_sig, species_sig],
+            "tree_logits_per_level": tree_logits_per_level,
+            "projected_tree_logits_per_level": hcc_output["projected_logits_per_level"],
+            "effective_tree_logits_per_level": effective_tree_logits_per_level,
+            "effective_tree_scores_per_level": effective_tree_scores_per_level,
+            "hcc_diagnostics": hcc_output["hcc_diagnostics"],
             "species_ce_logits": species_ce_logits,
             "embeddings_per_level": [emb_order, emb_family, emb_species],
         }

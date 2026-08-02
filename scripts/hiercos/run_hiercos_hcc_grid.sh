@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS orthogonalize-all lexicographic variants:
-# - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
-# - model.weight_mode=${WEIGHT_MODE}
-# - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - model.transform_mode=full
-# - train.lexicographic.enabled=true
-# - train.lexicographic.start_epoch=0
-# - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
-# - train.lexicographic.projection_rule=orthogonalize_all
-# Defaults: aircraft/cub200/cifar100 with coarse_first. Environment matrices
-# can opt into the other supported projection modes.
+# Runs Hier-COS + HCC variants (HCC generalized from H-CAST, see
+# models/common/hcc.py) on top of the plain Hier-COS baseline configs:
+# - hiercos_hcc_<dataset>_step_0epoch
+# - hiercos_hcc_<dataset>_step_80epoch
+# for: cifar100, cub200, aircraft.
+#
+# HCC needs a specific config combination forced on top of each baseline,
+# deviating from the paper-faithful dense/global fixed-frame setting:
+# - model.fixed_frame_per_level=true so `node_logits_per_level` exists as
+#   independent per-level linear blocks (HCC's linear parent-sums-children
+#   constraint has no meaning on the dense/global frame's mixed node logits).
+# - model.fixed_frame_mode=identity: the simplest, most literal analogue of
+#   H-CAST's plain learnable per-level heads (no confound from an arbitrary
+#   frozen in-block rotation). orthonormal_random (still per-level) is a
+#   legitimate secondary ablation -- swap the override below to try it.
+# - model.loss=level_softmax_ce_reg so per-level node logits feed independent
+#   per-level CE instead of a shared global softmax over all levels.
+# - model.projection.enabled is left at its baseline default (false): Hier-COS's
+#   own `projection` block is an embedded LH-DNN-style mechanism; combining it
+#   with HCC would confound two different consistency corrections in one run.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -25,36 +34,6 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
-WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
-FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
-
-case "$LOSS_MODE" in
-  global_softmax_ce_reg|level_softmax_ce_reg) ;;
-  *)
-    echo "Unsupported LOSS_MODE: $LOSS_MODE" >&2
-    echo "Expected global_softmax_ce_reg or level_softmax_ce_reg." >&2
-    exit 1
-    ;;
-esac
-
-case "$WEIGHT_MODE" in
-  equal|kl_leaf|kl_coarse) ;;
-  *)
-    echo "Unsupported WEIGHT_MODE: $WEIGHT_MODE" >&2
-    echo "Expected equal, kl_leaf, or kl_coarse." >&2
-    exit 1
-    ;;
-esac
-
-case "$FIXED_FRAME_MODE" in
-  orthonormal_random|identity) ;;
-  *)
-    echo "Unsupported FIXED_FRAME_MODE: $FIXED_FRAME_MODE" >&2
-    echo "Expected orthonormal_random or identity." >&2
-    exit 1
-    ;;
-esac
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -80,14 +59,14 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
-#   LOSS_MODE=level_softmax_ce_reg WEIGHT_MODE=kl_leaf FIXED_FRAME_MODE=identity \
-#     ./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_hcc_grid.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100 aircraft cub200)
-LEX_PROJECTION_MODES=(coarse_first)
+parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
+  cifar100 cub200 aircraft
 
+# Start from the plain Hier-COS baseline config; the model.*/hcc.* overrides
+# below are what changes relative to run_hiercos_baselines.sh.
 config_for_dataset() {
   case "$1" in
     cifar100) echo "configs/hiercos/hiercos_cifar100.yaml" ;;
@@ -152,26 +131,15 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local projection_mode="$2"
-  local weight_suffix=""
-  local frame_suffix=""
-  if [[ "$WEIGHT_MODE" != "equal" ]]; then
-    weight_suffix="_${WEIGHT_MODE}"
-  fi
-  if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
-    frame_suffix="_identity"
-  fi
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_orthogonalize_all_${projection_mode}${weight_suffix}${frame_suffix}"
+  local epoch_tag="$2"
+  echo "$OUTPUTS_ROOT/hiercos_hcc_${ds}_level_softmax_ce_reg_identity_per_level_step_${epoch_tag}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
-printf 'Lex projection modes: %s\n' "${LEX_PROJECTION_MODES[*]}"
-printf 'Loss: %s\n' "$LOSS_MODE"
-printf 'Weight mode: %s\n' "$WEIGHT_MODE"
-printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
-printf 'Transform mode: full\n'
-printf 'Projection rule: orthogonalize_all\n'
+printf 'Lexicographic mode: disabled\n'
+printf 'HCC: enabled\n'
+printf 'HCC alpha schedule: step\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -180,17 +148,28 @@ print_seed_run_settings
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
-  for lex_mode in "${LEX_PROJECTION_MODES[@]}"; do
-    run_seeded_train "$cfg" "$(run_output_dir "$ds" "$lex_mode")" \
-      "model.loss=$LOSS_MODE" \
-      "model.weight_mode=$WEIGHT_MODE" \
-      "model.transform_mode=full" \
-      "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
-      "train.lexicographic.enabled=true" \
-      "train.lexicographic.start_epoch=0" \
-      "train.lexicographic.projection_mode=$lex_mode" \
-      "train.lexicographic.projection_rule=orthogonalize_all"
-  done
+  run_seeded_train "$cfg" "$(run_output_dir "$ds" 0epoch)" \
+    "model.loss=level_softmax_ce_reg" \
+    "model.fixed_frame_mode=identity" \
+    "model.fixed_frame_per_level=true" \
+    "hcc.enabled=true" \
+    "hcc.temperature=10" \
+    "hcc.eps=1e-12" \
+    "hcc.alpha_schedule=step" \
+    "hcc.alpha_start_epoch=0" \
+    "train.lexicographic.enabled=false"
+
+  # 80% of train.epochs (100), matching H-CAST's own 80/100 convention.
+  run_seeded_train "$cfg" "$(run_output_dir "$ds" 80epoch)" \
+    "model.loss=level_softmax_ce_reg" \
+    "model.fixed_frame_mode=identity" \
+    "model.fixed_frame_per_level=true" \
+    "hcc.enabled=true" \
+    "hcc.temperature=10" \
+    "hcc.eps=1e-12" \
+    "hcc.alpha_schedule=step" \
+    "hcc.alpha_start_epoch=80" \
+    "train.lexicographic.enabled=false"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -204,4 +183,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS orthogonalize-all lex runs.\n'
+printf 'Completed all requested Hier-COS HCC runs.\n'

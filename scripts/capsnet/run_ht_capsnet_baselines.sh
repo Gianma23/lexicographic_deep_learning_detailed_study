@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs plain H-CAST baselines:
-# - hcast_<dataset>
-# for: cifar100, cub200, aircraft.
+# Runs native HT-CapsNet baselines on CIFAR-100, CUB-200-2011, and
+# FGVC-Aircraft. CIFAR-100 follows the paper/source protocol; CUB uses this
+# repository's unified 13/38/200 taxonomy, and Aircraft is a local
+# extrapolation. Select a subset with, for example:
+#   DATASETS="cub200 aircraft" NUM_RUNS=3 ./scripts/capsnet/run_ht_capsnet_baselines.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -17,6 +19,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
+OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -40,19 +43,14 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-# Notebook-compatible outputs root.
-# Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_baselines.sh
-OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
-
-parse_choice_list DATASETS "cub200 aircraft" DATASETS \
+parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hcast/hcast_cifar100.yaml" ;;
-    cub200) echo "configs/hcast/hcast_cub200.yaml" ;;
-    aircraft) echo "configs/hcast/hcast_aircraft.yaml" ;;
+    cifar100) echo "configs/capsnet/capsnet_cifar100.yaml" ;;
+    cub200) echo "configs/capsnet/capsnet_cub200.yaml" ;;
+    aircraft) echo "configs/capsnet/capsnet_aircraft.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -77,16 +75,18 @@ run_train() {
     printf '%q ' "${cmd[@]}"
     printf '\n'
     if (( MAX_RESUME_RETRIES > 0 )); then
-      printf '[DRY-RUN][RETRY x%s] ' "$MAX_RESUME_RETRIES"
+      printf '[DRY-RUN][RETRY x%s if latest.pt exists] ' "$MAX_RESUME_RETRIES"
       printf '%q ' "${cmd[@]}" "train.resume=$run_dir/latest.pt"
       printf '\n'
     fi
   else
     while (( "$(jobs -pr | wc -l)" >= MAX_PARALLEL )); do
-      if ! wait -n; then
-        rc=$?
+      if wait -n; then
+        :
+      else
+        local rc=$?
         echo "[ERROR] One run failed (exit=${rc}); stopping remaining jobs." >&2
-        jobs -pr | xargs -r kill 2>/dev/null || true
+        kill_running_jobs
         exit "$rc"
       fi
     done
@@ -100,6 +100,10 @@ run_train() {
       rc=$?
       attempt=0
       while (( rc != 0 && attempt < MAX_RESUME_RETRIES )); do
+        if [[ ! -f "$run_dir/latest.pt" ]]; then
+          echo "[NO RETRY] No checkpoint at $run_dir/latest.pt; preserving the original failure." >&2
+          break
+        fi
         attempt=$((attempt + 1))
         echo "[RETRY ${attempt}/${MAX_RESUME_RETRIES}] run_dir=$run_dir resume=$run_dir/latest.pt" >&2
         "${cmd[@]}" "train.resume=$run_dir/latest.pt"
@@ -111,42 +115,42 @@ run_train() {
 }
 
 run_output_dir() {
-  local ds="$1"
-  case "$ds" in
-    cifar100) echo "$OUTPUTS_ROOT/hcast_cifar100" ;;
-    cub200) echo "$OUTPUTS_ROOT/hcast_cub200" ;;
-    aircraft) echo "$OUTPUTS_ROOT/hcast_aircraft" ;;
-    *)
-      echo "Unknown dataset: $ds" >&2
-      exit 1
-      ;;
-  esac
+  local dataset="$1"
+  echo "$OUTPUTS_ROOT/capsnet_${dataset}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
+printf 'Model: native HT-CapsNet\n'
+printf 'Loss weights: dynamic (from each baseline config)\n'
+printf 'CIFAR-100 protocol: paper/source aligned\n'
+printf 'CUB protocol: unified-taxonomy extrapolation\n'
+printf 'Aircraft protocol: local extrapolation\n'
 printf 'Lexicographic mode: disabled\n'
-printf 'HCC: disabled\n'
+printf 'Orthonormal plugin: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 print_seed_run_settings
 
-for ds in "${DATASETS[@]}"; do
-  cfg="$(config_for_dataset "$ds")"
-  run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
+for dataset in "${DATASETS[@]}"; do
+  config="$(config_for_dataset "$dataset")"
+  run_seeded_train "$config" "$(run_output_dir "$dataset")" \
+    "orthonormal_plugin.enabled=false" \
     "train.lexicographic.enabled=false"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then
   while (( "$(jobs -pr | wc -l)" > 0 )); do
-    if ! wait -n; then
+    if wait -n; then
+      :
+    else
       rc=$?
       echo "[ERROR] One run failed (exit=${rc}); stopping remaining jobs." >&2
-      jobs -pr | xargs -r kill 2>/dev/null || true
+      kill_running_jobs
       exit "$rc"
     fi
   done
 fi
 
-printf 'Completed all requested H-CAST baseline runs.\n'
+printf 'Completed all requested HT-CapsNet baseline runs.\n'

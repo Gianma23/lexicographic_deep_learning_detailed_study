@@ -2,6 +2,7 @@
 
 import torch
 
+from ..common.hcc import select_effective_logits
 
 CapsTargets = Union[torch.Tensor, Dict[str, Any]]
 
@@ -189,9 +190,9 @@ def compute_loss(
 ]:
     """Compute HT-CapsNet hierarchical margin loss and per-level metrics."""
     _ = taxonomy
-    logits_per_level = output["logits_per_level"]
-    if not isinstance(logits_per_level, list) or not logits_per_level:
-        raise ValueError("HT-CapsNet output must contain non-empty `logits_per_level`.")
+    # If effective_logits_per_level is present, training uses HCC-corrected
+    # logits; otherwise training uses raw logits.
+    logits_per_level, score_source_per_level = select_effective_logits(output)
 
     level_targets, _hard_targets = _resolve_level_targets(logits_per_level, targets)
     target_indices = _target_indices_for_accuracy(level_targets)
@@ -201,11 +202,11 @@ def compute_loss(
     m_neg = float(loss_cfg.get("margin_m_neg", 0.1))
     lambda_down = float(loss_cfg.get("lambda_downweight", 0.5))
 
-    weights = _level_weights(output, logits_per_level, cfg)
+    weights = _level_weights(output, score_source_per_level, cfg)
 
     level_losses: List[torch.Tensor] = []
     weighted_level_losses: List[torch.Tensor] = []
-    for level, logits in enumerate(logits_per_level):
+    for level, logits in enumerate(score_source_per_level):
         level_loss = _margin_loss(logits, level_targets[level], m_pos, m_neg, lambda_down)
         level_losses.append(level_loss)
         weighted_level_losses.append(level_loss * float(weights[level]))
@@ -226,13 +227,13 @@ def compute_loss(
     aux_payload: Dict[str, Any] = {"level_losses": list(level_losses)}
     if str(loss_cfg.get("weight_mode", "dynamic")) == "dynamic":
         next_weights = _dynamic_level_weights(
-            logits_per_level=logits_per_level,
+            logits_per_level=score_source_per_level,
             target_indices_per_level=target_indices,
             decay=float(loss_cfg.get("dynamic_weight", 0.0)),
         )
         aux_payload["next_level_loss_weights"] = torch.tensor(
             next_weights,
-            device=logits_per_level[0].device,
-            dtype=logits_per_level[0].dtype,
+            device=score_source_per_level[0].device,
+            dtype=score_source_per_level[0].dtype,
         )
     return total, metrics, aux_payload

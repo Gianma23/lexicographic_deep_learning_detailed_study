@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..common.hcc import HccController
 from .routing import (
     hierarchical_agreement,
     safe_norm,
@@ -259,6 +260,8 @@ class HTCapsNet(nn.Module):
         attn_dropout: float = 0.0,
         attn_postprocess: str = "layernorm",
         input_size: int = 224,
+        hcc_cfg: Optional[Dict[str, Any]] = None,
+        train_epochs: int = 1,
     ):
         super().__init__()
         self.num_classes_per_level = [int(v) for v in num_classes_per_level]
@@ -349,6 +352,18 @@ class HTCapsNet(nn.Module):
         self.mask_temperature = float(mask_temperature)
         self.mask_center = float(mask_center)
         self.parent_of = self._normalize_parent_of(taxonomy)
+        self.hcc = HccController(
+            num_classes_per_level=self.num_classes_per_level,
+            taxonomy=taxonomy,
+            hcc_cfg=hcc_cfg,
+            train_epochs=train_epochs,
+        )
+
+    def set_epoch(self, epoch: int) -> None:
+        self.hcc.set_epoch(epoch)
+
+    def set_hcc_final_test_active(self, active: bool) -> None:
+        self.hcc.set_final_test_active(active)
 
     @staticmethod
     def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
@@ -570,6 +585,8 @@ class HTCapsNet(nn.Module):
             logits_per_level.append(logits)
             routing_stats[f"level_{level}_caps_norm_mean"] = logits.mean().detach()
 
+        hcc_output = self.hcc.apply(logits_per_level)
+
         return {
             "logits_per_level": logits_per_level,
             "effective_probs_per_level": [torch.softmax(logits, dim=-1) for logits in logits_per_level],
@@ -577,4 +594,5 @@ class HTCapsNet(nn.Module):
             "secondary_caps": secondary_caps,
             "routing_stats": routing_stats,
             "level_loss_weights": self.level_loss_weights.detach().clone(),
+            **hcc_output,
         }

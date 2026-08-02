@@ -183,6 +183,29 @@ def _validate_node_logits_per_level(
     return validated
 
 
+def _prefer_effective_node_logits(
+    output: Dict[str, Any],
+    node_logits_per_level: Optional[List[torch.Tensor]],
+) -> Optional[List[torch.Tensor]]:
+    """Prefer HCC-corrected per-level node logits over raw ones when present.
+
+    Only Hier-COS's native model (not the generic plugin wrapper) ever
+    populates `effective_node_logits_per_level`, and only when `hcc.enabled`
+    and the fixed frame is block-diagonal per level (so `node_logits_per_level`
+    itself is non-None to begin with).
+    """
+    if node_logits_per_level is None:
+        return None
+    effective = output.get("effective_node_logits_per_level")
+    if effective is None:
+        return node_logits_per_level
+    if not isinstance(effective, list) or len(effective) != len(node_logits_per_level):
+        raise ValueError(
+            "`effective_node_logits_per_level` must be None or a list aligned with `node_logits_per_level`."
+        )
+    return effective
+
+
 def _path_global_node_ids(
     leaf_targets: torch.Tensor,
     level_node_ids: List[torch.Tensor],
@@ -403,6 +426,7 @@ def compute_loss(
         level_node_ids=level_node_ids,
         num_levels=num_levels,
     )
+    node_logits_per_level = _prefer_effective_node_logits(output, node_logits_per_level)
     hard_targets = hard_targets.to(device=node_logits.device, dtype=torch.long)
     leaf_targets = _resolve_leaf_targets(hard_targets)
     num_leaf = int(leaf_to_level_local.size(0))

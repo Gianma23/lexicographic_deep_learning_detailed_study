@@ -70,7 +70,7 @@ train:
   scale_lr: true
   scale_lr_reference_batch_size: 512
   resume: ""
-  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hcast_aircraft_nokl
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hcast_aircraft
   smoothing: 0.1
 
 optim:

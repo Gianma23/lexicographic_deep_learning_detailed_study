@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs plain H-CAST baselines:
-# - hcast_<dataset>
+# Runs HT-CapsNet + HCC variants (HCC generalized from H-CAST, see
+# models/common/hcc.py) on top of the plain HT-CapsNet baseline configs:
+# - capsnet_hcc_<dataset>_step_0epoch
+# - capsnet_hcc_<dataset>_step_160epoch
 # for: cifar100, cub200, aircraft.
+#
+# Caveat: HT-CapsNet's `logits_per_level` are capsule-length margins
+# (safe_norm, in [0, inf)), not free real-valued classifier logits, and the
+# margin loss compares them against fixed thresholds (margin_m_pos/
+# margin_m_neg). HCC's unconstrained linear correction can push corrected
+# values outside what the margin loss was designed for; treat results here as
+# an exploratory ablation, not evidence with the same strength as H-CAST/HRN.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -42,17 +51,19 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_baselines.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/capsnet/run_ht_capsnet_hcc_grid.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cub200 aircraft" DATASETS \
+parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
   cifar100 cub200 aircraft
 
+# Start from the plain HT-CapsNet baseline config; hcc.* overrides below are
+# the only thing that changes relative to run_ht_capsnet_baselines.sh.
 config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hcast/hcast_cifar100.yaml" ;;
-    cub200) echo "configs/hcast/hcast_cub200.yaml" ;;
-    aircraft) echo "configs/hcast/hcast_aircraft.yaml" ;;
+    cifar100) echo "configs/capsnet/capsnet_cifar100.yaml" ;;
+    cub200) echo "configs/capsnet/capsnet_cub200.yaml" ;;
+    aircraft) echo "configs/capsnet/capsnet_aircraft.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
@@ -112,21 +123,15 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  case "$ds" in
-    cifar100) echo "$OUTPUTS_ROOT/hcast_cifar100" ;;
-    cub200) echo "$OUTPUTS_ROOT/hcast_cub200" ;;
-    aircraft) echo "$OUTPUTS_ROOT/hcast_aircraft" ;;
-    *)
-      echo "Unknown dataset: $ds" >&2
-      exit 1
-      ;;
-  esac
+  local epoch_tag="$2"
+  echo "$OUTPUTS_ROOT/capsnet_hcc_${ds}_step_${epoch_tag}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lexicographic mode: disabled\n'
-printf 'HCC: disabled\n'
+printf 'HCC: enabled\n'
+printf 'HCC alpha schedule: step\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -134,7 +139,22 @@ print_seed_run_settings
 
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
-  run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
+
+  run_seeded_train "$cfg" "$(run_output_dir "$ds" 0epoch)" \
+    "hcc.enabled=true" \
+    "hcc.temperature=10" \
+    "hcc.eps=1e-12" \
+    "hcc.alpha_schedule=step" \
+    "hcc.alpha_start_epoch=0" \
+    "train.lexicographic.enabled=false"
+
+  # 80% of train.epochs (200), matching H-CAST's own 80/100 convention.
+  run_seeded_train "$cfg" "$(run_output_dir "$ds" 160epoch)" \
+    "hcc.enabled=true" \
+    "hcc.temperature=10" \
+    "hcc.eps=1e-12" \
+    "hcc.alpha_schedule=step" \
+    "hcc.alpha_start_epoch=160" \
     "train.lexicographic.enabled=false"
 done
 
@@ -149,4 +169,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested H-CAST baseline runs.\n'
+printf 'Completed all requested HT-CapsNet HCC runs.\n'

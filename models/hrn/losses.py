@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 
+from ..common.hcc import select_effective_logits
 
 HrnTargets = Union[torch.Tensor, Dict[str, Any]]
 
@@ -200,9 +201,17 @@ def compute_loss(
     if logits_per_level is not None and not has_logits_per_level:
         raise ValueError("HRN output `logits_per_level` must be a 3-level list when provided.")
 
-    tree_scores_per_level = output.get("tree_scores_per_level")
-    if not isinstance(tree_scores_per_level, list) or len(tree_scores_per_level) != 3:
+    raw_tree_scores_per_level = output.get("tree_scores_per_level")
+    if not isinstance(raw_tree_scores_per_level, list) or len(raw_tree_scores_per_level) != 3:
         raise ValueError("HRN output must provide `tree_scores_per_level` with 3 tensors.")
+
+    # If effective_tree_scores_per_level is present, the hierarchical marginal
+    # loss trains on HCC-corrected tree scores; otherwise it uses raw scores.
+    _, tree_scores_per_level = select_effective_logits(
+        output,
+        raw_key="tree_scores_per_level",
+        effective_key="effective_tree_scores_per_level",
+    )
 
     species_ce_logits = output.get("species_ce_logits")
     if not isinstance(species_ce_logits, torch.Tensor):

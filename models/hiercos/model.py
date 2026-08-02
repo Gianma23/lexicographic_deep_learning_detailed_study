@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import torch
 import torch.nn as nn
 
+from models.common.hcc import HccController
 from models.orthonormal_plugin.config import parse_bool
 from models.orthonormal_plugin.head import FrozenBlockDiagonalClassifier, build_fixed_classifier
 from models.orthonormal_plugin.topology import build_topology, normalize_parent_of
@@ -246,6 +247,8 @@ class HierCosModel(nn.Module):
         wide_depth: int = 28,
         wide_widen_factor: int = 8,
         wide_drop_rate: float = 0.0,
+        hcc_cfg: Optional[Dict[str, Any]] = None,
+        train_epochs: int = 1,
     ):
         super().__init__()
         if taxonomy is None:
@@ -416,6 +419,33 @@ class HierCosModel(nn.Module):
                 buffer_name = f"parent_index_level_{level}"
                 self.register_buffer(buffer_name, parent_index, persistent=False)
                 self.parent_index_buffer_names[level] = buffer_name
+
+        hcc_enabled = bool((hcc_cfg or {}).get("enabled", False))
+        if hcc_enabled:
+            if self.projection_enabled:
+                raise ValueError(
+                    "hcc.enabled=true is not supported together with "
+                    "model.projection.enabled=true (Hier-COS's own LH-DNN-style "
+                    "projection); disable one of the two."
+                )
+            if not isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
+                raise ValueError(
+                    "hcc.enabled=true requires `model.fixed_frame_per_level=true` "
+                    "(or `fixed_frame_mode=orthonormal_block_random`) so "
+                    "`node_logits_per_level` exists as independent per-level blocks."
+                )
+        self.hcc = HccController(
+            num_classes_per_level=self.num_classes_per_level,
+            taxonomy=taxonomy,
+            hcc_cfg=hcc_cfg,
+            train_epochs=train_epochs,
+        )
+
+    def set_epoch(self, epoch: int) -> None:
+        self.hcc.set_epoch(epoch)
+
+    def set_hcc_final_test_active(self, active: bool) -> None:
+        self.hcc.set_final_test_active(active)
 
     def parameter_groups(
         self,
@@ -618,6 +648,15 @@ class HierCosModel(nn.Module):
         # directly from those scores.  Do not softmax the subspace scores here.
         logits_per_level = self._level_subspace_scores(node_logits)
 
+        if node_logits_per_level is not None:
+            hcc_output = self.hcc.apply(node_logits_per_level)
+        else:
+            hcc_output = {
+                "projected_logits_per_level": None,
+                "effective_logits_per_level": None,
+                "hcc_diagnostics": None,
+            }
+
         level_node_ids = self._level_node_ids()
         return {
             "logits_per_level": logits_per_level,
@@ -626,6 +665,11 @@ class HierCosModel(nn.Module):
             "orthonormal_plugin_node_logits": node_logits,
             "node_logits_per_level": node_logits_per_level,
             "orthonormal_plugin_node_logits_per_level": node_logits_per_level,
+            # HCC corrects `node_logits_per_level` (independent per-level linear
+            # blocks), never the nonlinear subspace-norm `logits_per_level` above.
+            "projected_node_logits_per_level": hcc_output["projected_logits_per_level"],
+            "effective_node_logits_per_level": hcc_output["effective_logits_per_level"],
+            "hcc_diagnostics": hcc_output["hcc_diagnostics"],
             "hiercos_level_node_ids": level_node_ids,
             "orthonormal_plugin_level_node_ids": level_node_ids,
             "leaf_to_level_local": self.leaf_to_level_local,

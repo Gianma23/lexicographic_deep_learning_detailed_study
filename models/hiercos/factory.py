@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 
+from models.common.hcc import resolve_hcc_cfg_from_top_level
 from models.orthonormal_plugin.config import (
     is_enabled,
     parse_bool,
@@ -38,4 +39,6 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         wide_depth=int(model_cfg.get("wide_depth", 28)),
         wide_widen_factor=int(model_cfg.get("wide_widen_factor", 8)),
         wide_drop_rate=float(model_cfg.get("wide_drop_rate", 0.0)),
+        hcc_cfg=resolve_hcc_cfg_from_top_level(cfg),
+        train_epochs=int(cfg.train.get("epochs", 1)),
     )

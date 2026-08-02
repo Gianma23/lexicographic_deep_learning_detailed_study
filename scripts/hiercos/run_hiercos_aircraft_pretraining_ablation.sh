@@ -1,43 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# FGVC-Aircraft backbone-pretraining x fixed-frame ablation.
-#
-# Research question: identity beats orthonormal_random on Aircraft/CUB but loses
-# on CIFAR-100. The candidate explanation is that identity trades training-fit
-# capacity for a smaller generalization gap, and that the trade is free only when
-# the backbone is pretrained and the training set is already fit to ~100%.
-# On the current runs that hypothesis is confounded, because pretraining moves
-# together with dataset size, images-per-class, resolution, backbone family and
-# hierarchy construction.
-#
-# This script isolates the single variable by toggling `model.pretrained` on one
-# fixed dataset, holding dataset, taxonomy, resolution, architecture and schedule
-# constant:
-# - model.pretrained=${PRETRAINED_MODES}          (true = ImageNet, false = scratch)
-# - model.fixed_frame_mode=${FIXED_FRAME_MODES}   (orthonormal_random vs identity)
-# - model.loss=${LOSS_MODE}, model.weight_mode=${WEIGHT_MODE}
+# Runs one FGVC-Aircraft Hier-COS pretraining-ablation configuration:
+# - model.loss=${LOSS_MODE}
+# - model.weight_mode=${WEIGHT_MODE}
+# - model.pretrained=${PRETRAINED_MODE}
+# - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.transform_mode=full
-# - train.lexicographic per ${LEX_MODE}
-#
-# Readout: the sign and size of (identity - orthonormal_random) test FPA within
-# each pretraining arm. The prediction is that the identity advantage seen with
-# pretrained=true (+1.07 pp top-down FPA on the existing baseline runs) shrinks
-# toward zero or reverses with pretrained=false, and that train FPA stops
-# saturating at ~1.0 in the scratch arm. If the identity advantage survives
-# intact while train FPA still saturates, pretraining is not the driver.
-#
-# Comparison baseline: the existing pretrained runs
-#   $OUTPUTS_ROOT/hiercos_aircraft_global_softmax_ce_reg_baseline_kl_leaf[_identity]
-# This script writes to a separate `pretrainablation` namespace and never
-# resumes or overwrites those directories.
+# - train.lexicographic.enabled=false
+# Three training seeds are used by default. Override the scalar mode variables
+# to select a different single configuration; this script does not run a grid.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
-source "$ROOT_DIR/scripts/run_matrix_utils.sh"
+
+NUM_RUNS="${NUM_RUNS:-3}"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -46,13 +26,7 @@ MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
-LEX_MODE="${LEX_MODE:-off}"
-# Empty means "use the value in configs/hiercos/hiercos_aircraft.yaml" (0.1).
-# When set, it is applied to BOTH pretraining arms so the ablation stays
-# single-variable. A from-scratch ResNet-50 trains at base_lr * this scale.
-BACKBONE_LR_SCALE="${BACKBONE_LR_SCALE:-}"
-# Empty means "use the config value" (100). Lower it only for pilot runs.
-EPOCHS="${EPOCHS:-}"
+FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
 
 CONFIG="configs/hiercos/hiercos_aircraft.yaml"
 
@@ -74,31 +48,23 @@ case "$WEIGHT_MODE" in
     ;;
 esac
 
-case "$LEX_MODE" in
-  off|coarse_first) ;;
+case "$PRETRAINED_MODE" in
+  true|false) ;;
   *)
-    echo "Unsupported LEX_MODE: $LEX_MODE" >&2
-    echo "Expected off or coarse_first." >&2
+    echo "Unsupported PRETRAINED_MODE: $PRETRAINED_MODE" >&2
+    echo "Expected true or false." >&2
     exit 1
     ;;
 esac
 
-if [[ -n "$BACKBONE_LR_SCALE" && ! "$BACKBONE_LR_SCALE" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-  echo "Unsupported BACKBONE_LR_SCALE: $BACKBONE_LR_SCALE" >&2
-  echo "Expected a non-negative decimal, or empty to keep the config value." >&2
-  exit 1
-fi
-
-if [[ -n "$EPOCHS" && ! "$EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "Unsupported EPOCHS: $EPOCHS" >&2
-  echo "Expected a positive integer, or empty to keep the config value." >&2
-  exit 1
-fi
-
-parse_choice_list PRETRAINED_MODES "true false" PRETRAINED_MODES \
-  true false
-parse_choice_list FIXED_FRAME_MODES "orthonormal_random identity" FIXED_FRAME_MODES \
-  orthonormal_random identity
+case "$FIXED_FRAME_MODE" in
+  orthonormal_random|identity) ;;
+  *)
+    echo "Unsupported FIXED_FRAME_MODE: $FIXED_FRAME_MODE" >&2
+    echo "Expected orthonormal_random or identity." >&2
+    exit 1
+    ;;
+esac
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -124,13 +90,11 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Examples:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs NUM_RUNS=3 \
+#   # Defaults: scratch backbone, identity frame, seeds 0..2.
+#   OUTPUTS_ROOT=/scratch/<user>/outputs \
 #     ./scripts/hiercos/run_hiercos_aircraft_pretraining_ablation.sh
-#   # scratch arm only, comparing against the existing pretrained baselines:
-#   PRETRAINED_MODES=false NUM_RUNS=3 \
-#     ./scripts/hiercos/run_hiercos_aircraft_pretraining_ablation.sh
-#   # also test whether coarse_first amplifies the frame effect:
-#   LEX_MODE=coarse_first NUM_RUNS=3 \
+#   # Select one different configuration, still using three seeds.
+#   PRETRAINED_MODE=true FIXED_FRAME_MODE=orthonormal_random \
 #     ./scripts/hiercos/run_hiercos_aircraft_pretraining_ablation.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
@@ -185,89 +149,33 @@ run_train() {
 }
 
 run_output_dir() {
-  local pretrained="$1"
-  local frame_mode="$2"
-  local backbone_tag="scratch"
   local frame_suffix=""
-  local lex_suffix=""
-  local blr_suffix=""
-  local epochs_suffix=""
-  if [[ "$pretrained" == "true" ]]; then
-    backbone_tag="pretrained"
-  fi
-  if [[ "$frame_mode" == "identity" ]]; then
+  if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
-  if [[ "$LEX_MODE" != "off" ]]; then
-    lex_suffix="_lex_${LEX_MODE}"
-  fi
-  if [[ -n "$BACKBONE_LR_SCALE" ]]; then
-    blr_suffix="_blr${BACKBONE_LR_SCALE//./p}"
-  fi
-  if [[ -n "$EPOCHS" ]]; then
-    epochs_suffix="_ep${EPOCHS}"
-  fi
-  echo "$OUTPUTS_ROOT/hiercos_aircraft_${LOSS_MODE}_pretrainablation_${WEIGHT_MODE}_${backbone_tag}${frame_suffix}${lex_suffix}${blr_suffix}${epochs_suffix}"
-}
-
-lex_overrides() {
-  if [[ "$LEX_MODE" == "off" ]]; then
-    printf '%s\n' "train.lexicographic.enabled=false"
-  else
-    printf '%s\n' \
-      "train.lexicographic.enabled=true" \
-      "train.lexicographic.start_epoch=0" \
-      "train.lexicographic.projection_mode=coarse_first" \
-      "train.lexicographic.projection_rule=orthogonalize_all"
-  fi
+  echo "$OUTPUTS_ROOT/hiercos_aircraft_${LOSS_MODE}_fromscratch_${WEIGHT_MODE}${frame_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
-printf 'Dataset: aircraft (%s)\n' "$CONFIG"
-printf 'Pretraining modes: %s\n' "${PRETRAINED_MODES[*]}"
-printf 'Fixed frame modes: %s\n' "${FIXED_FRAME_MODES[*]}"
+printf 'Dataset: aircraft\n'
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
+printf 'Pretrained: %s\n' "$PRETRAINED_MODE"
+printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
 printf 'Transform mode: full\n'
-printf 'Lexicographic mode: %s\n' "$LEX_MODE"
-if [[ -n "$BACKBONE_LR_SCALE" ]]; then
-  printf 'Backbone lr scale: %s (override, applied to both arms)\n' "$BACKBONE_LR_SCALE"
-else
-  printf 'Backbone lr scale: config default (0.1)\n'
-fi
-if [[ -n "$EPOCHS" ]]; then
-  printf 'Epochs: %s (override)\n' "$EPOCHS"
-else
-  printf 'Epochs: config default (100)\n'
-fi
+printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 print_seed_run_settings
-printf 'Total runs: %s\n' "$(( ${#PRETRAINED_MODES[@]} * ${#FIXED_FRAME_MODES[@]} * NUM_RUNS ))"
 
-mapfile -t LEX_ARGS < <(lex_overrides)
-
-for pretrained in "${PRETRAINED_MODES[@]}"; do
-  for frame_mode in "${FIXED_FRAME_MODES[@]}"; do
-    extra_args=()
-    if [[ -n "$BACKBONE_LR_SCALE" ]]; then
-      extra_args+=("model.backbone_lr_scale=$BACKBONE_LR_SCALE")
-    fi
-    if [[ -n "$EPOCHS" ]]; then
-      extra_args+=("train.epochs=$EPOCHS")
-    fi
-
-    run_seeded_train "$CONFIG" "$(run_output_dir "$pretrained" "$frame_mode")" \
-      "model.loss=$LOSS_MODE" \
-      "model.weight_mode=$WEIGHT_MODE" \
-      "model.transform_mode=full" \
-      "model.fixed_frame_mode=$frame_mode" \
-      "model.pretrained=$pretrained" \
-      "${LEX_ARGS[@]}" \
-      ${extra_args[@]+"${extra_args[@]}"}
-  done
-done
+run_seeded_train "$CONFIG" "$(run_output_dir)" \
+  "model.loss=$LOSS_MODE" \
+  "model.weight_mode=$WEIGHT_MODE" \
+  "model.pretrained=$PRETRAINED_MODE" \
+  "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
+  "model.transform_mode=full" \
+  "train.lexicographic.enabled=false"
 
 if [[ "$DRY_RUN" != "1" ]]; then
   while (( "$(jobs -pr | wc -l)" > 0 )); do
@@ -280,4 +188,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS Aircraft pretraining ablation runs.\n'
+printf 'Completed requested Hier-COS Aircraft pretraining-ablation runs.\n'

@@ -394,6 +394,17 @@ Hier-COS and plugin launchers similarly accept `LEX_PROJECTION_MODES` and
 remain narrow so invoking a script cannot unexpectedly start the full
 expensive grid.
 
+Run native HT-CapsNet baselines on the three dataset configurations with:
+
+```bash
+NUM_RUNS=3 scripts/capsnet/run_ht_capsnet_baselines.sh
+```
+
+The runner preserves each config's native dynamic margin-loss weighting.
+CIFAR-100 is paper/source aligned; CUB uses this repository's unified taxonomy,
+and Aircraft is a local extrapolation. Use `DATASETS`, `NUM_RUNS`, `BASE_SEED`,
+or `SPLIT_SEED` to select a reproducible subset.
+
 Run native HT-CapsNet and HRN lexicographic training on the three baseline
 dataset configurations with:
 
