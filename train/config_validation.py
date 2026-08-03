@@ -773,21 +773,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                     "so HCC corrects the tree logits that actually drive the hierarchical loss."
                 )
             if model_name == "hiercos":
-                if model.get("loss") != "level_softmax_ce_reg":
-                    raise ValueError(
-                        "hcc.enabled=true with model.name='hiercos' requires "
-                        "`model.loss: level_softmax_ce_reg` so per-level node logits feed "
-                        "independent per-level CE instead of a shared global softmax."
-                    )
-                frame_per_level = bool(model.get("fixed_frame_per_level", False))
-                frame_mode = model.get("fixed_frame_mode", "orthonormal_random")
-                if not frame_per_level and frame_mode != "orthonormal_block_random":
-                    raise ValueError(
-                        "hcc.enabled=true with model.name='hiercos' requires "
-                        "`model.fixed_frame_per_level: true` (or the legacy "
-                        "`fixed_frame_mode: orthonormal_block_random`) so "
-                        "`node_logits_per_level` exists as independent per-level blocks."
-                    )
                 projection = model.get("projection")
                 projection_enabled = (
                     _require_bool(projection.get("enabled", False), "model.projection.enabled")

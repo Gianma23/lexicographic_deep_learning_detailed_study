@@ -83,52 +83,136 @@ def _delta_param_norm_from_snapshot(
     return float(norm_sq**0.5)
 
 
-def _grad_norm_from_autograd_grads(
-    grads: Sequence[Optional[torch.Tensor]],
-    include_mask: Sequence[bool],
-) -> float:
-    norm_sq = None
-    for grad, include in zip(grads, include_mask):
-        if not include or grad is None:
+def _batched_grad_metrics(
+    norm_specs: Sequence[
+        Tuple[str, Sequence[Optional[torch.Tensor]], Sequence[bool]]
+    ],
+    cosine_specs: Sequence[
+        Tuple[
+            str,
+            Sequence[Optional[torch.Tensor]],
+            Sequence[Optional[torch.Tensor]],
+            Sequence[bool],
+            float,
+        ]
+    ],
+) -> Dict[str, float]:
+    """Reduce several gradient diagnostics in one parameter scan.
+
+    Each accumulator retains the previous implementation's parameter order.
+    Per-parameter FP32 squares and dot products are shared across metrics, and
+    the final scalar tensors are transferred to the CPU together to avoid one
+    synchronization per logged value.
+    """
+    norm_sums: Dict[str, Optional[torch.Tensor]] = {
+        name: None for name, _, _ in norm_specs
+    }
+    cosine_sums: Dict[
+        str,
+        Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]],
+    ] = {name: (None, None, None) for name, _, _, _, _ in cosine_specs}
+
+    sequence_lengths = [len(grads) for _, grads, _ in norm_specs]
+    sequence_lengths.extend(len(grads_a) for _, grads_a, _, _, _ in cosine_specs)
+    sequence_lengths.extend(len(grads_b) for _, _, grads_b, _, _ in cosine_specs)
+    num_params = max(sequence_lengths, default=0)
+
+    for param_idx in range(num_params):
+        fp32_cache: Dict[int, torch.Tensor] = {}
+        square_cache: Dict[int, torch.Tensor] = {}
+        dot_cache: Dict[Tuple[int, int], torch.Tensor] = {}
+
+        def as_fp32(grad: torch.Tensor) -> torch.Tensor:
+            cache_key = id(grad)
+            value = fp32_cache.get(cache_key)
+            if value is None:
+                value = grad.detach().float()
+                fp32_cache[cache_key] = value
+            return value
+
+        def square_sum(grad: torch.Tensor) -> torch.Tensor:
+            cache_key = id(grad)
+            value = square_cache.get(cache_key)
+            if value is None:
+                grad_fp = as_fp32(grad)
+                value = torch.sum(grad_fp * grad_fp)
+                square_cache[cache_key] = value
+            return value
+
+        def dot_sum(grad_a: torch.Tensor, grad_b: torch.Tensor) -> torch.Tensor:
+            cache_key = (id(grad_a), id(grad_b))
+            value = dot_cache.get(cache_key)
+            if value is None:
+                value = torch.sum(as_fp32(grad_a) * as_fp32(grad_b))
+                dot_cache[cache_key] = value
+            return value
+
+        for name, grads, include_mask in norm_specs:
+            if param_idx >= len(grads) or param_idx >= len(include_mask):
+                continue
+            grad = grads[param_idx]
+            if not include_mask[param_idx] or grad is None:
+                continue
+            term = square_sum(grad)
+            current = norm_sums[name]
+            norm_sums[name] = term if current is None else current + term
+
+        for name, grads_a, grads_b, include_mask, _ in cosine_specs:
+            if (
+                param_idx >= len(grads_a)
+                or param_idx >= len(grads_b)
+                or param_idx >= len(include_mask)
+            ):
+                continue
+            grad_a = grads_a[param_idx]
+            grad_b = grads_b[param_idx]
+            if not include_mask[param_idx] or grad_a is None or grad_b is None:
+                continue
+
+            dot, norm_a_sq, norm_b_sq = cosine_sums[name]
+            dot_term = dot_sum(grad_a, grad_b)
+            norm_a_term = square_sum(grad_a)
+            norm_b_term = square_sum(grad_b)
+            cosine_sums[name] = (
+                dot_term if dot is None else dot + dot_term,
+                norm_a_term if norm_a_sq is None else norm_a_sq + norm_a_term,
+                norm_b_term if norm_b_sq is None else norm_b_sq + norm_b_term,
+            )
+
+    scalar_tensors: Dict[str, torch.Tensor] = {}
+    metrics: Dict[str, float] = {}
+    for name, _, _ in norm_specs:
+        norm_sq = norm_sums[name]
+        if norm_sq is None:
+            metrics[name] = 0.0
+        else:
+            scalar_tensors[name] = torch.sqrt(norm_sq.clamp_min(0.0))
+
+    cosine_eps = {name: float(eps) for name, _, _, _, eps in cosine_specs}
+    for name, _, _, _, _ in cosine_specs:
+        dot, norm_a_sq, norm_b_sq = cosine_sums[name]
+        if dot is None or norm_a_sq is None or norm_b_sq is None:
+            metrics[name] = 0.0
             continue
-        grad_fp = grad.detach().float()
-        value = torch.sum(grad_fp * grad_fp)
-        norm_sq = value if norm_sq is None else norm_sq + value
+        denom = torch.sqrt(norm_a_sq.clamp_min(0.0)) * torch.sqrt(
+            norm_b_sq.clamp_min(0.0)
+        )
+        cosine = dot / (denom + cosine_eps[name])
+        scalar_tensors[name] = cosine.clamp(min=-1.0, max=1.0)
 
-    if norm_sq is None:
-        return 0.0
-    return float(torch.sqrt(norm_sq.clamp_min(0.0)).item())
+    # A model normally keeps all trainable parameters on one device. Grouping
+    # by device also preserves correct behavior for the less common case where
+    # diagnostic tensors span multiple devices.
+    device_groups: Dict[torch.device, List[Tuple[str, torch.Tensor]]] = {}
+    for name, value in scalar_tensors.items():
+        device_groups.setdefault(value.device, []).append((name, value))
+    for items in device_groups.values():
+        values = torch.stack([value.detach().reshape(()) for _, value in items])
+        cpu_values = values.to(device="cpu", dtype=torch.float32).tolist()
+        for (name, _), value in zip(items, cpu_values):
+            metrics[name] = float(value)
 
-
-def _grad_cosine_from_autograd_grads(
-    grads_a: Sequence[Optional[torch.Tensor]],
-    grads_b: Sequence[Optional[torch.Tensor]],
-    include_mask: Sequence[bool],
-    eps: float = _GRAD_EPS,
-) -> float:
-    dot = None
-    norm_a_sq = None
-    norm_b_sq = None
-    for grad_a, grad_b, include in zip(grads_a, grads_b, include_mask):
-        if not include or grad_a is None or grad_b is None:
-            continue
-        grad_a_fp = grad_a.detach().float()
-        grad_b_fp = grad_b.detach().float()
-
-        dot_term = torch.sum(grad_a_fp * grad_b_fp)
-        norm_a_term = torch.sum(grad_a_fp * grad_a_fp)
-        norm_b_term = torch.sum(grad_b_fp * grad_b_fp)
-
-        dot = dot_term if dot is None else dot + dot_term
-        norm_a_sq = norm_a_term if norm_a_sq is None else norm_a_sq + norm_a_term
-        norm_b_sq = norm_b_term if norm_b_sq is None else norm_b_sq + norm_b_term
-
-    if dot is None or norm_a_sq is None or norm_b_sq is None:
-        return 0.0
-
-    denom = torch.sqrt(norm_a_sq.clamp_min(0.0)) * torch.sqrt(norm_b_sq.clamp_min(0.0))
-    cosine = dot / (denom + float(eps))
-    return float(cosine.clamp(min=-1.0, max=1.0).item())
+    return metrics
 
 
 def _resolve_trunk_masks(
@@ -361,62 +445,51 @@ def _scale_grad_pack(
     return {str(key): _scale_grad_tuple(grads, factor_f) for key, grads in grad_pack.items()}
 
 
-def _trunk_grad_norm_metrics(
+def _trunk_grad_norm_specs(
     coarse_grads: Sequence[Optional[torch.Tensor]],
     mid_grads: Sequence[Optional[torch.Tensor]],
     fine_grads: Sequence[Optional[torch.Tensor]],
     mask_views: Mapping[str, Sequence[bool]],
     prefix: str = "",
-) -> Dict[str, float]:
-    out: Dict[str, float] = {}
+) -> List[Tuple[str, Sequence[Optional[torch.Tensor]], Sequence[bool]]]:
+    norm_specs: List[
+        Tuple[str, Sequence[Optional[torch.Tensor]], Sequence[bool]]
+    ] = []
 
     if any(mask_views["t3t2t1"]):
-        out[f"{prefix}grad_norm_t3t2t1_coarse"] = _grad_norm_from_autograd_grads(
-            coarse_grads,
-            mask_views["t3t2t1"],
+        norm_specs.append(
+            (f"{prefix}grad_norm_t3t2t1_coarse", coarse_grads, mask_views["t3t2t1"])
         )
 
     if any(mask_views["t3"]):
-        out[f"{prefix}grad_norm_t3_coarse"] = _grad_norm_from_autograd_grads(
-            coarse_grads,
-            mask_views["t3"],
-        )
+        norm_specs.append((f"{prefix}grad_norm_t3_coarse", coarse_grads, mask_views["t3"]))
 
     if any(mask_views["t2t1"]):
-        out[f"{prefix}grad_norm_t2t1_coarse"] = _grad_norm_from_autograd_grads(
-            coarse_grads,
-            mask_views["t2t1"],
-        )
-        out[f"{prefix}grad_norm_t2t1_mid"] = _grad_norm_from_autograd_grads(
-            mid_grads,
-            mask_views["t2t1"],
+        norm_specs.extend(
+            [
+                (f"{prefix}grad_norm_t2t1_coarse", coarse_grads, mask_views["t2t1"]),
+                (f"{prefix}grad_norm_t2t1_mid", mid_grads, mask_views["t2t1"]),
+            ]
         )
 
     if any(mask_views["t2"]):
-        out[f"{prefix}grad_norm_t2_coarse"] = _grad_norm_from_autograd_grads(
-            coarse_grads,
-            mask_views["t2"],
-        )
-        out[f"{prefix}grad_norm_t2_mid"] = _grad_norm_from_autograd_grads(
-            mid_grads,
-            mask_views["t2"],
+        norm_specs.extend(
+            [
+                (f"{prefix}grad_norm_t2_coarse", coarse_grads, mask_views["t2"]),
+                (f"{prefix}grad_norm_t2_mid", mid_grads, mask_views["t2"]),
+            ]
         )
 
     if any(mask_views["t1"]):
-        out[f"{prefix}grad_norm_t1_coarse"] = _grad_norm_from_autograd_grads(
-            coarse_grads,
-            mask_views["t1"],
-        )
-        out[f"{prefix}grad_norm_t1_mid"] = _grad_norm_from_autograd_grads(
-            mid_grads,
-            mask_views["t1"],
-        )
-        out[f"{prefix}grad_norm_t1_fine"] = _grad_norm_from_autograd_grads(
-            fine_grads,
-            mask_views["t1"],
+        norm_specs.extend(
+            [
+                (f"{prefix}grad_norm_t1_coarse", coarse_grads, mask_views["t1"]),
+                (f"{prefix}grad_norm_t1_mid", mid_grads, mask_views["t1"]),
+                (f"{prefix}grad_norm_t1_fine", fine_grads, mask_views["t1"]),
+            ]
         )
 
-    return out
+    return norm_specs
 
 
 def _build_lexicographic_grads(
@@ -613,41 +686,31 @@ def _build_lexicographic_grads(
         "post_projection_applied_t1_fine_coarse": 1.0 if projection_flags["fine_off_coarse_t1"] else 0.0,
         "post_projection_applied_t1_fine_mid_proj": 1.0 if projection_flags["fine_off_mid_t1"] else 0.0,
     }
-    metrics["post_cos_t2_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
-        mid_projected,
-        coarse_projected,
-        t2_mask,
-        eps=eps,
-    )
-    metrics["post_cos_t1_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
-        mid_projected,
-        coarse_projected,
-        t1_mask,
-        eps=eps,
-    )
-    metrics["post_cos_t2t1_mid_proj_coarse"] = _grad_cosine_from_autograd_grads(
-        mid_projected,
-        coarse_projected,
-        t2t1_mask,
-        eps=eps,
-    )
-    metrics["post_cos_t1_fine_proj_higher"] = _grad_cosine_from_autograd_grads(
-        fine_projected,
-        higher_t1,
-        t1_mask,
-        eps=eps,
-    )
-    metrics["post_cos_t1_fine_proj_coarse"] = _grad_cosine_from_autograd_grads(
-        fine_projected,
-        coarse_projected,
-        t1_mask,
-        eps=eps,
-    )
-    metrics["post_cos_t1_fine_proj_mid_proj"] = _grad_cosine_from_autograd_grads(
-        fine_projected,
-        mid_projected,
-        t1_mask,
-        eps=eps,
+    mask_views = _mask_views_from_trunk_masks(trunk_masks)
+    metrics.update(
+        _batched_grad_metrics(
+            norm_specs=_trunk_grad_norm_specs(
+                coarse_grads=coarse_projected,
+                mid_grads=mid_projected,
+                fine_grads=fine_projected,
+                mask_views=mask_views,
+                prefix="post_",
+            ),
+            cosine_specs=[
+                ("post_cos_t2_mid_proj_coarse", mid_projected, coarse_projected, t2_mask, eps),
+                ("post_cos_t1_mid_proj_coarse", mid_projected, coarse_projected, t1_mask, eps),
+                (
+                    "post_cos_t2t1_mid_proj_coarse",
+                    mid_projected,
+                    coarse_projected,
+                    t2t1_mask,
+                    eps,
+                ),
+                ("post_cos_t1_fine_proj_higher", fine_projected, higher_t1, t1_mask, eps),
+                ("post_cos_t1_fine_proj_coarse", fine_projected, coarse_projected, t1_mask, eps),
+                ("post_cos_t1_fine_proj_mid_proj", fine_projected, mid_projected, t1_mask, eps),
+            ],
+        )
     )
 
     return grad_pack, metrics
@@ -717,8 +780,7 @@ def prepare_lexicographic_update(
         fine_grads=fine_grads,
     )
 
-    metrics: Dict[str, float] = {}
-    projected_grads, _ = _build_lexicographic_grads(
+    projected_grads, metrics = _build_lexicographic_grads(
         coarse_grads=coarse_grads,
         mid_grads=mid_grads,
         fine_grads=fine_grads,
@@ -726,31 +788,8 @@ def prepare_lexicographic_update(
         projection_mode=projection_mode,
         projection_rule=projection_rule,
         eps=eps,
-        include_metrics=False,
+        include_metrics=include_metrics,
     )
-
-    if include_metrics:
-        projected_for_log, lex_metrics = _build_lexicographic_grads(
-            coarse_grads=coarse_grads,
-            mid_grads=mid_grads,
-            fine_grads=fine_grads,
-            trunk_masks=trunk_masks,
-            projection_mode=projection_mode,
-            projection_rule=projection_rule,
-            eps=eps,
-            include_metrics=True,
-        )
-        metrics.update(lex_metrics)
-
-        mask_views = _mask_views_from_trunk_masks(trunk_masks)
-        post_metrics = _trunk_grad_norm_metrics(
-            coarse_grads=projected_for_log["coarse"],
-            mid_grads=projected_for_log["mid_projected"],
-            fine_grads=projected_for_log["fine_projected"],
-            mask_views=mask_views,
-            prefix="post_",
-        )
-        metrics.update(post_metrics)
 
     safe_scale = float(grad_scale) if float(grad_scale) > 0.0 else 1.0
     projected_grads_for_step = _scale_grad_pack(projected_grads, safe_scale)
@@ -786,53 +825,32 @@ def compute_trunk_grad_metrics(
     )
     mask_views = _mask_views_from_trunk_masks(trunk_masks)
 
-    metrics: Dict[str, float] = _trunk_grad_norm_metrics(
-        coarse_grads=coarse_grads,
-        mid_grads=mid_grads,
-        fine_grads=fine_grads,
-        mask_views=mask_views,
-    )
-
-    metrics["cos_t2_mid_coarse"] = _grad_cosine_from_autograd_grads(
-        mid_grads,
-        coarse_grads,
-        mask_views["t2"],
-        eps=_GRAD_EPS,
-    )
-    metrics["cos_t1_mid_coarse"] = _grad_cosine_from_autograd_grads(
-        mid_grads,
-        coarse_grads,
-        mask_views["t1"],
-        eps=_GRAD_EPS,
-    )
-    metrics["cos_t2t1_mid_coarse"] = _grad_cosine_from_autograd_grads(
-        mid_grads,
-        coarse_grads,
-        mask_views["t2t1"],
-        eps=_GRAD_EPS,
-    )
     raw_higher_t1 = _sum_grad_tuples(
         coarse_grads,
         mid_grads,
         (None,) * len(coarse_grads),
     )
-    metrics["cos_t1_fine_higher"] = _grad_cosine_from_autograd_grads(
-        fine_grads,
-        raw_higher_t1,
-        mask_views["t1"],
-        eps=_GRAD_EPS,
-    )
-    metrics["cos_t1_fine_coarse"] = _grad_cosine_from_autograd_grads(
-        fine_grads,
-        coarse_grads,
-        mask_views["t1"],
-        eps=_GRAD_EPS,
-    )
-    metrics["cos_t1_fine_mid"] = _grad_cosine_from_autograd_grads(
-        fine_grads,
-        mid_grads,
-        mask_views["t1"],
-        eps=_GRAD_EPS,
+    metrics = _batched_grad_metrics(
+        norm_specs=_trunk_grad_norm_specs(
+            coarse_grads=coarse_grads,
+            mid_grads=mid_grads,
+            fine_grads=fine_grads,
+            mask_views=mask_views,
+        ),
+        cosine_specs=[
+            ("cos_t2_mid_coarse", mid_grads, coarse_grads, mask_views["t2"], _GRAD_EPS),
+            ("cos_t1_mid_coarse", mid_grads, coarse_grads, mask_views["t1"], _GRAD_EPS),
+            (
+                "cos_t2t1_mid_coarse",
+                mid_grads,
+                coarse_grads,
+                mask_views["t2t1"],
+                _GRAD_EPS,
+            ),
+            ("cos_t1_fine_higher", fine_grads, raw_higher_t1, mask_views["t1"], _GRAD_EPS),
+            ("cos_t1_fine_coarse", fine_grads, coarse_grads, mask_views["t1"], _GRAD_EPS),
+            ("cos_t1_fine_mid", fine_grads, mid_grads, mask_views["t1"], _GRAD_EPS),
+        ],
     )
 
     if not metrics:

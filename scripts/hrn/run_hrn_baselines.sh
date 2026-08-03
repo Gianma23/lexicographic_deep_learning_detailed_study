@@ -41,7 +41,7 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
+parse_choice_list DATASETS "aircraft cub200" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {

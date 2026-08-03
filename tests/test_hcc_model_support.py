@@ -46,34 +46,27 @@ class HccModelSupportTests(unittest.TestCase):
         hrn["model"]["loss"] = "level_marginal"
         validate_config(hrn)
 
-    def test_hcc_on_hiercos_requires_level_softmax_ce_reg_loss(self):
-        hiercos = self._with_hcc("configs/hiercos/hiercos_cifar100.yaml")
-        hiercos["model"]["fixed_frame_per_level"] = True
-        with self.assertRaisesRegex(ValueError, "model.loss: level_softmax_ce_reg"):
-            validate_config(hiercos)
-        hiercos["model"]["loss"] = "level_softmax_ce_reg"
-        validate_config(hiercos)
-
-    def test_hcc_on_hiercos_requires_per_level_fixed_frame(self):
-        hiercos = self._with_hcc("configs/hiercos/hiercos_cifar100.yaml")
-        hiercos["model"]["loss"] = "level_softmax_ce_reg"
-        with self.assertRaisesRegex(ValueError, "fixed_frame_per_level"):
-            validate_config(hiercos)
-
-        hiercos["model"]["fixed_frame_per_level"] = True
-        validate_config(hiercos)
-
-        # The legacy `orthonormal_block_random` alias also satisfies the
-        # per-level requirement without `fixed_frame_per_level: true`.
-        hiercos_legacy = copy.deepcopy(hiercos)
-        hiercos_legacy["model"]["fixed_frame_per_level"] = False
-        hiercos_legacy["model"]["fixed_frame_mode"] = "orthonormal_block_random"
-        validate_config(hiercos_legacy)
+    def test_hcc_on_hiercos_supports_every_native_loss_and_fixed_frame(self):
+        for loss_mode in ("kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg"):
+            for frame_mode, frame_per_level in (
+                ("orthonormal_random", False),
+                ("orthonormal_random", True),
+                ("orthonormal_block_random", False),
+                ("identity", False),
+            ):
+                with self.subTest(
+                    loss_mode=loss_mode,
+                    frame_mode=frame_mode,
+                    frame_per_level=frame_per_level,
+                ):
+                    hiercos = self._with_hcc("configs/hiercos/hiercos_cifar100.yaml")
+                    hiercos["model"]["loss"] = loss_mode
+                    hiercos["model"]["fixed_frame_mode"] = frame_mode
+                    hiercos["model"]["fixed_frame_per_level"] = frame_per_level
+                    validate_config(hiercos)
 
     def test_hcc_on_hiercos_rejects_projection_enabled(self):
         hiercos = self._with_hcc("configs/hiercos/hiercos_cifar100.yaml")
-        hiercos["model"]["loss"] = "level_softmax_ce_reg"
-        hiercos["model"]["fixed_frame_per_level"] = True
         hiercos["model"]["projection"] = {"enabled": True}
         with self.assertRaisesRegex(ValueError, "model.projection.enabled=true"):
             validate_config(hiercos)

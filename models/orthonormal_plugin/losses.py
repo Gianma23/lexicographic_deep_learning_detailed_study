@@ -147,6 +147,36 @@ def _validate_plugin_output(
     return node_logits, level_node_ids, leaf_to_level_local
 
 
+def _validate_level_logits_list(
+    logits_per_level: List[torch.Tensor],
+    level_node_ids: List[torch.Tensor],
+    num_levels: int,
+    field_name: str,
+) -> List[torch.Tensor]:
+    if len(logits_per_level) != int(num_levels):
+        raise ValueError(
+            f"Orthonormal plugin {field_name} must be aligned with hierarchy depth: "
+            f"expected {num_levels}, found {len(logits_per_level)}."
+        )
+    validated: List[torch.Tensor] = []
+    batch_size: Optional[int] = None
+    for level, (level_logits, node_ids) in enumerate(zip(logits_per_level, level_node_ids)):
+        if not isinstance(level_logits, torch.Tensor) or level_logits.ndim != 2:
+            raise ValueError(f"Orthonormal plugin {field_name} for level {level} must have shape [B, C].")
+        if batch_size is None:
+            batch_size = int(level_logits.size(0))
+        elif int(level_logits.size(0)) != batch_size:
+            raise ValueError(f"Orthonormal plugin {field_name} must share one batch size.")
+        expected_width = int(node_ids.numel())
+        if int(level_logits.size(1)) != expected_width:
+            raise ValueError(
+                f"Orthonormal plugin {field_name} for level {level} has width {int(level_logits.size(1))}; "
+                f"expected {expected_width}."
+            )
+        validated.append(level_logits)
+    return validated
+
+
 def _validate_node_logits_per_level(
     output: Dict[str, Any],
     level_node_ids: List[torch.Tensor],
@@ -159,51 +189,33 @@ def _validate_node_logits_per_level(
     )
     if node_logits_per_level is None:
         return None
-    if len(node_logits_per_level) != int(num_levels):
-        raise ValueError(
-            "Orthonormal plugin node logits per level must be aligned with hierarchy depth: "
-            f"expected {num_levels}, found {len(node_logits_per_level)}."
-        )
-    validated: List[torch.Tensor] = []
-    batch_size: Optional[int] = None
-    for level, (level_logits, node_ids) in enumerate(zip(node_logits_per_level, level_node_ids)):
-        if not isinstance(level_logits, torch.Tensor) or level_logits.ndim != 2:
-            raise ValueError(f"Orthonormal plugin node logits for level {level} must have shape [B, C].")
-        if batch_size is None:
-            batch_size = int(level_logits.size(0))
-        elif int(level_logits.size(0)) != batch_size:
-            raise ValueError("Orthonormal plugin node logits per level must share one batch size.")
-        expected_width = int(node_ids.numel())
-        if int(level_logits.size(1)) != expected_width:
-            raise ValueError(
-                f"Orthonormal plugin node logits for level {level} have width {int(level_logits.size(1))}; "
-                f"expected {expected_width}."
-            )
-        validated.append(level_logits)
-    return validated
+    return _validate_level_logits_list(
+        logits_per_level=node_logits_per_level,
+        level_node_ids=level_node_ids,
+        num_levels=num_levels,
+        field_name="node logits per level",
+    )
 
 
-def _prefer_effective_node_logits(
+def _validate_effective_node_logits_per_level(
     output: Dict[str, Any],
-    node_logits_per_level: Optional[List[torch.Tensor]],
+    level_node_ids: List[torch.Tensor],
+    num_levels: int,
 ) -> Optional[List[torch.Tensor]]:
-    """Prefer HCC-corrected per-level node logits over raw ones when present.
-
-    Only Hier-COS's native model (not the generic plugin wrapper) ever
-    populates `effective_node_logits_per_level`, and only when `hcc.enabled`
-    and the fixed frame is block-diagonal per level (so `node_logits_per_level`
-    itself is non-None to begin with).
-    """
-    if node_logits_per_level is None:
-        return None
+    """Validate HCC-modified fixed-layer node logits when they are active."""
     effective = output.get("effective_node_logits_per_level")
     if effective is None:
-        return node_logits_per_level
-    if not isinstance(effective, list) or len(effective) != len(node_logits_per_level):
+        return None
+    if not isinstance(effective, list):
         raise ValueError(
-            "`effective_node_logits_per_level` must be None or a list aligned with `node_logits_per_level`."
+            "`effective_node_logits_per_level` must be None or a list aligned with hierarchy depth."
         )
-    return effective
+    return _validate_level_logits_list(
+        logits_per_level=effective,
+        level_node_ids=level_node_ids,
+        num_levels=num_levels,
+        field_name="effective node logits per level",
+    )
 
 
 def _path_global_node_ids(
@@ -426,8 +438,22 @@ def compute_loss(
         level_node_ids=level_node_ids,
         num_levels=num_levels,
     )
-    node_logits_per_level = _prefer_effective_node_logits(output, node_logits_per_level)
-    hard_targets = hard_targets.to(device=node_logits.device, dtype=torch.long)
+    effective_node_logits_per_level = _validate_effective_node_logits_per_level(
+        output=output,
+        level_node_ids=level_node_ids,
+        num_levels=num_levels,
+    )
+    if effective_node_logits_per_level is not None:
+        loss_node_logits_per_level = effective_node_logits_per_level
+        loss_node_logits = torch.cat(effective_node_logits_per_level, dim=1)
+    else:
+        # Preserve the existing no-HCC path exactly: global losses consume the
+        # original tensor, and level losses retain their original per-level
+        # representation (or None for a dense/global fixed frame).
+        loss_node_logits_per_level = node_logits_per_level
+        loss_node_logits = node_logits
+
+    hard_targets = hard_targets.to(device=loss_node_logits.device, dtype=torch.long)
     leaf_targets = _resolve_leaf_targets(hard_targets)
     num_leaf = int(leaf_to_level_local.size(0))
     _check_index_range(
@@ -437,20 +463,20 @@ def compute_loss(
         "Ensure the finest target level matches dataset leaf ids.",
     )
 
-    leaf_to_level_local = leaf_to_level_local.to(device=node_logits.device, dtype=torch.long)
+    leaf_to_level_local = leaf_to_level_local.to(device=loss_node_logits.device, dtype=torch.long)
     level_weights = _shared_level_weights(
         output=output,
         cfg=cfg,
         num_levels=num_levels,
-        device=node_logits.device,
-        dtype=node_logits.dtype,
+        device=loss_node_logits.device,
+        dtype=loss_node_logits.dtype,
     )
-    abs_node_logits = node_logits.abs()
+    abs_node_logits = loss_node_logits.abs()
 
     alpha = _resolve_alpha(cfg)
     if loss_mode in {"global_softmax_ce_reg", "level_softmax_ce_reg"}:
-        if loss_mode == "level_softmax_ce_reg" and node_logits_per_level is not None:
-            abs_node_logits_per_level = [level_logits.abs() for level_logits in node_logits_per_level]
+        if loss_mode == "level_softmax_ce_reg" and loss_node_logits_per_level is not None:
+            abs_node_logits_per_level = [level_logits.abs() for level_logits in loss_node_logits_per_level]
             reg, level_reg_losses = _level_regularization_loss_from_level_logits(
                 abs_node_logits_per_level=abs_node_logits_per_level,
                 leaf_targets=leaf_targets,
@@ -512,8 +538,8 @@ def compute_loss(
         level_node_ids=level_node_ids,
         leaf_to_level_local=leaf_to_level_local,
         level_weights=level_weights,
-        total_nodes=int(node_logits.size(1)),
-        dtype=node_logits.dtype,
+        total_nodes=int(loss_node_logits.size(1)),
+        dtype=loss_node_logits.dtype,
     )
     log_probs = F.log_softmax(abs_node_logits, dim=1)
     kl = F.kl_div(log_probs, node_targets, reduction="batchmean")

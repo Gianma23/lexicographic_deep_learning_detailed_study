@@ -219,6 +219,30 @@ For `L = 3` this gives `[3, 2, 1] / 6 = [0.500, 0.333, 0.167]` — **coarse-heav
 derived rather than assumed.** This is the principled version of what `kl_coarse` gestures
 at.
 
+### 4d. TICE -> `m_l ∝ (edges touching level l)`  (union bound, non-monotone)
+
+TICE is the inconsistency rate of the *independent* decoding
+([metrics.py:163-208](../train/metrics.py#L163-L208)); it is identically 0 under top-down
+decoding, which enforces consistency by construction. It counts inconsistent parent/child
+**edges**, not levels. With `L` levels there are `L-1` edges, and because the ground-truth
+path is always consistent, an edge can only be inconsistent if one of its two endpoints is
+wrong:
+
+```
+TICE  =  P( exists edge inconsistent )
+      <= sum_edges [ P(err_{l-1}) + P(err_l) ]
+       = sum_l  m_l * P(err_l)
+```
+
+where `m_l` is the number of edges touching level `l`. For `L = 3` this gives
+**`m = [1, 2, 1]`, i.e. `[0.25, 0.50, 0.25]` — mid-heavy and non-monotone**, because the
+middle level participates in both edges while the root and leaf participate in one each.
+
+This is the only metric-derived weight in this document that is not monotone in level, so
+it violates the paper's stated "strictly monotonically increasing" desideratum (Section 1).
+It is included because TICE is the metric that lexicographic optimisation demonstrably
+improves (Section 10d), which makes it the natural weighting to pair with lex.
+
 ### Surrogate step is also a bound
 
 Replacing `err_l` by cross-entropy is rigorous: if the level-`l` prediction is wrong then
@@ -320,7 +344,54 @@ dominates:
 
 The Aircraft row is degenerate — 89% of the weight on manufacturers.
 
-**The log ratio is the principled form.** `log b_l = log C_l - log C_{l-1}` is exactly the
+### The full ratio-based design space
+
+The key identity is `C_l = product_{k<=l} b_k`: the class count at a level *is* the
+cumulative product of the branching ratios. So `w ∝ C_l` (Section 4a) is already a
+ratio-based, hierarchy-aware weight — in cumulative rather than marginal form. The design
+space is therefore two binary choices, marginal versus cumulative and linear versus log:
+
+| dataset | `b_l` | marginal `w∝b_l` | marginal `w∝log b_l` | cumulative `w∝log C_l` | cumulative `w∝C_l` |
+|---|---|---|---|---|---|
+| CIFAR-100 | [8, 2.50, 5.00] | [0.516, 0.161, 0.323] | [0.452, 0.199, 0.349] | [0.215, 0.309, 0.476] | [0.062, 0.156, 0.781] |
+| CUB-200 | [13, 2.92, 5.26] | [0.614, 0.138, 0.248] | [0.484, 0.202, 0.313] | [0.223, 0.316, 0.461] | [0.052, 0.151, 0.797] |
+| Aircraft | [30, 2.33, 1.43] | [0.889, 0.069, 0.042] | [0.739, 0.184, 0.077] | [0.278, 0.347, 0.376] | [0.150, 0.350, 0.500] |
+
+Fine-level mass, against the `kl_leaf` reference of 0.613 (Section 10b establishes that fine
+accuracy rises with this quantity, so it is the operative constraint):
+
+| fine mass | `w∝b_l` | `w∝log b_l` | `w∝log C_l` | `w∝C_l` | `w∝C_l^2` |
+|---|---|---|---|---|---|
+| CIFAR-100 | 0.323 | 0.349 | 0.476 | **0.781** | 0.956 |
+| CUB-200 | 0.248 | 0.313 | 0.461 | **0.797** | 0.961 |
+| Aircraft | 0.042 | 0.077 | 0.376 | 0.500 | **0.633** |
+
+Only the cumulative-linear form `w ∝ C_l` clears the `kl_leaf` reference, and only on
+CIFAR-100 and CUB-200. Every marginal form is root-dominated because `b_0 = C_0`.
+
+### Why no count-based scheme suffices on Aircraft
+
+Conditional per-level error from the `baseline kl_leaf` runs, divided by the branching
+information the level introduces:
+
+| dataset | conditional err % | `log b_l` | err per nat |
+|---|---|---|---|
+| CIFAR-100 | 8.67 / 4.96 / 10.44 | 2.079 / 0.916 / 1.609 | 4.17 / 5.42 / **6.49** |
+| CUB-200 | 3.15 / 6.61 / 15.74 | 2.565 / 1.073 / 1.661 | 1.23 / 6.16 / **9.48** |
+| FGVC-Aircraft | 7.80 / 4.25 / 7.41 | 3.401 / 0.847 / 0.357 | 2.29 / 5.02 / **20.77** |
+
+On Aircraft, selecting a variant given the correct family is a 1.43-way decision that still
+carries a 7.4% error rate — 20.8% error per nat, nine times the root level, against 1.6x on
+CIFAR-100. **Class counts measure combinatorial difficulty and cannot see perceptual
+difficulty**, so a hierarchy whose leaf level is visually fine-grained but combinatorially
+shallow will always be under-weighted by any count-based scheme. This is the honest
+limitation to state, and it also explains Section 10c: the datasets requiring the largest
+implied `beta` are those with the largest perceptual-over-combinatorial excess, which a
+depth-only constant compensates for only by accident.
+
+### On the log form of the marginal ratio
+
+`log b_l = log C_l - log C_{l-1}` is exactly the
 conditional entropy `H(Y_l | Y_{l-1})` under uniform marginals, and because the hierarchy
 is a tree (each `Y_{l-1}` is a deterministic function of `Y_l`) the chain rule holds
 exactly:
@@ -458,22 +529,120 @@ normalisation and a squaring step (Section 1). This is the empirical case for th
 the objection is not that the weights are inelegant, it is that a quantity worth ~2 points
 of accuracy has no derivation.
 
-**Secondary observation, relevant to the lexicographic study.** The same runs decompose the
-fine-level change between the `kl_leaf` baseline and the lexicographic presets, which
-currently use `equal`:
+**Full 2x2 factorial, 3 seeds per cell.** `{baseline, lex} x {equal, kl_leaf}`, seed-paired
+deltas on fine-level accuracy (percentage points):
 
-| dataset | weights only (`kl_leaf`->`equal`, no lex) | lex only (weights held at `equal`) | total |
-|---|---|---|---|
-| CIFAR-100 | -1.20 | +0.75 | -0.45 |
-| CUB-200 | -1.97 | -0.10 | -2.07 |
-| FGVC-Aircraft | -2.15 | -0.32 | -2.47 |
+| dataset | weight effect @ baseline | weight effect @ lex | lex effect @ `equal` | lex effect @ `kl_leaf` |
+|---|---|---|---|---|
+| CIFAR-100 | **+1.14** | +0.06 | +0.75 | -0.33 |
+| CUB-200 | **+1.97** | **+2.27** | -0.10 | +0.20 |
+| FGVC-Aircraft | **+2.15** | **+1.96** | -0.32 | -0.51 |
 
-Nearly all of the apparent lexicographic regression is attributable to the weight change,
-not to gradient projection. Matched `kl_leaf` lexicographic runs give -0.60 (CUB) and
--0.19 (Aircraft) on fine, but are n=1 and should not be quoted without more seeds.
+The weight effect is large and consistent in sign; the lexicographic effect is small and
+sign-inconsistent (mean -0.05 pp over the six comparisons, per-seed spreads 0.14-0.67).
+**At matched weights, lexicographic optimisation is at parity with the baseline on all
+three datasets.** Any earlier table showing a lexicographic regression was comparing an
+`equal` lex run against a `kl_leaf` baseline and was measuring the weight effect.
 
-*Caveats:* single dataset-split protocol, 3 seeds, one loss mode. The `level_softmax_ce_reg`
-decomposition cannot be computed because no `baseline_equal` run exists for that mode.
+One genuine interaction: on CIFAR-100 the weight effect collapses under lex (+1.14 ->
++0.06), because `LEX equal` (77.35) already reaches `baseline kl_leaf` (77.74) while
+`baseline equal` is 76.60. On that dataset the priority ordering substitutes for leaf-heavy
+weighting. It does not replicate on CUB or Aircraft. CIFAR-100 is also the only
+`pretrained: false` configuration, which is the first hypothesis worth testing.
+
+**Why leaf-heavy weighting helps.** Decomposing top-down fine accuracy as
+`P(prefix correct) x P(leaf | prefix correct)`, the move from `equal` to `kl_leaf` improves
+the conditional term (+1.40 / +1.96 / +1.12) without costing the prefix term
+(-0.09 / +0.25 / +1.28). The expected trade-off — more fine mass starving the coarse
+levels — is not observed anywhere in the range [0.333, 0.613], which is direct evidence of
+headroom to move further leaf-heavy.
+
+*Caveats:* single dataset-split protocol, 3 seeds, `global_softmax_ce_reg` only. The
+`level_softmax_ce_reg` decomposition cannot be computed because no `baseline_equal` run
+exists for that mode. On Aircraft, `seed_0` is an outlier under `equal` weights in both the
+baseline (76.93 vs 81.34 / 80.50) and lex (77.02 vs 80.05 / 80.74) cells; seed pairing
+absorbs it, but unpaired means for the `equal` cells on Aircraft are unreliable.
+
+## 10d. TICE: what lexicographic optimisation actually buys, and what leaf-heavy weighting costs
+
+Sections 10b and 10c evaluate top-down decoding, where `tice_topdown` is identically 0 and
+`fpa_topdown` equals leaf accuracy. The independent decoding tells a different story.
+Metrics below are read from the **independent-selected** checkpoint, per the repository's
+checkpoint-selection rule. Seed-paired deltas, `tice_independent`, lower is better:
+
+| dataset | lex effect @ `equal` | lex effect @ `kl_leaf` | weight effect @ baseline | weight effect @ lex |
+|---|---|---|---|---|
+| CIFAR-100 | -0.00434 ± 0.00201 | **-0.00463 ± 0.00065** | +0.00169 ± 0.00182 | +0.00139 ± 0.00115 |
+| CUB-200 | -0.00081 ± 0.00082 | -0.00178 ± 0.00234 | +0.00199 ± 0.00145 | +0.00102 ± 0.00135 |
+| FGVC-Aircraft | -0.00140 ± 0.00387 | -0.00190 ± 0.00148 | +0.00050 ± 0.00506 | -0.00000 ± 0.00238 |
+
+**Lexicographic optimisation lowers TICE in 6 of 6 comparisons** (19-50% relative), whereas
+its effect on fine accuracy was 3 positive / 3 negative. Only the CIFAR-100 deltas are
+individually resolved at 3 seeds; CUB and Aircraft are suggestive. The consistent sign
+across all six is itself weak evidence (~1.6% under a null of independent random signs),
+but the honest claim is *direction consistent, magnitude resolved only on CIFAR-100*.
+
+**The weight effect on TICE is NOT resolved at 3 seeds.** The point estimates lean positive
+(leaf-heavy weighting worsening consistency) in 5 of 6 comparisons, but every weight-driven
+difference is under 0.2 percentage points, the paired standard deviations are 0.12-0.51, and
+on Aircraft the sign *flips* with checkpoint selection: +0.00050 under independent selection
+versus -0.00120 under top-down selection. No claim should be made about the weight-TICE
+relationship from these runs.
+
+**Scale matters for prioritisation.** Weight-driven FPA differences are ~2 percentage
+points; all TICE differences here, from weights or from lex, are 0.1-0.5 percentage points.
+FPA should therefore dominate weight selection, with TICE used as a tiebreaker. Absolute
+TICE values:
+
+| dataset | base `equal` | base `kl_leaf` | LEX `equal` | LEX `kl_leaf` |
+|---|---|---|---|---|
+| CIFAR-100 | 0.00875 | 0.01043 | **0.00441** | 0.00580 |
+| CUB-200 | 0.00399 | 0.00598 | **0.00318** | 0.00420 |
+| FGVC-Aircraft | 0.00730 | 0.00780 | **0.00590** | 0.00590 |
+
+**Interpretation.** Lexicographic optimisation lowers TICE consistently in direction and by
+a small absolute amount. On CUB-200, `LEX kl_leaf` improves on `baseline kl_leaf` across the
+board (L1 +0.62 pp, AHD -0.0116, TICE -30% relative, all resolved; L2 +0.20 pp and FPA
++0.30 pp within seed noise), so the consistency gain does not come at an accuracy cost
+there. What the data does *not* support is the stronger claim that leaf-heavy weighting
+systematically trades accuracy for consistency; that effect is below the resolution of these
+runs.
+
+**Consequence for weight design.** Because the TICE differences are an order of magnitude
+smaller than the FPA differences, weight selection should be driven by FPA, and leaf mass
+should not be reduced below the `kl_leaf` level (0.613) in pursuit of consistency.
+
+## 10c. The `C_l^beta` family, and what `kl_leaf` really is
+
+`kl_leaf` imposes a leaf-to-root weight ratio of exactly 3.79x on every dataset. Expressed
+as `w_l ∝ C_l^beta`, that single constant corresponds to a different exponent per dataset:
+
+| dataset | beta implied by `kl_leaf` | closest derived scheme |
+|---|---|---|
+| CIFAR-100 | 0.53 | `sqrt(C_l)` |
+| CUB-200 | 0.49 | `sqrt(C_l)` |
+| FGVC-Aircraft | 1.11 | `C_l` (wAP-aligned) |
+
+**One depth-only constant is standing in for three different data-dependent exponents.**
+This explains both why the published weights perform respectably — they land near a derived
+scheme on each dataset — and why they cannot be principled: it is a *different* scheme each
+time, and nothing in the construction knows which.
+
+This motivates treating `beta` as the single interpolating knob between two independently
+derived endpoints, rather than as a new free hyperparameter:
+
+- `beta = 0`: `equal`, FPA-aligned (Section 4b).
+- `beta = 0.5`: `sqrt(C_l)`, which matches the alpha-regulariser's implicit level scale
+  (Section 8) — the first setting in which the two loss terms agree on level importance.
+- `beta = 1`: `C_l`, an exact identity with the reported weighted AP (Section 4a).
+
+Fine-level mass under each:
+
+| dataset | `beta=0` | `beta=0.5` | `beta=1` | `beta=1.5` |
+|---|---|---|---|---|
+| CIFAR-100 | 0.333 | 0.578 | 0.781 | 0.899 |
+| CUB-200 | 0.333 | 0.591 | 0.797 | 0.910 |
+| FGVC-Aircraft | 0.333 | 0.419 | 0.500 | 0.571 |
 
 ## 11. Proposed experiments
 
@@ -500,10 +669,47 @@ Isolating one variable — the level weight vector — on the existing presets:
   is therefore the discriminating dataset, and this is a prediction the depth-only
   `exp(1/(h+1-l))` scheme cannot make at all.
 
+- Primary sweep: `beta ∈ {0, 0.5, 1, 1.5}` in the `C_l^beta` family (Section 10c), on all
+  three datasets, 3 seeds, `global_softmax_ce_reg`, baseline and lex. Given Section 10b's
+  finding that leaf-heavy weighting costs nothing on the prefix term, the optimum is
+  expected above `beta = 0.5` on CIFAR-100 and CUB-200. **Aircraft is the discriminating
+  case**: `kl_leaf` sits at `beta ≈ 1.11` there, so `beta = 0.5` should be clearly worse
+  than `kl_leaf` on Aircraft while being roughly equivalent on CIFAR-100 and CUB-200. The
+  depth-only formula cannot make a dataset-dependent prediction of that kind at all.
+
+### Lexicographic-specific proposals
+
+1. **Make the lexicographic constraint genuinely weight-free.** Because
+   `L_l = w_l x (unweighted level CE)`, gradients scale linearly with `w_l`. The projection
+   in [gradients.py:247-269](../train/lexicographic/gradients.py#L247-L269) is invariant to
+   the *reference* gradient's scale, but the reference itself is built as
+   `higher_t1 = coarse + mid_projected` ([gradients.py:479-483](../train/lexicographic/gradients.py#L479-L483)),
+   summing two vectors whose magnitudes depend on `w_coarse` and `w_mid`. The fine level's
+   feasible subspace therefore depends on the weight ratio, which contradicts the claim that
+   lexicographic priority is scale-free. Normalising both components to unit norm before
+   forming the reference makes the constraint purely geometric and confines the weights to
+   the composition step, where they carry a metric justification. No new hyperparameters.
+2. **Pair lex with a more leaf-heavy weight than the baseline.** Section 10b shows lex
+   shifts accuracy from the conditional-leaf term to the prefix term in 4 of 6 comparisons,
+   which is the priority ordering behaving as designed. Section 10d shows lex also buys back
+   the consistency that leaf-heavy weighting costs. Both point the same way: `lex + beta=1`
+   against `baseline + beta=0.5`. Prediction: comparable TICE to `baseline kl_leaf`, with
+   roughly a further point of fine accuracy.
+3. **TICE-aligned mid-heavy weights, `[0.25, 0.50, 0.25]` (Section 4d).** Deprioritised. It
+   is the only non-monotone derived weight and therefore the only genuinely unexplored
+   region, but Section 10d shows TICE differences here are 0.1-0.5 pp against ~2 pp for FPA,
+   so trading fine mass for consistency is not a favourable exchange on these datasets.
+   Worth running once as a diagnostic to bound the trade, not as a candidate default.
+
+Dynamic or adaptive weighting (learned uncertainty, GradNorm, error-tracking) is excluded by
+preference: the weight vector should stay fixed for the whole run so that runs remain
+comparable and the objective stationary. All schemes recommended above are static and
+computable from `num_classes_per_level` alone before training starts.
+
 Also worth correcting in the existing experimental setup: the lexicographic presets run at
 `model.weight_mode: equal` while the Hier-COS baseline presets run at `kl_leaf`. Per
 Section 10b that is a ~2 point handicap on fine accuracy unrelated to lexicographic
-optimisation, so the baseline-vs-lex table should be regenerated at matched weights.
+optimisation, so any baseline-vs-lex table must be regenerated at matched weights.
 
 A secondary ablation with `level_softmax_ce_reg` would test whether the `1/log C_l`
 normaliser matters once the softmax is per-level.

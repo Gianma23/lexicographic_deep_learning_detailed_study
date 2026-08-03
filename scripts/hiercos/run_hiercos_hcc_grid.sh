@@ -7,20 +7,11 @@ set -euo pipefail
 # - hiercos_hcc_<dataset>_step_80epoch
 # for: cifar100, cub200, aircraft.
 #
-# HCC needs a specific config combination forced on top of each baseline,
-# deviating from the paper-faithful dense/global fixed-frame setting:
-# - model.fixed_frame_per_level=true so `node_logits_per_level` exists as
-#   independent per-level linear blocks (HCC's linear parent-sums-children
-#   constraint has no meaning on the dense/global frame's mixed node logits).
-# - model.fixed_frame_mode=identity: the simplest, most literal analogue of
-#   H-CAST's plain learnable per-level heads (no confound from an arbitrary
-#   frozen in-block rotation). orthonormal_random (still per-level) is a
-#   legitimate secondary ablation -- swap the override below to try it.
-# - model.loss=level_softmax_ce_reg so per-level node logits feed independent
-#   per-level CE instead of a shared global softmax over all levels.
-# - model.projection.enabled is left at its baseline default (false): Hier-COS's
-#   own `projection` block is an embedded LH-DNN-style mechanism; combining it
-#   with HCC would confound two different consistency corrections in one run.
+# Each run preserves the baseline Hier-COS loss and fixed frame. HCC operates
+# after the fixed classifier, the unchanged native loss consumes the modified
+# node logits, and inference recomputes taxonomy-subspace scores from the same
+# modified tensor. Hier-COS's optional LH-DNN-style `model.projection` remains
+# disabled because combining both projection mechanisms would confound them.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -132,7 +123,7 @@ run_train() {
 run_output_dir() {
   local ds="$1"
   local epoch_tag="$2"
-  echo "$OUTPUTS_ROOT/hiercos_hcc_${ds}_level_softmax_ce_reg_identity_per_level_step_${epoch_tag}"
+  echo "$OUTPUTS_ROOT/hiercos_hcc_${ds}_kl_reg_orthonormal_random_global_step_${epoch_tag}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -149,9 +140,6 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
   run_seeded_train "$cfg" "$(run_output_dir "$ds" 0epoch)" \
-    "model.loss=level_softmax_ce_reg" \
-    "model.fixed_frame_mode=identity" \
-    "model.fixed_frame_per_level=true" \
     "hcc.enabled=true" \
     "hcc.temperature=10" \
     "hcc.eps=1e-12" \
@@ -161,9 +149,6 @@ for ds in "${DATASETS[@]}"; do
 
   # 80% of train.epochs (100), matching H-CAST's own 80/100 convention.
   run_seeded_train "$cfg" "$(run_output_dir "$ds" 80epoch)" \
-    "model.loss=level_softmax_ce_reg" \
-    "model.fixed_frame_mode=identity" \
-    "model.fixed_frame_per_level=true" \
     "hcc.enabled=true" \
     "hcc.temperature=10" \
     "hcc.eps=1e-12" \

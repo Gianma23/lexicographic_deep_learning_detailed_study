@@ -882,6 +882,9 @@ def _include_topdown_metric(metric_key: str, include_topdown: bool = True) -> bo
 class HCastAnalysisConfig:
     outputs_root: Path = Path(os.environ.get("OUTPUTS_ROOT", "/scratch/g.saggini1/outputs"))
     include_baselines: bool = True
+    # Keep a dataset in the analysis when its configured baseline is the only
+    # available run, instead of dropping the dataset from every plot.
+    include_baseline_only_datasets: bool = True
     include_topdown_metrics: bool = True
     baseline_color: str = "#1f77b4"
     baseline_by_dataset: Dict[str, Dict[str, Any]] = field(
@@ -1001,7 +1004,19 @@ class HCastAnalysis:
             if key and key not in selected_dataset_keys:
                 selected_dataset_keys.append(key)
 
-        if not selected_dataset_keys:
+        # A dataset with no selected comparison run is still analyzable from its
+        # configured baseline alone, so consider every configured dataset key.
+        if config.include_baseline_only_datasets:
+            baseline_only_keys = [key for key in sorted(baseline_lookup) if key not in selected_dataset_keys]
+            if baseline_only_keys:
+                scope = (
+                    "No manual runs found; attempting baseline-only analysis for"
+                    if not selected_dataset_keys
+                    else "Baseline-only datasets (no selected comparison runs):"
+                )
+                print(f"{scope} {', '.join(baseline_only_keys)}")
+            selected_dataset_keys.extend(baseline_only_keys)
+        elif not selected_dataset_keys:
             selected_dataset_keys = sorted(baseline_lookup.keys())
             if selected_dataset_keys:
                 print("No manual runs found; attempting baseline-only analysis from BASELINE_BY_DATASET.")
@@ -2106,8 +2121,10 @@ class HCastAnalysis:
     def show_final_test_tables(
         self,
         include_topdown: Optional[bool] = None,
-        allow_single_run: bool = False,
+        allow_single_run: bool = True,
     ) -> None:
+        # A single-run dataset (typically baseline-only) still gets a table; it
+        # reports absolute values without deltas.
         include_topdown = self.config.include_topdown_metrics if include_topdown is None else bool(include_topdown)
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
@@ -2180,7 +2197,11 @@ class HCastAnalysis:
                     for run_data in dataset_runs
                 ]
                 values_by_metric[metric_key] = metric_values
-                best_indices, second_best_indices = _best_and_second_best_indices(metric_key, metric_values)
+                if len(dataset_runs) < 2:
+                    # Ranking a single run would bold every cell without meaning.
+                    best_indices, second_best_indices = set(), set()
+                else:
+                    best_indices, second_best_indices = _best_and_second_best_indices(metric_key, metric_values)
                 best_by_metric[metric_key] = best_indices
                 second_best_by_metric[metric_key] = second_best_indices
 

@@ -428,12 +428,6 @@ class HierCosModel(nn.Module):
                     "model.projection.enabled=true (Hier-COS's own LH-DNN-style "
                     "projection); disable one of the two."
                 )
-            if not isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
-                raise ValueError(
-                    "hcc.enabled=true requires `model.fixed_frame_per_level=true` "
-                    "(or `fixed_frame_mode=orthonormal_block_random`) so "
-                    "`node_logits_per_level` exists as independent per-level blocks."
-                )
         self.hcc = HccController(
             num_classes_per_level=self.num_classes_per_level,
             taxonomy=taxonomy,
@@ -648,27 +642,40 @@ class HierCosModel(nn.Module):
         # directly from those scores.  Do not softmax the subspace scores here.
         logits_per_level = self._level_subspace_scores(node_logits)
 
-        if node_logits_per_level is not None:
-            hcc_output = self.hcc.apply(node_logits_per_level)
-        else:
-            hcc_output = {
-                "projected_logits_per_level": None,
-                "effective_logits_per_level": None,
-                "hcc_diagnostics": None,
-            }
+        # Every fixed classifier returns one node coordinate per taxonomy node,
+        # ordered in contiguous coarse->fine level blocks. HCC can therefore
+        # operate on these blocks even when the fixed frame itself is dense and
+        # global. Keep `node_logits_per_level` above unchanged for the native
+        # no-HCC loss path; this local split is only HCC plumbing.
+        hcc_input_logits_per_level = list(
+            torch.split(node_logits, self.num_classes_per_level, dim=1)
+        )
+        hcc_output = self.hcc.apply(hcc_input_logits_per_level)
+        effective_node_logits_per_level = hcc_output["effective_logits_per_level"]
+        effective_node_logits = (
+            torch.cat(effective_node_logits_per_level, dim=1)
+            if effective_node_logits_per_level is not None
+            else None
+        )
+        effective_logits_per_level = (
+            self._level_subspace_scores(effective_node_logits)
+            if effective_node_logits is not None
+            else None
+        )
 
         level_node_ids = self._level_node_ids()
         return {
             "logits_per_level": logits_per_level,
+            "effective_logits_per_level": effective_logits_per_level,
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,
             "orthonormal_plugin_node_logits": node_logits,
             "node_logits_per_level": node_logits_per_level,
             "orthonormal_plugin_node_logits_per_level": node_logits_per_level,
-            # HCC corrects `node_logits_per_level` (independent per-level linear
-            # blocks), never the nonlinear subspace-norm `logits_per_level` above.
+            # HCC constrains signed fixed-layer node logits. Hier-COS then uses
+            # those modified logits in its unchanged loss and subspace norms.
             "projected_node_logits_per_level": hcc_output["projected_logits_per_level"],
-            "effective_node_logits_per_level": hcc_output["effective_logits_per_level"],
+            "effective_node_logits_per_level": effective_node_logits_per_level,
             "hcc_diagnostics": hcc_output["hcc_diagnostics"],
             "hiercos_level_node_ids": level_node_ids,
             "orthonormal_plugin_level_node_ids": level_node_ids,
