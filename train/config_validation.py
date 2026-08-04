@@ -57,6 +57,7 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "name",
         "loss",
         "weight_mode",
+        "weight_beta",
         "variant",
         "transform_mode",
         "pool",
@@ -676,11 +677,24 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             "model.loss",
             {"kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg"},
         )
-        _require_enum(
+        weight_mode = _require_enum(
             model.get("weight_mode", "kl_leaf"),
             "model.weight_mode",
-            {"equal", "kl_leaf", "kl_coarse"},
+            {
+                "equal",
+                "kl_leaf",
+                "kl_coarse",
+                "cumulative_branching",
+                "marginal_branching",
+            },
         )
+        if weight_mode == "cumulative_branching" or "weight_beta" in model:
+            raw_weight_beta = model.get("weight_beta", 0.5)
+            if isinstance(raw_weight_beta, bool):
+                raise ValueError("`model.weight_beta` must be a finite number >= 0.")
+            weight_beta = _finite_float(raw_weight_beta, "model.weight_beta")
+            if weight_beta < 0.0:
+                raise ValueError("`model.weight_beta` must be >= 0.")
         variant = _require_enum(
             model.get("variant", "haframe_resnet50"),
             "model.variant",

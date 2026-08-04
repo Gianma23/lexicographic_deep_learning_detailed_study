@@ -1,3 +1,4 @@
+import math
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -9,7 +10,14 @@ from .config import get_section, plugin_section, section_to_dict
 PluginTargets = Union[torch.Tensor, Dict[str, Any]]
 _EPS = 1e-12
 _LOSS_MODES = ("kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg")
-_WEIGHT_MODES = ("equal", "kl_leaf", "kl_coarse")
+_HIER_COS_WEIGHT_MODES = (
+    "equal",
+    "kl_leaf",
+    "kl_coarse",
+    "cumulative_branching",
+    "marginal_branching",
+)
+_PLUGIN_WEIGHT_MODES = ("equal", "kl_leaf", "kl_coarse")
 
 
 def _to_scalar(value: torch.Tensor) -> float:
@@ -66,7 +74,29 @@ def _resolve_loss_mode(cfg: Any) -> str:
 
 
 def _resolve_weight_mode(cfg: Any) -> str:
-    return _resolve_mode(cfg=cfg, key="weight_mode", valid_modes=_WEIGHT_MODES)
+    settings, source, _default, _alpha_default = _loss_settings(cfg)
+    is_native_hiercos = (
+        source == "model"
+        and str(settings.get("name", "")).strip().lower() == "hiercos"
+    )
+    valid_modes = _HIER_COS_WEIGHT_MODES if is_native_hiercos else _PLUGIN_WEIGHT_MODES
+    return _resolve_mode(cfg=cfg, key="weight_mode", valid_modes=valid_modes)
+
+
+def _resolve_weight_beta(cfg: Any) -> float:
+    settings, source, _default, _alpha_default = _loss_settings(cfg)
+    raw_beta = settings.get("weight_beta", 0.5)
+    if isinstance(raw_beta, bool):
+        raise ValueError(f"{source}.weight_beta must be a finite number >= 0, got {raw_beta!r}.")
+    try:
+        beta = float(raw_beta)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{source}.weight_beta must be a finite number >= 0, got {raw_beta!r}."
+        ) from exc
+    if not math.isfinite(beta) or beta < 0.0:
+        raise ValueError(f"{source}.weight_beta must be a finite number >= 0, got {raw_beta!r}.")
+    return beta
 
 
 def _resolve_alpha(cfg: Any) -> float:
@@ -376,6 +406,7 @@ def _weighted_target_ce_level_losses_from_level_logits(
 def _shared_level_weights(
     output: Dict[str, Any],
     cfg: Any,
+    level_node_ids: List[torch.Tensor],
     num_levels: int,
     device: torch.device,
     dtype: torch.dtype,
@@ -385,6 +416,33 @@ def _shared_level_weights(
         raise ValueError("Orthonormal plugin expected at least one hierarchy level to build weights.")
     if mode == "equal":
         return torch.full((num_levels,), 1.0 / float(num_levels), device=device, dtype=dtype)
+
+    if mode in {"cumulative_branching", "marginal_branching"}:
+        if len(level_node_ids) != int(num_levels):
+            raise ValueError(
+                "Hier-COS branching weights require level node ids aligned with hierarchy depth."
+            )
+        class_counts = torch.tensor(
+            [int(node_ids.numel()) for node_ids in level_node_ids],
+            dtype=torch.float64,
+        )
+        if bool((class_counts <= 0).any()):
+            raise ValueError("Hier-COS branching weights require at least one class at every level.")
+
+        if mode == "cumulative_branching":
+            beta = _resolve_weight_beta(cfg)
+            # Softmax(beta * log(C_l)) is C_l**beta / sum_k C_k**beta,
+            # while remaining stable for large finite beta values.
+            log_counts = torch.log(class_counts)
+            scaled_log_counts = float(beta) * (log_counts - log_counts.max())
+            weights = torch.softmax(scaled_log_counts, dim=0)
+        else:
+            # The coarse level is the reference unit. Each later score is the
+            # average expansion relative to the immediately preceding level.
+            scores = torch.ones_like(class_counts)
+            scores[1:] = class_counts[1:] / class_counts[:-1]
+            weights = scores / scores.sum().clamp_min(_EPS)
+        return weights.to(device=device, dtype=dtype)
 
     node_prob_weights = _get_tensor(
         output,
@@ -467,10 +525,15 @@ def compute_loss(
     level_weights = _shared_level_weights(
         output=output,
         cfg=cfg,
+        level_node_ids=level_node_ids,
         num_levels=num_levels,
         device=loss_node_logits.device,
         dtype=loss_node_logits.dtype,
     )
+    weight_metrics = {
+        f"loss_weight_level_{level}": _to_scalar(level_weight)
+        for level, level_weight in enumerate(level_weights)
+    }
     abs_node_logits = loss_node_logits.abs()
 
     alpha = _resolve_alpha(cfg)
@@ -509,7 +572,12 @@ def compute_loss(
             for ce_level_loss, reg_level_loss in zip(ce_level_losses, level_reg_losses)
         ]
         total = torch.stack(level_losses).sum()
-        metrics = {"total": _to_scalar(total), "ce": _to_scalar(ce), "reg": _to_scalar(reg)}
+        metrics = {
+            "total": _to_scalar(total),
+            "ce": _to_scalar(ce),
+            "reg": _to_scalar(reg),
+            **weight_metrics,
+        }
         for level, (ce_level_loss, reg_level_loss, level_loss) in enumerate(
             zip(ce_level_losses, level_reg_losses, level_losses)
         ):
@@ -544,7 +612,12 @@ def compute_loss(
     log_probs = F.log_softmax(abs_node_logits, dim=1)
     kl = F.kl_div(log_probs, node_targets, reduction="batchmean")
     total = kl + float(alpha) * reg
-    metrics = {"total": _to_scalar(total), "kl": _to_scalar(kl), "reg": _to_scalar(reg)}
+    metrics = {
+        "total": _to_scalar(total),
+        "kl": _to_scalar(kl),
+        "reg": _to_scalar(reg),
+        **weight_metrics,
+    }
 
     if not return_aux:
         return total, metrics

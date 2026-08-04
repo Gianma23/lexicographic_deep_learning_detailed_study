@@ -244,6 +244,16 @@ differentiable level objectives and are selected explicitly by lexicographic
 runner overrides. CUB is an extrapolation; CIFAR uses this repository’s
 three-level hierarchy instead of the upstream full-depth protocol.
 
+Native Hier-COS additionally supports two taxonomy-size-derived modes. With
+`model.weight_mode: cumulative_branching`, level weights are
+`C_l^beta / sum_k C_k^beta`, where `beta` is configured by
+`model.weight_beta` and defaults to `0.5`. With
+`model.weight_mode: marginal_branching`, the unnormalised scores are
+`[1, C_1/C_0, ..., C_l/C_(l-1)]` and are normalised to sum to one. These two
+modes are not available through `orthonormal_plugin`; as with the existing
+Hier-COS modes, they weight the path/CE component while level regularisation
+remains unweighted.
+
 The optional `model.projection.enabled: true` path gives each level an
 LH-DNN-style projected learnable FC head. It concatenates the three head
 outputs and applies an identity or per-level block-diagonal frozen Hier-COS
@@ -300,29 +310,41 @@ Existing checkpoints can be tested without retraining using the tools in the
 top-level `evaluation/` package:
 
 ```bash
-INFERENCE_MODE=both  # normal | hiercos | node_softmax | both
+INFERENCE_MODE=all  # node_score | subspace_norm | hcc_node_score | hcc_subspace_norm | both | all
 python -m evaluation.evaluate_checkpoints \
   --run-dir /scratch/$USER/outputs/<run>/seed_0 \
   --inference-mode "$INFERENCE_MODE"
 ```
 
-For H-CAST, HRN, and other non-Hier-COS models, `both` compares normal
-inference with post-hoc identity-frame Hier-COS distance inference. For native
-Hier-COS, `both` compares its normal distance inference with direct values from
-one global `softmax(abs(node_logits))`, selected by hierarchy level without
-constructing subspace scores.
+An inference rule is a readout — `node_score` (rank each taxonomy node by its
+own coordinate) or `subspace_norm` (rank it by the L2 norm over its
+ancestors+self+descendants subspace) — optionally preceded by the HCC affine
+hierarchy projection, giving a 2x2 grid. Both readouts consume the same node
+coordinates: the fixed-layer `node_logits` for native Hier-COS, the native
+per-level scores for classifier-head models, which `subspace_norm` treats as
+coordinates in an identity taxonomy frame. `all` evaluates the four cells from
+one shared forward pass; `both` evaluates the two untransformed readouts.
+
+Every cell is defined for every model, and each checkpoint's own inference is one
+of them: `node_score` for H-CAST/HRN/LH-DNN/HT-CapsNet, `subspace_norm` for
+native Hier-COS, and the `hcc_`-prefixed cell of the same readout for a run
+trained with `hcc.enabled: true`. That cell is recorded as
+`native_inference_mode` and used as the paired reference for the others. Nothing
+here loads an orthonormal plugin, changes the loss, or updates parameters.
+
+Two properties shape the deltas: `hcc_node_score` shifts each sibling group by
+one constant, so it cannot change any top-down metric for a signed readout (it
+can for Hier-COS, whose readout takes the magnitude), and `subspace_norm`
+squares its inputs, so it discards the sign of a signed logit. The previous mode
+names — `normal`, `hiercos`, `node_softmax`, `hcc` — still work and map onto the
+grid, which also lets results computed before the rename be read without
+recomputation. See `evaluation/README.md` for the full contract.
 
 By default the command evaluates both `best_topdown.pt` and
 `best_independent.pt` on the test split. Use
 `--checkpoint-mode topdown` or `--checkpoint-mode independent` to select only
 one. Results are saved to `posthoc_inference_test_metrics.yaml` inside the run
 directory; an existing file is preserved unless `--overwrite` is passed.
-
-The post-hoc rule concatenates the model's native raw logits in taxonomy-node
-order, assumes an identity orthonormal frame, computes the Hier-COS L2 norm of
-each ancestors+self+descendants subspace, and predicts directly from those raw
-scores. It does not load an orthonormal plugin, change the loss, update model
-parameters, or claim that the source model was trained in a Hier-COS space.
 
 The paired multi-model analysis notebook is
 `notebooks/posthoc_hiercos_inference_comparison.ipynb`. It runs matched H-CAST,

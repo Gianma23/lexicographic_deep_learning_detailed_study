@@ -13,6 +13,8 @@ set -euo pipefail
 # - LH-DNN advantage baselines are selected by ADVANTAGE_ENABLED
 # - model.loss=level_softmax_ce_reg
 # - model.projection.enabled=true
+# - model.weight_mode=${WEIGHT_MODE}
+# - model.weight_beta=${WEIGHT_BETA} when cumulative_branching is selected
 # - model.projection.rho_enabled=${PROJECTION_RHO_ENABLED}
 # - model.projection.feature_dim=${FEATURE_DIM}
 # - model.projection.eps=${PROJECTION_EPS}
@@ -29,6 +31,8 @@ set -euo pipefail
 #   TRANSFORM_MODES=bn_linear DATASETS=cifar100 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   TRANSFORM_MODES="full bn_linear final_only" ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   PROJECTION_RHO_ENABLED=true DATASETS=cifar100 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
+#   WEIGHT_MODE=cumulative_branching WEIGHT_BETA=0.5 DATASETS="cub200 aircraft" \
+#     ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -43,6 +47,7 @@ DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
+WEIGHT_BETA="${WEIGHT_BETA:-0.5}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
 TRANSFORM_MODES="${TRANSFORM_MODES:-full}"
 FEATURE_DIM="${FEATURE_DIM:-512}"
@@ -51,13 +56,19 @@ PROJECTION_RHO_ENABLED="${PROJECTION_RHO_ENABLED:-true}"
 ADVANTAGE_ENABLED="${ADVANTAGE_ENABLED:-false}"
 
 case "$WEIGHT_MODE" in
-  equal|kl_leaf|kl_coarse) ;;
+  equal|kl_leaf|kl_coarse|cumulative_branching|marginal_branching) ;;
   *)
     echo "Unsupported WEIGHT_MODE: $WEIGHT_MODE" >&2
-    echo "Expected equal, kl_leaf, or kl_coarse." >&2
+    echo "Expected equal, kl_leaf, kl_coarse, cumulative_branching, or marginal_branching." >&2
     exit 1
     ;;
 esac
+
+if [[ "$WEIGHT_MODE" == "cumulative_branching" && ! "$WEIGHT_BETA" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "Unsupported WEIGHT_BETA: $WEIGHT_BETA" >&2
+  echo "Expected a non-negative decimal number for cumulative_branching." >&2
+  exit 1
+fi
 
 case "$FIXED_FRAME_MODE" in
   identity) ;;
@@ -198,6 +209,10 @@ run_output_dir() {
   if [[ "$WEIGHT_MODE" != "equal" ]]; then
     weight_suffix="_${WEIGHT_MODE}"
   fi
+  if [[ "$WEIGHT_MODE" == "cumulative_branching" ]]; then
+    local beta_tag="${WEIGHT_BETA//./p}"
+    weight_suffix="${weight_suffix}_beta${beta_tag}"
+  fi
   if [[ "$transform_mode" != "full" ]]; then
     transform_suffix="_${transform_mode}"
   fi
@@ -218,6 +233,9 @@ printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Transform modes: %s\n' "${TRANSFORM_MODES[*]}"
 printf 'Loss: level_softmax_ce_reg\n'
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
+if [[ "$WEIGHT_MODE" == "cumulative_branching" ]]; then
+  printf 'Cumulative branching beta: %s\n' "$WEIGHT_BETA"
+fi
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
 printf 'LH-style stacked-weight projection: enabled\n'
 printf 'Projected transform: original PReLU activations and residual skips\n'
@@ -235,6 +253,11 @@ printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 print_seed_run_settings
 
+weight_beta_args=()
+if [[ "$WEIGHT_MODE" == "cumulative_branching" ]]; then
+  weight_beta_args=("model.weight_beta=$WEIGHT_BETA")
+fi
+
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
@@ -242,6 +265,7 @@ for ds in "${DATASETS[@]}"; do
     run_seeded_train "$cfg" "$(run_output_dir "$ds" "$transform_mode")" \
       "model.loss=level_softmax_ce_reg" \
       "model.weight_mode=$WEIGHT_MODE" \
+      "${weight_beta_args[@]}" \
       "model.transform_mode=$transform_mode" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "model.fixed_frame_per_level=false" \

@@ -169,9 +169,10 @@ Runtime modules:
 
 - `evaluation/README.md` — modes, command, checkpoint rule, and output
   contract for inference-only comparisons.
-- `evaluation/posthoc_inference.py` — inference-only identity-frame Hier-COS
-  distance transform for native model logits and direct node-softmax transform
-  for native Hier-COS.
+- `evaluation/posthoc_inference.py` — inference-only readout x transform grid:
+  `node_score` or `subspace_norm` readout over the model's node coordinates,
+  optionally preceded by the HCC affine hierarchy projection (`alpha=1`, no
+  training). Each model's own inference is one cell of the grid.
 - `evaluation/evaluate_checkpoints.py` — CLI for comparing inference rules on
   existing `best_topdown.pt` and `best_independent.pt` checkpoints without
   constructing a loss or optimizer.

@@ -5,7 +5,11 @@
 model:
   name: hiercos                     # Model registry id. Must be exactly: hiercos
   loss: kl_reg                      # kl_reg | global_softmax_ce_reg | level_softmax_ce_reg
-  weight_mode: kl_leaf              # equal | kl_leaf | kl_coarse (path/CE weights; regularization stays unweighted)
+  # Path/CE weights; regularization stays unweighted.
+  # cumulative_branching uses C_l^weight_beta / sum_k C_k^weight_beta.
+  # marginal_branching uses normalized [1, C_1/C_0, ..., C_l/C_(l-1)].
+  weight_mode: kl_leaf              # equal | kl_leaf | kl_coarse | cumulative_branching | marginal_branching
+  weight_beta: 0.5                  # Native Hier-COS only; used by cumulative_branching and ignored otherwise
   variant: haframe_resnet50         # haframe_resnet50 | haframe_wide_resnet
   transform_mode: full              # full (residual head) | bn_linear (light BN+Linear head) | final_only (bypass f_theta)
   pool: average                     # Pooling for resnet50 variant: max | average

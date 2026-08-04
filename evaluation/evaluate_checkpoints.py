@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Sequence
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 import torch
 import yaml
 
 from datasets import build_dataloader
 from models import build_model
+from models.orthonormal_plugin.config import section_to_dict
 from train.config_loader import load_resolved_run_config
 from train.evaluation import evaluate_batch
 from train.metric_formatting import pretty_metrics
@@ -20,12 +22,27 @@ from train.runtime.optimization import seed_everything
 from train.runtime.selection import BEST_SELECTION_MODES
 
 from .posthoc_inference import (
-    IdentityFrameHierCosInference,
-    NativeHierCosNodeSoftmaxInference,
+    HCC_PREFIX,
+    INFERENCE_RULES,
+    NODE_SCORE,
+    SUBSPACE_NORM,
+    PosthocInferenceRule,
 )
 
 
-INFERENCE_MODES = ("normal", "hiercos", "node_softmax", "both")
+# Superseded flat mode names, kept so existing commands and scripts keep working.
+# `normal` and `hcc` named the checkpoint's own readout, which differs by model,
+# so both resolve through the model family.
+LEGACY_MODE_ALIASES = {
+    "normal": {"hiercos": SUBSPACE_NORM, None: NODE_SCORE},
+    "hiercos": {None: SUBSPACE_NORM},
+    "node_softmax": {None: NODE_SCORE},
+    "hcc": {
+        "hiercos": f"{HCC_PREFIX}{SUBSPACE_NORM}",
+        None: f"{HCC_PREFIX}{NODE_SCORE}",
+    },
+}
+INFERENCE_MODES = (*INFERENCE_RULES, "all", "both", *LEGACY_MODE_ALIASES)
 CHECKPOINT_MODES = (*BEST_SELECTION_MODES, "both")
 OUTCOME_PREFIXES = (
     "acc_level_independent_",
@@ -40,9 +57,11 @@ OUTCOME_PREFIXES = (
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run test-only evaluation from existing best checkpoints. For "
-            "non-Hier-COS models, `both` means normal+hiercos. For native "
-            "Hier-COS, `both` means normal+node_softmax."
+            "Run test-only evaluation from existing best checkpoints. Inference "
+            "rules are one grid of readout (node_score, subspace_norm) times "
+            "transform (none, hcc). `all` evaluates all four; `both` evaluates "
+            "the two untransformed readouts. The checkpoint's own inference is "
+            "one of the four cells and is used as the paired reference."
         )
     )
     parser.add_argument(
@@ -93,19 +112,91 @@ def _selected_values(choice: str, both_values: Sequence[str]) -> Sequence[str]:
     return tuple(both_values) if choice == "both" else (choice,)
 
 
-def _resolve_inference_modes(requested: str, model_name: str) -> Sequence[str]:
-    if requested == "both":
-        if model_name == "hiercos":
-            return "normal", "node_softmax"
-        return "normal", "hiercos"
-    if requested == "hiercos" and model_name == "hiercos":
-        raise ValueError(
-            "Native Hier-COS normal inference already uses its distance scores; "
-            "select `node_softmax` to remove distance-based inference."
+def native_inference_rule(model_name: str, hcc_trained: bool) -> str:
+    """Return the grid cell that reproduces this checkpoint's own inference.
+
+    Hier-COS ends its forward pass in taxonomy-subspace norms; classifier-head
+    models rank each class by its own score. A run trained with HCC applies the
+    projection inside its own forward pass, so its native cell is the
+    `hcc_`-prefixed one.
+    """
+    readout = SUBSPACE_NORM if str(model_name) == "hiercos" else NODE_SCORE
+    return f"{HCC_PREFIX}{readout}" if hcc_trained else readout
+
+
+def canonical_inference_rule(requested: str, model_name: str) -> str:
+    """Map one requested mode, legacy or canonical, to a grid cell name."""
+    alias = LEGACY_MODE_ALIASES.get(requested)
+    if alias is None:
+        return requested
+    return alias.get(str(model_name), alias[None])
+
+
+def legacy_mode_name(
+    rule: str,
+    model_name: str,
+    hcc_trained: bool = False,
+) -> Optional[str]:
+    """Return the row name a pre-rename YAML used for this cell, if any.
+
+    The inverse of `canonical_inference_rule` is ambiguous — `normal` and
+    `node_softmax` both resolve to `node_score` — so the direction that matters
+    for reading old results is spelled out here. `normal` always named whatever
+    the checkpoint did natively, which is why it follows the native cell.
+    """
+    if rule == native_inference_rule(model_name, hcc_trained):
+        return "normal"
+    if str(model_name) == "hiercos":
+        return {
+            NODE_SCORE: "node_softmax",
+            f"{HCC_PREFIX}{SUBSPACE_NORM}": "hcc",
+        }.get(rule)
+    return {
+        SUBSPACE_NORM: "hiercos",
+        f"{HCC_PREFIX}{NODE_SCORE}": "hcc",
+    }.get(rule)
+
+
+def _resolve_inference_modes(
+    requested: str,
+    model_name: str,
+    hcc_trained: bool = False,
+) -> Sequence[str]:
+    """Resolve a requested mode into grid cells, native cell first.
+
+    Every cell is defined for every model, so no combination is rejected. The
+    native cell leads so that it prints first and anchors the paired deltas.
+    """
+    native = native_inference_rule(model_name, hcc_trained)
+    if requested in {"both", "all"}:
+        candidates = (
+            INFERENCE_RULES
+            if requested == "all"
+            else (NODE_SCORE, SUBSPACE_NORM)
         )
-    if requested == "node_softmax" and model_name != "hiercos":
-        raise ValueError("`node_softmax` is defined only for native Hier-COS checkpoints.")
-    return (requested,)
+        ordered = [rule for rule in candidates if rule == native]
+        ordered.extend(rule for rule in candidates if rule != native)
+        return tuple(ordered)
+    return (canonical_inference_rule(requested, model_name),)
+
+
+def _run_trained_with_hcc(cfg: Any) -> bool:
+    """Report whether the saved run enabled HCC, without validating the config.
+
+    This CLI treats `config_resolved.yaml` as an immutable artifact and does not
+    apply the current policy validator, so the flag is read directly instead of
+    through `build_hcc_config`. Both the canonical top-level `hcc` section and a
+    legacy `model.hcc` section count, so an unexpected layout cannot silently
+    report an HCC run as HCC-free.
+    """
+    candidates = [
+        getattr(cfg, "hcc", None),
+        section_to_dict(getattr(cfg, "model", None)).get("hcc"),
+    ]
+    return any(
+        bool(section_to_dict(candidate).get("enabled", False))
+        for candidate in candidates
+    )
 
 
 def _set_model_epoch(model: torch.nn.Module, epoch: int) -> None:
@@ -142,14 +233,20 @@ def _evaluate_inference_modes(
     cfg: Any,
     taxonomy: Mapping[str, Any],
     inference_modes: Sequence[str],
-    hiercos_inference: IdentityFrameHierCosInference | None,
-    node_softmax_inference: NativeHierCosNodeSoftmaxInference | None,
-) -> Dict[str, Dict[str, float]]:
+    inference_rules: Mapping[str, Any],
+) -> tuple:
+    """Score every requested grid cell from one shared forward pass.
+
+    Also returns the model's own HCC diagnostics from the first batch. For a run
+    trained with HCC these record the alpha its forward pass actually applied,
+    which the `hcc_` cells do not replicate: they always project at `alpha=1`.
+    """
     model.eval()
     metric_batches: Dict[str, list] = {mode: [] for mode in inference_modes}
     batch_weights = []
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"
     taxonomy_dict = dict(taxonomy)
+    model_hcc_diagnostics: Dict[str, float] = {}
 
     for images, labels, _ in loader:
         images = images.to(device, non_blocking=True)
@@ -157,30 +254,37 @@ def _evaluate_inference_modes(
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
             output = model(images)
 
+        if not model_hcc_diagnostics:
+            diagnostics = output.get("hcc_diagnostics")
+            if isinstance(diagnostics, Mapping):
+                model_hcc_diagnostics = {
+                    key: float(value)
+                    for key, value in diagnostics.items()
+                    if isinstance(value, (int, float))
+                }
+
         for inference_mode in inference_modes:
-            if inference_mode == "normal":
-                inference_output = output
-            elif inference_mode == "hiercos":
-                if hiercos_inference is None:
-                    raise RuntimeError("Hier-COS inference was not initialized.")
-                inference_output = hiercos_inference.transform_output(output)
-            elif inference_mode == "node_softmax":
-                if node_softmax_inference is None:
-                    raise RuntimeError("Node-softmax inference was not initialized.")
-                inference_output = node_softmax_inference.transform_output(output)
-            else:
-                raise RuntimeError(f"Unexpected inference mode: {inference_mode}")
+            rule = inference_rules.get(inference_mode)
+            if rule is None:
+                raise RuntimeError(
+                    f"Inference rule `{inference_mode}` was not initialized."
+                )
             metric_batches[inference_mode].append(
-                evaluate_batch(inference_output, labels, taxonomy=taxonomy_dict)
+                evaluate_batch(
+                    rule.transform_output(output),
+                    labels,
+                    taxonomy=taxonomy_dict,
+                )
             )
         batch_weights.append(int(labels.size(0)))
 
-    return {
+    metrics_by_inference = {
         mode: _outcome_metrics(
             merge_metric_batches(batches, batch_weights=batch_weights)
         )
         for mode, batches in metric_batches.items()
     }
+    return metrics_by_inference, model_hcc_diagnostics
 
 
 def _metric_deltas(
@@ -270,7 +374,16 @@ def main() -> None:
 
     cfg, _ = load_resolved_run_config(str(config_path))
     model_name = str(cfg.model.name)
-    inference_modes = _resolve_inference_modes(args.inference_mode, model_name)
+    # A run trained with HCC applies the projection inside its own forward pass
+    # at final test, so its native readout is the `hcc_`-prefixed grid cell.
+    hcc_trained = _run_trained_with_hcc(cfg)
+    inference_modes = _resolve_inference_modes(
+        args.inference_mode,
+        model_name,
+        hcc_trained,
+    )
+    native_mode = native_inference_rule(model_name, hcc_trained)
+    reference_mode = native_mode if native_mode in inference_modes else inference_modes[0]
     checkpoint_modes = _selected_values(args.checkpoint_mode, BEST_SELECTION_MODES)
 
     checkpoint_paths = {
@@ -297,21 +410,36 @@ def main() -> None:
         cfg.model.pretrained = False
 
     evaluation_config_adjustments = _prepare_test_config(cfg)
+    annotation_fallback = any(
+        adjustment["field"] == "dataset.annotations.test"
+        for adjustment in evaluation_config_adjustments
+    )
+    if annotation_fallback:
+        # The fallback can rebuild a different label space than the run trained
+        # on, which shows up as plausible-looking but meaningless parent-level
+        # metrics rather than as an error.
+        print(
+            "[warning] the configured test manifest is missing, so this "
+            "evaluation falls back to the official dataset adapter. Its label "
+            "space may differ from the one this run trained on; compare the "
+            "native row against the run's own test_metrics.yaml before using "
+            "these numbers.",
+            file=sys.stderr,
+        )
     test_loader, num_classes_per_level, taxonomy = build_dataloader(cfg, "test")
     if not isinstance(taxonomy, Mapping):
         raise ValueError("Post-hoc evaluation requires dataset taxonomy mappings.")
 
     model = build_model(cfg, num_classes_per_level, taxonomy).to(device)
-    hiercos_inference = (
-        IdentityFrameHierCosInference(num_classes_per_level, taxonomy)
-        if "hiercos" in inference_modes
-        else None
-    )
-    node_softmax_inference = (
-        NativeHierCosNodeSoftmaxInference()
-        if "node_softmax" in inference_modes
-        else None
-    )
+    inference_rules: Dict[str, PosthocInferenceRule] = {
+        mode: PosthocInferenceRule(
+            rule=mode,
+            num_classes_per_level=num_classes_per_level,
+            taxonomy=taxonomy,
+            model_name=model_name,
+        )
+        for mode in inference_modes
+    }
     level_names = [str(name) for name in cfg.dataset.get("levels", [])]
 
     results: Dict[str, Any] = {}
@@ -327,19 +455,19 @@ def main() -> None:
                 f"[checkpoint:{checkpoint_mode}] {checkpoint_path} "
                 f"(epoch {checkpoint_epoch + 1})"
             )
-            metrics_by_inference = _evaluate_inference_modes(
+            metrics_by_inference, model_hcc_diagnostics = _evaluate_inference_modes(
                 model=model,
                 loader=test_loader,
                 device=device,
                 cfg=cfg,
                 taxonomy=taxonomy,
                 inference_modes=inference_modes,
-                hiercos_inference=hiercos_inference,
-                node_softmax_inference=node_softmax_inference,
+                inference_rules=inference_rules,
             )
             for inference_mode, metrics in metrics_by_inference.items():
+                native_tag = " (native)" if inference_mode == native_mode else ""
                 print(
-                    f"[test:{checkpoint_mode}:{inference_mode}] "
+                    f"[test:{checkpoint_mode}:{inference_mode}]{native_tag} "
                     f"{pretty_metrics(metrics, level_names=level_names)}"
                 )
 
@@ -348,12 +476,15 @@ def main() -> None:
                 "checkpoint_epoch": checkpoint_epoch + 1,
                 "inference": metrics_by_inference,
             }
-            if len(inference_modes) == 2:
-                baseline_mode, alternative_mode = inference_modes
+            if model_hcc_diagnostics:
+                checkpoint_result["model_hcc_diagnostics"] = model_hcc_diagnostics
+            for alternative_mode in inference_modes:
+                if alternative_mode == reference_mode:
+                    continue
                 checkpoint_result[
-                    f"{alternative_mode}_minus_{baseline_mode}"
+                    f"{alternative_mode}_minus_{reference_mode}"
                 ] = _metric_deltas(
-                    metrics_by_inference[baseline_mode],
+                    metrics_by_inference[reference_mode],
                     metrics_by_inference[alternative_mode],
                 )
             results[checkpoint_mode] = checkpoint_result
@@ -369,25 +500,55 @@ def main() -> None:
         "split": "test",
         "requested_inference_mode": args.inference_mode,
         "resolved_inference_modes": list(inference_modes),
+        "native_inference_mode": native_mode,
+        "paired_reference_mode": reference_mode,
+        "hcc_trained_run": hcc_trained,
+        "legacy_mode_names": {
+            mode: legacy_mode_name(mode, model_name, hcc_trained)
+            for mode in inference_modes
+            if legacy_mode_name(mode, model_name, hcc_trained) is not None
+        },
         "checkpoint_mode": args.checkpoint_mode,
+        "test_split_source": (
+            "official_dataset_adapter_fallback"
+            if annotation_fallback
+            else "run_configured"
+        ),
         "evaluation_config_adjustments": evaluation_config_adjustments,
         "inference_rules": {
-            "normal": "model-native evaluation output",
-            "hiercos": {
-                "input": "native_raw_logits_per_level",
-                "fixed_frame": "identity",
-                "subspace": "ancestors+self+descendants",
-                "score": "l2_projection_norm",
-                "prediction": "raw_score_argmax",
-                "training": False,
-            },
-            "node_softmax": {
-                "input": "abs(native_hiercos_node_logits)",
-                "normalization": "one_global_softmax_over_taxonomy_nodes",
-                "score": "per-level selected node probability",
-                "prediction": "raw_probability_argmax",
-                "training": False,
-            },
+            mode: rule.describe() for mode, rule in inference_rules.items()
+        },
+        "inference_rule_notes": {
+            "grid": (
+                "readout (node_score, subspace_norm) x transform (none, hcc); "
+                "every cell is defined for every model and all cells are scored "
+                "from one shared forward pass"
+            ),
+            "native": (
+                f"`{native_mode}` reproduces this checkpoint's own inference. "
+                "Monotone per-level normalizations such as sigmoid or softmax "
+                "are not applied, which leaves every reported metric unchanged "
+                "because all of them are computed from argmax decoding."
+            ),
+            "hcc_alpha": (
+                "`hcc_` cells always project at alpha=1 and do not replicate a "
+                "run's activation schedule; compare against "
+                "`model_hcc_diagnostics.proj_constraint_alpha`."
+            ),
+            "hcc_node_score_invariance": (
+                "The projection subtracts one constant per parent from that "
+                "parent's children, so sibling rankings survive whenever the "
+                "readout is monotone in the coordinate. For signed classifier "
+                "logits that makes every top-down metric identical to the "
+                "untransformed readout and only independent decoding can move. "
+                "It does not hold for Hier-COS, where the readout takes the "
+                "magnitude."
+            ),
+            "subspace_norm_sign": (
+                "An L2 norm squares its inputs, so subspace_norm discards the "
+                "sign of a signed classifier logit. That is the substantive "
+                "content of the identity-frame assumption."
+            ),
         },
         "checkpoints": results,
     }
