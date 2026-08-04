@@ -270,10 +270,13 @@ def _evaluate_inference_modes(
                     f"Inference rule `{inference_mode}` was not initialized."
                 )
             metric_batches[inference_mode].append(
+                # `_outcome_metrics` keeps only the headline metrics, so the
+                # level-3 diagnostics would be computed and then dropped.
                 evaluate_batch(
                     rule.transform_output(output),
                     labels,
                     taxonomy=taxonomy_dict,
+                    include_diagnostics=False,
                 )
             )
         batch_weights.append(int(labels.size(0)))

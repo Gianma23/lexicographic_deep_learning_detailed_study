@@ -1,10 +1,71 @@
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 
 
+# Per-level-transition tensors derived only from the taxonomy. Rebuilding these
+# element by element on the accelerator once per batch dominated evaluation
+# time, so they are cached per (mapping, shape, device). The contents are a pure
+# function of the taxonomy, so caching cannot change any metric value.
+_TAXONOMY_TENSOR_CACHE: Dict[Any, Dict[str, torch.Tensor]] = {}
+
+
 def _argmax_preds(logits_per_level: List[torch.Tensor]) -> List[torch.Tensor]:
     return [logits.argmax(dim=-1) for logits in logits_per_level]
+
+
+def _child_parent_tensors(
+    mapping: Dict[int, int],
+    num_parents: int,
+    num_children: int,
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Return `(allowed[num_parents, num_children], parent_lookup[num_children])`.
+
+    `allowed` marks the valid parent-child pairs for top-down decoding, and
+    `parent_lookup` maps each child to its parent for consistency checks, with
+    `-1` where the taxonomy defines none.
+    """
+    key = (
+        tuple(sorted(mapping.items())),
+        int(num_parents),
+        int(num_children),
+        str(device),
+    )
+    cached = _TAXONOMY_TENSOR_CACHE.get(key)
+    if cached is None:
+        allowed = torch.zeros((num_parents, num_children), dtype=torch.bool)
+        parent_lookup = torch.full((num_children,), -1, dtype=torch.long)
+        in_range_children: List[int] = []
+        in_range_parents: List[int] = []
+        lookup_children: List[int] = []
+        lookup_parents: List[int] = []
+        for child_id, parent_id in mapping.items():
+            child_id = int(child_id)
+            parent_id = int(parent_id)
+            if 0 <= child_id < num_children and 0 <= parent_id < num_parents:
+                in_range_children.append(child_id)
+                in_range_parents.append(parent_id)
+            # The lookup keeps out-of-range parents so that such a child can
+            # never match a decoded parent, exactly as the per-element build did.
+            if 0 <= child_id < num_children:
+                lookup_children.append(child_id)
+                lookup_parents.append(parent_id)
+        if in_range_children:
+            allowed[
+                torch.tensor(in_range_parents, dtype=torch.long),
+                torch.tensor(in_range_children, dtype=torch.long),
+            ] = True
+        if lookup_children:
+            parent_lookup[torch.tensor(lookup_children, dtype=torch.long)] = torch.tensor(
+                lookup_parents, dtype=torch.long
+            )
+        cached = {
+            "allowed": allowed.to(device=device),
+            "parent_lookup": parent_lookup.to(device=device),
+        }
+        _TAXONOMY_TENSOR_CACHE[key] = cached
+    return cached["allowed"], cached["parent_lookup"]
 
 
 def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
@@ -45,10 +106,12 @@ def _hierarchical_argmax_preds(
         num_children = int(scores.size(-1))
         num_parents = int(logits_per_level[level - 1].size(-1))
 
-        allowed = torch.zeros((num_parents, num_children), dtype=torch.bool, device=scores.device)
-        for child_id, parent_id in mapping.items():
-            if 0 <= child_id < num_children and 0 <= parent_id < num_parents:
-                allowed[parent_id, child_id] = True
+        allowed, _ = _child_parent_tensors(
+            mapping,
+            num_parents=num_parents,
+            num_children=num_children,
+            device=scores.device,
+        )
 
         allowed_batch = allowed[parent_pred]
         masked_scores = scores.masked_fill(~allowed_batch, float("-inf"))
@@ -89,9 +152,11 @@ def per_level_top1(
     taxonomy: Optional[Dict[str, Any]] = None,
     enforce_hierarchy: bool = False,
     key_prefix: str = "acc_level_",
+    preds: Optional[List[torch.Tensor]] = None,
 ) -> Dict[str, float]:
     out: Dict[str, float] = {}
-    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+    if preds is None:
+        preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     for level, pred in enumerate(preds):
         acc = (pred == targets[:, level]).float().mean().item()
         out[f"{key_prefix}{level}"] = float(acc)
@@ -103,12 +168,14 @@ def weighted_average_precision(
     targets: torch.Tensor,
     taxonomy: Optional[Dict[str, Any]] = None,
     enforce_hierarchy: bool = False,
+    preds: Optional[List[torch.Tensor]] = None,
 ) -> float:
     """H-CAST wAP: class-count-weighted Top-1 accuracy across levels."""
     if not logits_per_level:
         return 0.0
 
-    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+    if preds is None:
+        preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     weighted_sum = 0.0
     total_weight = 0.0
     for level, logits in enumerate(logits_per_level):
@@ -128,8 +195,10 @@ def full_path_accuracy(
     targets: torch.Tensor,
     taxonomy: Optional[Dict[str, Any]] = None,
     enforce_hierarchy: bool = False,
+    preds: Optional[List[torch.Tensor]] = None,
 ) -> float:
-    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+    if preds is None:
+        preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     pred_path = torch.stack(preds, dim=1)
     return float((pred_path == targets).all(dim=1).float().mean().item())
 
@@ -139,12 +208,14 @@ def average_hierarchical_distance(
     targets: torch.Tensor,
     taxonomy: Optional[Dict[str, Any]] = None,
     enforce_hierarchy: bool = False,
+    preds: Optional[List[torch.Tensor]] = None,
 ) -> float:
     """Average LCA-equivalent hierarchical distance between predicted and GT paths."""
     if not logits_per_level:
         return 0.0
 
-    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+    if preds is None:
+        preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     if not preds:
         return 0.0
 
@@ -164,12 +235,14 @@ def consistency_rate(
     logits_per_level: List[torch.Tensor],
     taxonomy: Optional[Dict[str, Any]],
     enforce_hierarchy: bool = False,
+    preds: Optional[List[torch.Tensor]] = None,
 ) -> Optional[float]:
     if not taxonomy or "parent_of" not in taxonomy:
         return None
 
     parent_of = _normalize_parent_of(taxonomy)
-    preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
+    if preds is None:
+        preds = _decoded_preds(logits_per_level, taxonomy, enforce_hierarchy)
     if not preds:
         return None
 
@@ -182,13 +255,15 @@ def consistency_rate(
         child = preds[level]
         parent = preds[level - 1]
 
-        # Build child->parent lookup to check whole-path validity per sample.
-        lookup = torch.full((logits_per_level[level].size(-1),), -1, device=child.device, dtype=parent.dtype)
-        for child_id, parent_id in mapping.items():
-            if 0 <= int(child_id) < lookup.numel():
-                lookup[int(child_id)] = int(parent_id)
+        # Cached child->parent lookup, used to check whole-path validity.
+        _, lookup = _child_parent_tensors(
+            mapping,
+            num_parents=int(logits_per_level[level - 1].size(-1)),
+            num_children=int(logits_per_level[level].size(-1)),
+            device=child.device,
+        )
 
-        mapped_parent = lookup[child]
+        mapped_parent = lookup[child].to(dtype=parent.dtype)
         valid = valid & (mapped_parent == parent)
 
     if valid.numel() == 0:
@@ -200,9 +275,12 @@ def tice_score(
     logits_per_level: List[torch.Tensor],
     taxonomy: Optional[Dict[str, Any]],
     enforce_hierarchy: bool = False,
+    preds: Optional[List[torch.Tensor]] = None,
 ) -> Optional[float]:
     """H-CAST convention: TICE is inconsistency rate (lower is better)."""
-    consistency = consistency_rate(logits_per_level, taxonomy, enforce_hierarchy=enforce_hierarchy)
+    consistency = consistency_rate(
+        logits_per_level, taxonomy, enforce_hierarchy=enforce_hierarchy, preds=preds
+    )
     if consistency is None:
         return None
     return float(1.0 - consistency)

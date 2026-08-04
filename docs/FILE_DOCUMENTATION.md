@@ -139,9 +139,16 @@ fatal errors.
   and model/dataset/HCC/plugin/lex compatibility.
 - `train/engine.py` — training/evaluation loops, AMP, diagnostics, and
   lexicographic switch.
-- `train/evaluation.py` — per-batch metric and HCC diagnostic assembly.
+- `train/evaluation.py` — per-batch metric and HCC diagnostic assembly. Decodes
+  once per decoder and shares the predictions with every metric;
+  `include_diagnostics=False` drops the level-3 diagnostics for callers that
+  discard them. The ground-truth rank diagnostic is a masked comparison over the
+  cached sibling mask rather than a per-sample loop, which matters because
+  `train_one_epoch` calls `evaluate_batch` on every training batch.
 - `train/metrics.py` — independent/top-down decoding, per-level accuracy,
-  weighted AP, FPA, AHD, TICE, and sample-weighted aggregation.
+  weighted AP, FPA, AHD, TICE, and sample-weighted aggregation. The per-level
+  `allowed` mask and child→parent lookup are cached per taxonomy and device;
+  each metric also accepts precomputed `preds` to avoid decoding again.
 - `train/mixup.py` — hierarchy-aware MixUp/CutMix target construction.
 - `train/metric_formatting.py` — concise console formatting.
 - `train/training_logger.py` — resolved config, JSONL epoch/resume events, and

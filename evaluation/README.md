@@ -122,6 +122,26 @@ express. One detail of the remap: the old `node_softmax` applied a global
 `softmax(|node_logits|)`, whose ordering — and therefore every reported metric —
 matches `node_score`.
 
+## Cost
+
+All selected cells are scored from one shared forward pass, so adding a cell
+costs only its readout and its metrics, never another pass over the test set.
+On Aircraft the forward pass is a small part of the total; the metric
+computation dominates. Two things keep it cheap, and both must stay in place:
+
+- `train/metrics.py` caches the per-level `allowed` mask and child→parent
+  lookup. Rebuilding them element by element on the accelerator each batch cost
+  51 ms per top-down decode versus 0.11 ms cached.
+- `evaluate_batch` decodes once per decoder and passes the predictions to every
+  metric, instead of each metric decoding again, and this CLI passes
+  `include_diagnostics=False` because `_outcome_metrics` discards the level-3
+  diagnostics anyway. Training keeps them, since they are logged.
+
+Together these took the four-cell evaluation from 45 s to 2.1 s per 20 batches
+of 64 images. Skipping a cell whose numbers already exist in the run's
+`test_metrics.yaml` would save little by comparison, and is unsound for any run
+whose `test_split_source` is the adapter fallback.
+
 ## Output contract
 
 By default the CLI evaluates both validation-selected checkpoints and preserves

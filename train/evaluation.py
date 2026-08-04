@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 import torch
 
 from .metrics import (
+    _child_parent_tensors,
     average_hierarchical_distance,
     decoded_preds,
     full_path_accuracy,
@@ -66,33 +67,57 @@ def _mean_gt_rank_within_parent(
     probs: torch.Tensor,
     gt_parent: torch.Tensor,
     gt_child: torch.Tensor,
-    children_by_parent: List[torch.Tensor],
+    sibling_mask: torch.Tensor,
 ) -> Optional[float]:
-    ranks: List[float] = []
-    batch_size = int(probs.size(0))
-    for sample_idx in range(batch_size):
-        parent_id = int(gt_parent[sample_idx].item())
-        if parent_id < 0 or parent_id >= len(children_by_parent):
-            continue
-        siblings = children_by_parent[parent_id]
-        if siblings.numel() == 0:
-            continue
+    """Mean 1-based rank of the ground-truth child among its own siblings.
 
-        gt_child_id = int(gt_child[sample_idx].item())
-        if not bool((siblings == gt_child_id).any()):
-            continue
-
-        sibling_scores = probs[sample_idx, siblings]
-        gt_score = probs[sample_idx, gt_child_id]
-        rank = 1 + int((sibling_scores > gt_score).sum().item())
-        ranks.append(float(rank))
-
-    if not ranks:
+    `sibling_mask[parent, child]` marks the taxonomy's parent-child pairs. A
+    sample is skipped when its ground-truth parent is out of range, has no
+    children, or does not own the ground-truth child. Returns `None` when no
+    sample qualifies.
+    """
+    num_parents, num_children = sibling_mask.shape
+    if probs.numel() == 0:
         return None
-    return float(sum(ranks) / len(ranks))
+
+    # Clamp only to keep the gathers in range; `usable` decides what counts.
+    safe_parent = gt_parent.clamp(min=0, max=max(num_parents - 1, 0))
+    safe_child = gt_child.clamp(min=0, max=max(num_children - 1, 0))
+    siblings = sibling_mask[safe_parent]
+
+    in_range = (
+        gt_parent.ge(0)
+        & gt_parent.lt(num_parents)
+        & gt_child.ge(0)
+        & gt_child.lt(num_children)
+    )
+    # A childless parent yields an all-false row, so this also drops those.
+    owns_child = siblings.gather(1, safe_child.unsqueeze(1)).squeeze(1)
+    usable = in_range & owns_child
+    if not bool(usable.any()):
+        return None
+
+    gt_score = probs.gather(1, safe_child.unsqueeze(1))
+    ranks = 1 + (probs.gt(gt_score) & siblings).sum(dim=1)
+    # Sum then divide in Python. Ranks are small integers so the float64 sum is
+    # exact, and dividing here matches the previous mean bit for bit, whereas
+    # `Tensor.mean` multiplies by a reciprocal and can differ in the last ulp.
+    total = float(ranks[usable].to(torch.float64).sum().item())
+    return total / float(int(usable.sum().item()))
 
 
-def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Optional[Dict] = None) -> Dict[str, float]:
+def evaluate_batch(
+    output: Dict[str, Any],
+    targets: torch.Tensor,
+    taxonomy: Optional[Dict] = None,
+    include_diagnostics: bool = True,
+) -> Dict[str, float]:
+    """Compute this batch's hierarchical metrics.
+
+    `include_diagnostics=False` drops the level-3 probability-mass and rank
+    diagnostics. They are logged during training but discarded by callers that
+    only need the headline metrics, and they are a large share of the cost.
+    """
     logits_per_level = output["logits_per_level"]
     effective_logits_per_level = output.get("effective_logits_per_level")
     has_effective_logits = (
@@ -120,6 +145,11 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
     else:
         score_source = logits_per_level
 
+    # Decode once per decoder. Every metric below is a function of these
+    # predictions, so decoding inside each one repeated identical work.
+    preds_ind = decoded_preds(score_source, taxonomy=taxonomy, enforce_hierarchy=False)
+    preds_td = decoded_preds(score_source, taxonomy=taxonomy, enforce_hierarchy=True)
+
     metrics: Dict[str, float] = {}
     metrics.update(
         per_level_top1(
@@ -128,6 +158,7 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
             taxonomy=taxonomy,
             enforce_hierarchy=False,
             key_prefix="acc_level_independent_",
+            preds=preds_ind,
         )
     )
     metrics.update(
@@ -137,6 +168,7 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
             taxonomy=taxonomy,
             enforce_hierarchy=True,
             key_prefix="acc_level_topdown_",
+            preds=preds_td,
         )
     )
     metrics["weighted_ap_independent"] = weighted_average_precision(
@@ -144,12 +176,14 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
         targets,
         taxonomy=taxonomy,
         enforce_hierarchy=False,
+        preds=preds_ind,
     )
     metrics["weighted_ap_topdown"] = weighted_average_precision(
         score_source,
         targets,
         taxonomy=taxonomy,
         enforce_hierarchy=True,
+        preds=preds_td,
     )
 
     # H-CAST: FPA is full-path exact-match accuracy.
@@ -160,24 +194,28 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
         targets,
         taxonomy=taxonomy,
         enforce_hierarchy=False,
+        preds=preds_ind,
     )
     metrics["fpa_topdown"] = full_path_accuracy(
         score_source,
         targets,
         taxonomy=taxonomy,
         enforce_hierarchy=True,
+        preds=preds_td,
     )
     metrics["ahd_independent"] = average_hierarchical_distance(
         score_source,
         targets,
         taxonomy=taxonomy,
         enforce_hierarchy=False,
+        preds=preds_ind,
     )
     metrics["ahd_topdown"] = average_hierarchical_distance(
         score_source,
         targets,
         taxonomy=taxonomy,
         enforce_hierarchy=True,
+        preds=preds_td,
     )
 
     # H-CAST: TICE is inconsistency rate (lower is better).
@@ -185,18 +223,20 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
         score_source,
         taxonomy,
         enforce_hierarchy=False,
+        preds=preds_ind,
     )
     tice_topdown = tice_score(
         score_source,
         taxonomy,
         enforce_hierarchy=True,
+        preds=preds_td,
     )
     if tice_independent is not None:
         metrics["tice_independent"] = tice_independent
     if tice_topdown is not None:
         metrics["tice_topdown"] = tice_topdown
 
-    if len(logits_per_level) >= 3:
+    if include_diagnostics and len(logits_per_level) >= 3:
         # Always define diagnostics on probability scores:
         # pre = raw softmax(logits), post = softmax(final logits) or final probabilities.
         pre_probs = [torch.softmax(logits, dim=-1) for logits in logits_per_level]
@@ -237,8 +277,6 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
             (fine_post[row_ids, gt_fine] - fine_pre[row_ids, gt_fine]).mean().item()
         )
 
-        preds_ind = decoded_preds(score_source, taxonomy=taxonomy, enforce_hierarchy=False)
-        preds_td = decoded_preds(score_source, taxonomy=taxonomy, enforce_hierarchy=True)
         if len(preds_ind) >= 3:
             cond_ind = _conditional_fine_accuracy(
                 parent_pred=preds_ind[level_middle],
@@ -267,21 +305,15 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
             num_parents=num_middle,
         )
         if parent_of_fine is not None:
-            parent_child_mask = torch.zeros(
-                (num_middle, num_fine),
-                dtype=fine_post.dtype,
+            # Cached, so the mask is not rebuilt element by element every batch.
+            sibling_mask, _ = _child_parent_tensors(
+                parent_of_fine,
+                num_parents=num_middle,
+                num_children=num_fine,
                 device=fine_post.device,
             )
-            children_by_parent_py: List[List[int]] = [[] for _ in range(num_middle)]
-            for child_id, parent_id in parent_of_fine.items():
-                parent_child_mask[parent_id, child_id] = 1.0
-                children_by_parent_py[parent_id].append(int(child_id))
-            children_by_parent = [
-                torch.tensor(child_ids, dtype=torch.long, device=fine_post.device)
-                for child_ids in children_by_parent_py
-            ]
 
-            gt_parent_mask = parent_child_mask[gt_middle]
+            gt_parent_mask = sibling_mask[gt_middle].to(dtype=fine_post.dtype)
             metrics["gt_parent_mass_pre_l2"] = float((fine_pre * gt_parent_mask).sum(dim=-1).mean().item())
             metrics["gt_parent_mass_post_l2"] = float((fine_post * gt_parent_mask).sum(dim=-1).mean().item())
 
@@ -289,13 +321,13 @@ def evaluate_batch(output: Dict[str, Any], targets: torch.Tensor, taxonomy: Opti
                 probs=fine_pre,
                 gt_parent=gt_middle,
                 gt_child=gt_fine,
-                children_by_parent=children_by_parent,
+                sibling_mask=sibling_mask,
             )
             rank_post = _mean_gt_rank_within_parent(
                 probs=fine_post,
                 gt_parent=gt_middle,
                 gt_child=gt_fine,
-                children_by_parent=children_by_parent,
+                sibling_mask=sibling_mask,
             )
             if rank_pre is not None:
                 metrics["gt_child_rank_within_parent_pre_l2"] = rank_pre

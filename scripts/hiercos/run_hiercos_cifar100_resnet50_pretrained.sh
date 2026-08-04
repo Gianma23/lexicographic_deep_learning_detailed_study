@@ -134,12 +134,16 @@ run_train() {
   local run_dir="$2"
   shift 2
 
-  local cmd=(
+  local base_cmd=(
     "$PYTHON_BIN" -m train.train
     --config "$config"
     "train.output_dir=$run_dir"
     "$@"
   )
+  local cmd=("${base_cmd[@]}")
+  if [[ -f "$run_dir/latest.pt" ]]; then
+    cmd+=("train.resume=$run_dir/latest.pt")
+  fi
 
   if [[ "$DRY_RUN" == "1" ]]; then
     printf '[DRY-RUN] '
@@ -147,13 +151,16 @@ run_train() {
     printf '\n'
     if (( MAX_RESUME_RETRIES > 0 )); then
       printf '[DRY-RUN][RETRY x%s] ' "$MAX_RESUME_RETRIES"
-      printf '%q ' "${cmd[@]}" "train.resume=$run_dir/latest.pt"
+      printf '%q ' "${base_cmd[@]}" "train.resume=$run_dir/latest.pt"
       printf '\n'
     fi
   else
     while (( "$(jobs -pr | wc -l)" >= MAX_PARALLEL )); do
-      if ! wait -n; then
-        rc=$?
+      set +e
+      wait -n
+      rc=$?
+      set -e
+      if (( rc != 0 )); then
         echo "[ERROR] One run failed (exit=${rc}); stopping remaining jobs." >&2
         jobs -pr | xargs -r kill 2>/dev/null || true
         exit "$rc"
@@ -171,7 +178,7 @@ run_train() {
       while (( rc != 0 && attempt < MAX_RESUME_RETRIES )); do
         attempt=$((attempt + 1))
         echo "[RETRY ${attempt}/${MAX_RESUME_RETRIES}] run_dir=$run_dir resume=$run_dir/latest.pt" >&2
-        "${cmd[@]}" "train.resume=$run_dir/latest.pt"
+        "${base_cmd[@]}" "train.resume=$run_dir/latest.pt"
         rc=$?
       done
       exit "$rc"
@@ -225,8 +232,11 @@ run_seeded_train "$CONFIG" "$(run_output_dir)" \
 
 if [[ "$DRY_RUN" != "1" ]]; then
   while (( "$(jobs -pr | wc -l)" > 0 )); do
-    if ! wait -n; then
-      rc=$?
+    set +e
+    wait -n
+    rc=$?
+    set -e
+    if (( rc != 0 )); then
       echo "[ERROR] One run failed (exit=${rc}); stopping remaining jobs." >&2
       jobs -pr | xargs -r kill 2>/dev/null || true
       exit "$rc"
