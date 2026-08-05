@@ -28,7 +28,6 @@ Convention used below:
 | 5 | Gradient-space lex | `train.lexicographic.enabled` | `false`, `true` | [config.py:106-123](train/lexicographic/config.py#L106-L123) |
 | 5a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first`, `pairwise_orthogonal` | [config.py:9](train/lexicographic/config.py#L9) |
 | 5b | Lex projection rule | `.projection_rule` | `orthogonalize_all`, `conflict_only` | [config.py:10](train/lexicographic/config.py#L10) |
-| 5c | Lex onset | `.start_epoch` | `0`, `80`, … | [config.py:112](train/lexicographic/config.py#L112) |
 | 6 | LH-style projection | `model.projection.enabled` | `false`, `true` | [model.py:270](models/hiercos/model.py#L270) |
 | 6a | PReLU ρ variant | `.rho_enabled` | `false`, `true` | [model.py:271-274](models/hiercos/model.py#L271-L274) |
 | 6b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:275-278](models/hiercos/model.py#L275-L278) |
@@ -288,9 +287,10 @@ Axis 5b asks a different question: `orthogonalize_all` projects unconditionally,
 the time — which is a much more mechanistic claim, and testable directly from the
 lexicographic diagnostics in `run_log.jsonl` (how often the conflict gate fires).
 
-Axis 5c (`start_epoch` 0 vs 80) asks whether lex is a training-dynamics intervention or a
-fine-tuning correction, mirroring the HCC step@0 / step@80 design so the two families stay
-comparable.
+There is no lex-onset axis: gradient projection is active for the whole run whenever
+`train.lexicographic.enabled=true`, so lex is studied only as a training-dynamics
+intervention, not as a fine-tuning correction. The HCC step@0 / step@80 contrast (axis 7b)
+has no lexicographic counterpart.
 
 ## RQ5 — Does lex need a learnable transform to act on?
 

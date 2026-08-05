@@ -112,20 +112,36 @@ samples, or choose models on test data.
 - The local taxonomy temperature `0.5` is supported by the upstream saved run
   arguments even though upstream constructor defaults are internally
   inconsistent.
-- Secondary dimensions `[64, 32, 16]`, three routing iterations, per-image
-  standardization, and MixUp alpha `0.2` follow the source experiment family.
+- Secondary dimensions `[64, 32, 16]`, three routing iterations, and MixUp alpha
+  `0.2` follow the source experiment family.
+- Standard-scaler scope is batch-scoped on CUB/Aircraft
+  (`dataset.transforms.normalization_scope: batch`). Upstream reduces a single
+  scalar mean/std over whatever tensor it receives: for path-loaded datasets
+  that is the tensor *after* `padded_batch`, so the statistic spans the batch,
+  not the image. An earlier revision of this document described the port as
+  per-image standardization and called that source-aligned; that was incorrect.
+  CIFAR reaches the upstream `image_type='array'` branch, which standardizes the
+  whole split array once, and remains per-image locally — a known open gap.
 - Cross-capsule attention keeps Keras semantics (`16` heads with independent
   `key_dim=value_dim=32`) through PyTorch scaled-dot-product attention; Q/K/V
   width is therefore 512 at every level rather than being divided from the
   capsule dimension.
-- Primary features are flattened in NHWC order, EfficientNet applies the
-  source model's embedded `1/255` rescaling, and `tf_efficientnet_b7` supplies
-  the final spatial `forward_features` map.
+- Primary features are flattened in NHWC order and `tf_efficientnet_b7`
+  supplies the final spatial `forward_features` map. The Keras
+  `EfficientNetB7` stem is reproduced in full: `Rescaling(1/255)` followed by
+  the `Normalization` layer, whose ImageNet checkpoint state is
+  `mean = [0.485, 0.456, 0.406]` and `variance = [0.229, 0.224, 0.225]`
+  (Keras stores the standard deviations in the variance slot, and the layer
+  divides by `sqrt(variance)`).
 - Dynamic loss weights are checkpointed model buffers: each batch uses the
   weights produced after the preceding batch, matching the Keras callback.
   Where the paper's written weighting equation and callback differ, the port
-  follows the source callback exactly: `tau_i = 1 - acc_i * initial_i`, then
-  `(1 - dynamic_weight) * tau_i / sum(tau)`.
+  follows the source callback: `tau_i = 1 - acc_i * initial_i`, then
+  `(1 - dynamic_weight) * tau_i / sum(tau)`. The source callback runs in
+  `on_train_batch_end` and reads `acc_i` from the Keras `logs` dict, which
+  carries the metric accumulated since the start of the epoch; the port
+  therefore keeps epoch-to-date accuracy accumulators that reset on each
+  `set_epoch` call, rather than using the current batch's accuracy.
 - MixUp samples one beta coefficient per example with random pairing. The
   epoch-indexed source schedule holds `0.001` through epoch index 10 and uses
   `0.00095` at index 11.

@@ -42,11 +42,24 @@ dataset:
   # Keep dataset split policy aligned with H-CAST configs.
   split_seed: 0
   transforms:
-    # Keep HT-CapsNet parity preprocessing (fixed resize + per-image z-score normalization).
+    # Keep HT-CapsNet parity preprocessing (fixed resize + batch-scoped z-score
+    # normalization). Upstream maps `Normalize_StandardScaler` over the batched
+    # `tf.data` pipeline, so the statistic is reduced over the batch, not the image.
     fixed_resize_only: true
     fixed_resize_interpolation: bilinear
+    # `tf.image.resize` defaults to antialias=False, so the source downsamples with
+    # a fixed 2x2 kernel. Single-stage only: the source's 512px intermediate is a
+    # `padded_batch` artifact and is deliberately not reproduced.
+    fixed_resize_antialias: false
     use_timm: false
     normalization: standardscaler
+    normalization_scope: batch
+    manual:
+      # FGVC-Aircraft ships a 20px copyright banner the dataset README asks to
+      # remove. HT-CapsNet does not use this dataset, so the source pipeline has no
+      # defined behavior for it; every other model here removes it, explicitly or
+      # via its evaluation centre crop.
+      crop_bottom_pixels: 20
     mixup: 0.2
     cutmix: 0.0
     cutmix_minmax: null

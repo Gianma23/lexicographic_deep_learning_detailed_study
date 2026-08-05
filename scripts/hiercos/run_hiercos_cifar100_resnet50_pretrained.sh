@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs one CIFAR-100 Hier-COS configuration on a pretrained ImageNet ResNet-50
-# instead of the from-scratch WideResNet-28-8 used by the CIFAR-100 config:
+# Runs one CIFAR-100 Hier-COS configuration on a ResNet-50 instead of the
+# from-scratch WideResNet-28-8 used by the CIFAR-100 config:
 # - model.loss=${LOSS_MODE}
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.variant=haframe_resnet50
-# - model.pretrained=true
+# - model.pretrained=${PRETRAINED_MODE}
 # - model.pool=average
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.transform_mode=full
@@ -18,9 +18,19 @@ set -euo pipefail
 # Purpose: CIFAR-100 is the only dataset whose backbone is trained from scratch
 # (`model.pretrained` is ignored for haframe_wide_resnet, which never loads
 # weights), so pretraining cannot be varied there without swapping the
-# architecture. This script supplies the pretrained arm. Run it once per frame
-# to get an identity-vs-orthonormal_random comparison under a pretrained
-# backbone.
+# architecture. Holding the architecture at haframe_resnet50 and toggling
+# PRETRAINED_MODE makes pretraining a single controlled variable on CIFAR-100.
+# Run the four combinations of PRETRAINED_MODE x FIXED_FRAME_MODE to get the
+# pretraining-by-frame matrix that the FGVC-Aircraft attempt could not deliver
+# (a from-scratch ResNet-50 on Aircraft's 3,334 training images collapsed to
+# chance, ~1% train FPA; CIFAR-100 has 45,000, so its scratch arm should learn).
+#
+# Note for PRETRAINED_MODE=false: configs/hiercos/hiercos_cifar100.yaml sets
+# model.backbone_lr_scale=0.1, so a from-scratch backbone trains at 0.1 * 0.1 =
+# 0.01. That is inherited unchanged, which keeps the pretrained and scratch arms
+# differing in exactly one setting. If the scratch arm underfits, raise it with
+# an explicit `model.backbone_lr_scale=` override and re-run BOTH arms, so the
+# comparison stays single-variable.
 #
 # Two settings are load-bearing and must not be dropped:
 # - model.pool=average. The factory defaults to pool='max', which builds
@@ -49,6 +59,7 @@ MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
+PRETRAINED_MODE="${PRETRAINED_MODE:-false}"
 IMAGE_SIZE="${IMAGE_SIZE:-224}"
 
 CONFIG="configs/hiercos/hiercos_cifar100.yaml"
@@ -76,6 +87,15 @@ case "$FIXED_FRAME_MODE" in
   *)
     echo "Unsupported FIXED_FRAME_MODE: $FIXED_FRAME_MODE" >&2
     echo "Expected orthonormal_random or identity." >&2
+    exit 1
+    ;;
+esac
+
+case "$PRETRAINED_MODE" in
+  true|false) ;;
+  *)
+    echo "Unsupported PRETRAINED_MODE: $PRETRAINED_MODE" >&2
+    echo "Expected true or false." >&2
     exit 1
     ;;
 esac
@@ -115,6 +135,9 @@ trap handle_exit EXIT
 #     ./scripts/hiercos/run_hiercos_cifar100_resnet50_pretrained.sh
 #   # Matching orthonormal arm, needed for any frame comparison.
 #   FIXED_FRAME_MODE=orthonormal_random \
+#     ./scripts/hiercos/run_hiercos_cifar100_resnet50_pretrained.sh
+#   # From-scratch ResNet-50, same architecture, for the pretraining contrast.
+#   PRETRAINED_MODE=false FIXED_FRAME_MODE=identity \
 #     ./scripts/hiercos/run_hiercos_cifar100_resnet50_pretrained.sh
 #   # Cheap single-seed pilot at reduced resolution.
 #   NUM_RUNS=1 IMAGE_SIZE=112 \
@@ -189,23 +212,35 @@ run_train() {
 # Deliberately a fresh namespace: it does not touch the dead hand-launched
 # hiercos_cifar100_global_softmax_ce_reg_baseline_kl_leaf_identity_resnet50
 # directory, which holds a failed resume record and no checkpoints.
+# PRETRAINED_MODE=true keeps the historical `resnet50pretrained` tag so the runs
+# already on disk stay addressable and resumable; the scratch arm gets its own
+# `resnet50scratch` tag and can never collide with them.
 run_output_dir() {
+  local backbone_tag="resnet50pretrained"
   local frame_suffix=""
   local image_suffix=""
+  if [[ "$PRETRAINED_MODE" == "false" ]]; then
+    backbone_tag="resnet50scratch"
+  fi
   if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
   if [[ "$IMAGE_SIZE" != "224" ]]; then
     image_suffix="_img${IMAGE_SIZE}"
   fi
-  echo "$OUTPUTS_ROOT/hiercos_cifar100_${LOSS_MODE}_resnet50pretrained_${WEIGHT_MODE}${frame_suffix}${image_suffix}"
+  echo "$OUTPUTS_ROOT/hiercos_cifar100_${LOSS_MODE}_${backbone_tag}_${WEIGHT_MODE}${frame_suffix}${image_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Dataset: cifar100\n'
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
-printf 'Backbone: haframe_resnet50 (ImageNet pretrained, average pool)\n'
+if [[ "$PRETRAINED_MODE" == "true" ]]; then
+  printf 'Backbone: haframe_resnet50 (ImageNet pretrained, average pool)\n'
+else
+  printf 'Backbone: haframe_resnet50 (random init / from scratch, average pool)\n'
+fi
+printf 'Pretrained: %s\n' "$PRETRAINED_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
 printf 'Transform mode: full\n'
 printf 'Image size: %s\n' "$IMAGE_SIZE"
@@ -219,7 +254,7 @@ run_seeded_train "$CONFIG" "$(run_output_dir)" \
   "model.loss=$LOSS_MODE" \
   "model.weight_mode=$WEIGHT_MODE" \
   "model.variant=haframe_resnet50" \
-  "model.pretrained=true" \
+  "model.pretrained=$PRETRAINED_MODE" \
   "model.pool=average" \
   "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
   "model.transform_mode=full" \

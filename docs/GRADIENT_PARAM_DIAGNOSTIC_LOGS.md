@@ -18,7 +18,9 @@ This file documents the `train_metrics` keys written to `run_log.jsonl` by the *
 
 Important: mask-dependent keys are emitted only when the corresponding mask is active (`any(mask)` in code).
 Pairwise cosine keys listed below are emitted for every epoch summary.
-The native model requirements are:
+Per-model adaptation details, config constraints, and silent quirks are in
+[`LEX_MODEL_ADAPTATION.md`](LEX_MODEL_ADAPTATION.md). Summarized, the native
+model requirements are:
 
 - H-CAST exposes its three raw per-level objectives and requires
   `model.loss.globalkl: false` in lex mode.

@@ -34,7 +34,6 @@ PLUGIN_FIXED_FRAME_MODE="${PLUGIN_FIXED_FRAME_MODE:-identity}"
 PLUGIN_FIXED_FRAME_PER_LEVEL="${PLUGIN_FIXED_FRAME_PER_LEVEL:-0}"
 PLUGIN_TRANSFORM_LR_SCALE="${PLUGIN_TRANSFORM_LR_SCALE:-1.0}"
 
-LEX_START_EPOCH="${LEX_START_EPOCH:-0}"
 LEX_PROJECTION_RULE="${LEX_PROJECTION_RULE:-orthogonalize_all}"
 
 case "$LOSS_MODE" in
@@ -43,6 +42,14 @@ case "$LOSS_MODE" in
     echo "Unsupported LOSS_MODE for this runner: $LOSS_MODE" >&2
     echo "Expected kl_reg, global_softmax_ce_reg, or level_softmax_ce_reg." >&2
     exit 1
+    ;;
+esac
+case "$LEX_PROJECTION_RULE" in
+  orthogonalize_all|conflict_only) ;;
+  *)
+    echo "Unsupported LEX_PROJECTION_RULE: $LEX_PROJECTION_RULE" >&2
+    echo "Expected orthogonalize_all or conflict_only." >&2
+    exit 2
     ;;
 esac
 
@@ -234,7 +241,7 @@ lex_output_dir() {
   elif [[ "$PLUGIN_FIXED_FRAME_MODE" == "orthonormal_random" && "$per_level" =~ ^(1|true|True)$ ]]; then
     frame_suffix="_orthonormal_random_per_level"
   fi
-  echo "$OUTPUTS_ROOT/hcast_${ds}_orthonormal_plugin_${LOSS_MODE}_lex_${projection_mode}_${PLUGIN_TRANSFORM_MODE}${frame_suffix}"
+  echo "$OUTPUTS_ROOT/hcast_${ds}_orthonormal_plugin_${LOSS_MODE}_lex_${LEX_PROJECTION_RULE}_${projection_mode}_${PLUGIN_TRANSFORM_MODE}${frame_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -250,7 +257,6 @@ fi
 printf 'Plugin transform mode: %s\n' "$PLUGIN_TRANSFORM_MODE"
 printf 'Plugin fixed frame: %s\n' "$PLUGIN_FIXED_FRAME_MODE"
 printf 'Plugin fixed frame per level: %s\n' "$PLUGIN_FIXED_FRAME_PER_LEVEL"
-printf 'Lex start epoch: %s\n' "$LEX_START_EPOCH"
 printf 'Lex projection rule: %s\n' "$LEX_PROJECTION_RULE"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
@@ -267,7 +273,6 @@ for ds in "${DATASETS[@]}"; do
       "${plugin_overrides[@]}" \
       "orthonormal_plugin.alpha=$plugin_alpha" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.start_epoch=$LEX_START_EPOCH" \
       "train.lexicographic.projection_mode=$projection_mode" \
       "train.lexicographic.projection_rule=$LEX_PROJECTION_RULE"
   done

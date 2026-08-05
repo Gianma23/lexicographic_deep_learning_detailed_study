@@ -1,5 +1,6 @@
 """Dataset registry and deterministic DataLoader construction."""
 
+import functools
 import os
 import random
 import warnings
@@ -12,7 +13,7 @@ from torch.utils.data import DataLoader
 from .aircraft import AircraftDataset
 from .cifar100 import CIFAR100Dataset
 from .cub import CUBDataset
-from .transforms import build_transforms
+from .transforms import build_batch_normalizer, build_transforms
 from .types import DatasetLabelSpace, DatasetMetadata
 
 
@@ -23,8 +24,12 @@ _DATASET_REGISTRY = {
 }
 
 
-def _collate_fn(batch):
+def _collate_fn(batch, batch_normalizer=None):
     images = torch.stack([item[0] for item in batch], dim=0)
+    if batch_normalizer is not None:
+        # Upstream HT-CapsNet reduces the standardization statistic over the
+        # batched tensor, not the individual image.
+        images = batch_normalizer(images)
     labels = torch.stack([item[1] for item in batch], dim=0)
     metadata = [item[2] for item in batch]
     return images, labels, metadata
@@ -74,7 +79,10 @@ def _build_loader(cfg: Any, split: str, label_space: Optional[DatasetLabelSpace]
         shuffle=split == "train",
         num_workers=workers,
         pin_memory=bool(cfg.dataloader.get("pin_memory", True)),
-        collate_fn=_collate_fn,
+        collate_fn=functools.partial(
+            _collate_fn,
+            batch_normalizer=build_batch_normalizer(cfg),
+        ),
         drop_last=bool(
             cfg.dataloader.get(
                 "drop_last_train" if split == "train" else "drop_last_eval",

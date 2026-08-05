@@ -84,6 +84,50 @@ def _normalization_ops(mode: str, mean, std, eps: float):
     )
 
 
+# Scopes over which a whole-tensor normalization statistic is reduced.
+# `image` keeps the statistic per sample. `batch` reduces over the assembled
+# batch instead, matching the upstream HT-CapsNet pipeline, which maps
+# `Normalize_StandardScaler` over an already-batched `tf.data` dataset.
+_BATCH_SCOPED_MODES = {"standardscaler", "minmax"}
+
+
+def normalization_scope(transform_cfg: Any) -> str:
+    scope = transform_cfg.get("normalization_scope", "image")
+    if not isinstance(scope, str):
+        raise ValueError("dataset.transforms.normalization_scope must be a string.")
+    if scope not in {"image", "batch"}:
+        raise ValueError(
+            f"Unsupported dataset.transforms.normalization_scope='{scope}'. "
+            "Expected image or batch."
+        )
+    mode = transform_cfg["normalization"]
+    if scope == "batch" and mode not in _BATCH_SCOPED_MODES:
+        raise ValueError(
+            "dataset.transforms.normalization_scope='batch' requires "
+            f"normalization to be one of {sorted(_BATCH_SCOPED_MODES)}, got '{mode}'."
+        )
+    return scope
+
+
+def build_batch_normalizer(cfg: Any):
+    """Return the batch-scoped normalization op, or None when scope is per-image."""
+    transform_cfg = cfg.dataset["transforms"]
+    if normalization_scope(transform_cfg) != "batch":
+        return None
+    operations = _normalization_ops(
+        transform_cfg["normalization"],
+        list(cfg.dataset.get("mean", [0.485, 0.456, 0.406])),
+        list(cfg.dataset.get("std", [0.229, 0.224, 0.225])),
+        float(transform_cfg.get("normalization_eps", 1e-6)),
+    )
+    if len(operations) != 1:
+        raise ValueError(
+            "dataset.transforms.normalization_scope='batch' expects exactly one "
+            "normalization operation."
+        )
+    return operations[0]
+
+
 def _replace_timm_normalization(transform, replacement_ops):
     if hasattr(transform, "transforms"):
         transform.transforms = [
@@ -99,18 +143,39 @@ def _replace_timm_normalization(transform, replacement_ops):
     )
 
 
-def _build_fixed_resize(image_size: int, cfg: Any, normalization_ops):
-    interpolation = cfg.get("fixed_resize_interpolation", "bilinear")
-    return transforms.Compose(
-        [
-            transforms.Resize(
-                (image_size, image_size),
-                interpolation=_interpolation(interpolation),
-            ),
-            transforms.ToTensor(),
-            *normalization_ops,
-        ]
-    )
+def _build_fixed_resize(image_size: int, cfg: Any, crop_bottom, normalization_ops):
+    interpolation = _interpolation(cfg.get("fixed_resize_interpolation", "bilinear"))
+    antialias = cfg.get("fixed_resize_antialias", True)
+    if not isinstance(antialias, bool):
+        raise ValueError("dataset.transforms.fixed_resize_antialias must be a boolean.")
+
+    operations = [crop_bottom] if crop_bottom.pixels > 0 else []
+    if antialias:
+        # torchvision resamples the PIL image, whose bilinear filter support
+        # scales with the downsample ratio.
+        operations.extend(
+            [
+                transforms.Resize((image_size, image_size), interpolation=interpolation),
+                transforms.ToTensor(),
+            ]
+        )
+    else:
+        # `tf.image.resize` defaults to `antialias=False` and runs after the float
+        # conversion, so the tensor is converted first and then resampled with a
+        # fixed 2x2 kernel regardless of the downsample ratio. The operation order
+        # differs from the antialiased branch because the two pipelines differ.
+        operations.extend(
+            [
+                transforms.ToTensor(),
+                transforms.Resize(
+                    (image_size, image_size),
+                    interpolation=interpolation,
+                    antialias=False,
+                ),
+            ]
+        )
+    operations.extend(normalization_ops)
+    return transforms.Compose(operations)
 
 
 def _build_timm_train(
@@ -264,16 +329,29 @@ def build_transforms(cfg: Any, split: str):
         std,
         normalization_eps,
     )
+    if normalization_scope(transform_cfg) == "batch":
+        # The statistic is reduced over the assembled batch in the collate
+        # instead, so the per-sample pipeline must not normalize twice.
+        normalization_ops = []
 
-    if bool(transform_cfg.get("fixed_resize_only", False)):
-        return _build_fixed_resize(image_size, transform_cfg, normalization_ops)
-
+    # `crop_bottom_pixels` removes a fixed strip before any resize, so it applies
+    # to the fixed-resize path as well as the manual/timm ones.
     manual_cfg = transform_cfg.get("manual", {})
     crop_bottom_pixels = int(manual_cfg.get("crop_bottom_pixels", 0))
     if crop_bottom_pixels < 0:
         raise ValueError(
             "dataset.transforms.manual.crop_bottom_pixels must be >= 0."
         )
+    crop_bottom = _CropBottomPixels(crop_bottom_pixels)
+
+    if bool(transform_cfg.get("fixed_resize_only", False)):
+        return _build_fixed_resize(
+            image_size,
+            transform_cfg,
+            crop_bottom,
+            normalization_ops,
+        )
+
     flip_probability = float(manual_cfg.get("random_horizontal_flip_prob", 0.5))
     if not 0.0 <= flip_probability <= 1.0:
         raise ValueError(
@@ -286,7 +364,6 @@ def build_transforms(cfg: Any, split: str):
         raise ValueError(
             "dataset.transforms.eval.resize_size must be > 0 when provided."
         )
-    crop_bottom = _CropBottomPixels(crop_bottom_pixels)
     if split == "train":
         if bool(transform_cfg["use_timm"]):
             return _build_timm_train(

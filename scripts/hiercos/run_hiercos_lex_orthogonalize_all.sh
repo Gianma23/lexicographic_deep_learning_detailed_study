@@ -7,7 +7,6 @@ set -euo pipefail
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.transform_mode=full
 # - train.lexicographic.enabled=true
-# - train.lexicographic.start_epoch=0
 # - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
 # - train.lexicographic.projection_rule=orthogonalize_all
 # Defaults: aircraft/cub200/cifar100 with coarse_first. Environment matrices
@@ -187,7 +186,6 @@ for ds in "${DATASETS[@]}"; do
       "model.transform_mode=full" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.start_epoch=0" \
       "train.lexicographic.projection_mode=$lex_mode" \
       "train.lexicographic.projection_rule=orthogonalize_all"
   done

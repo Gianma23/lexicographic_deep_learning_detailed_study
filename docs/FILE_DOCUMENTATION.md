@@ -19,8 +19,8 @@ There is no tracked `TODO.md`.
 
 Runnable experiments:
 
-- `configs/hcast/` — three base H-CAST presets, three HCC presets, and three
-  explicit lexicographic presets.
+- `configs/hcast/` — three base H-CAST presets only; the HCC and explicit
+  lexicographic variants are CLI overrides applied by their launchers.
 - `configs/lhdnn/` — CIFAR-100 plus CUB/Aircraft extrapolation presets.
 - `configs/capsnet/` — HT-CapsNet presets for CIFAR-100, CUB, and Aircraft.
 - `configs/hrn/` — HRN presets for CIFAR-100, CUB, and Aircraft.
@@ -202,9 +202,10 @@ Runtime modules:
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
   nesting migration.
 
-Runner matrices are overridable using `DATASETS`, `START_EPOCHS`,
-`LEX_PROJECTION_MODES`, and `TRANSFORM_MODES`, depending on the script. Current
-narrow defaults are printed during `DRY_RUN`.
+Runner matrices are overridable using `DATASETS`, `LEX_PROJECTION_MODE(S)`,
+`LEX_PROJECTION_RULE`, and `TRANSFORM_MODES`, depending on the script. Current
+narrow defaults are printed during `DRY_RUN`. Lexicographic run directories are
+named `<model>_<dataset>[_<loss>]_lex_<rule>_<mode>[...]`.
 
 ## Grid search
 
@@ -225,9 +226,20 @@ narrow defaults are printed during `DRY_RUN`.
 - `notebooks/model_comparison_utils.py`
 - `notebooks/multiseed_utils.py`
 
-`analysis/hiercos_current_runs/hiercos_current_plots.ipynb` is a separate
-working analysis notebook. Notebook files are not rewritten by repository
-audits.
+Current-run trade-off analyses are grouped by model under `analysis/current_runs/`:
+
+- `analysis/current_runs/hiercos/hiercos_current_plots.ipynb` — the full
+  Hier-COS baseline, lexicographic, projection, and ablation analysis.
+- `analysis/current_runs/hcast/hcast_current_plots.ipynb` — compact H-CAST
+  baseline, explicit-lexicographic, and HCC comparison.
+- `analysis/current_runs/hrn/hrn_current_plots.ipynb` — compact HRN baseline,
+  explicit-lexicographic, and HCC comparison.
+- `analysis/current_runs/current_run_plot_utils.py` — shared aggregation,
+  reference-model discovery, off-scale gutter layout, collision-aware labels,
+  HCC-activation verification, FPA–TICE plotting, level-delta plotting, and
+  Pareto-summary helpers for all current-run notebooks.
+
+Notebook files are not rewritten by repository audits.
 
 ## Documentation
 

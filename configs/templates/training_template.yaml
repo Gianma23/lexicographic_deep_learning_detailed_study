@@ -17,9 +17,9 @@ train:
 
   # Optional lexicographic projected-gradient mode.
   # Supported when exactly 3 differentiable level losses are available.
+  # When enabled, projection is active for the whole run (epoch 0 to the end).
   lexicographic:
     enabled: false                  # true enables projected gradient composition
-    start_epoch: 0                  # Internal zero-based epoch where projected gradients start
     projection_mode: coarse_first   # coarse_first | fine_first | pairwise_orthogonal
     projection_rule: orthogonalize_all # orthogonalize_all | conflict_only
     eps: 1.0e-12                    # Numerical epsilon for projection denominators

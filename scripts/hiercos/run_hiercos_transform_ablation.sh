@@ -7,7 +7,6 @@ set -euo pipefail
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
 # - train.lexicographic.enabled=true
-# - train.lexicographic.start_epoch=0
 # - train.lexicographic.projection_mode=coarse_first
 # - train.lexicographic.projection_rule=orthogonalize_all
 # - model.transform_mode selected by TRANSFORM_MODES
@@ -207,7 +206,6 @@ for ds in "${DATASETS[@]}"; do
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.start_epoch=0" \
       "train.lexicographic.projection_mode=coarse_first" \
       "train.lexicographic.projection_rule=orthogonalize_all"
   done

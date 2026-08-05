@@ -153,23 +153,20 @@ fields. They are not standalone runnable experiments.
 
 ### H-CAST
 
-Base:
+`configs/hcast/` holds only the three base presets:
 
 - `configs/hcast/hcast_cifar100.yaml`
 - `configs/hcast/hcast_cub200.yaml`
 - `configs/hcast/hcast_aircraft.yaml`
 
-HCC:
+The HCC and lexicographic variants are not separate configs. Their launchers
+start from these base presets and add the whole variant block as CLI overrides:
 
-- `configs/hcast/hcast_hcc_cifar100.yaml`
-- `configs/hcast/hcast_hcc_cub200.yaml`
-- `configs/hcast/hcast_hcc_aircraft.yaml`
-
-Explicit gradient-space lexicographic training:
-
-- `configs/hcast/hcast_lex_cifar100.yaml`
-- `configs/hcast/hcast_lex_cub200.yaml`
-- `configs/hcast/hcast_lex_aircraft.yaml`
+- HCC: `scripts/hcast/run_hcast_hcc_grid.sh` adds the `hcc.*` block
+  (`enabled`, `temperature`, `eps`, `alpha_schedule`, `alpha_ramp_epochs`,
+  `alpha_tanh_beta`, `alpha_tanh_center`) plus `hcc.alpha_start_epoch` per arm.
+- Lexicographic: `scripts/hcast/run_hcast_lex.sh` adds the
+  `train.lexicographic.*` block and the required `model.loss.globalkl=false`.
 
 HCC is an output-space affine hierarchy constraint. It changes the objective’s
 logits but does not explicitly project parameter gradients. Explicit
@@ -387,6 +384,7 @@ Run logs also contain model-specific loss and diagnostic fields. See:
 
 - [HCC diagnostic keys](docs/HCC_DIAGNOSTIC_LOGS.md)
 - [gradient, parameter, and lexicographic diagnostic keys](docs/GRADIENT_PARAM_DIAGNOSTIC_LOGS.md)
+- [lexicographic mode per-model adaptation, constraints, and quirks](docs/LEX_MODEL_ADAPTATION.md)
 
 ## Experiment launchers
 
@@ -406,9 +404,10 @@ Matrix variables are whitespace-separated and validated:
 
 ```bash
 DATASETS="cifar100 aircraft" \
-START_EPOCHS="0 80" \
+LEX_PROJECTION_RULE=conflict_only \
+LEX_PROJECTION_MODE=fine_first \
 DRY_RUN=1 \
-scripts/hcast/run_hcast_lex_grid.sh
+scripts/hcast/run_hcast_lex.sh
 ```
 
 Hier-COS and plugin launchers similarly accept `LEX_PROJECTION_MODES` and
@@ -435,8 +434,8 @@ scripts/capsnet/run_ht_capsnet_lex.sh
 scripts/hrn/run_hrn_lex.sh
 ```
 
-Both default to start@0, coarse-first, and orthogonalize-all. Override
-`DATASETS`, `LEX_START_EPOCH`, `LEX_PROJECTION_MODE`, or
+Both default to coarse-first and orthogonalize-all. Lexicographic projection is
+always active for the whole run. Override `DATASETS`, `LEX_PROJECTION_MODE`, or
 `LEX_PROJECTION_RULE` to select another validated run without adding a dataset
 config. The HRN launcher also enforces hard targets.
 

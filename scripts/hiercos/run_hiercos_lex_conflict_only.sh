@@ -7,7 +7,6 @@ set -euo pipefail
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.transform_mode=full
 # - train.lexicographic.enabled=true
-# - train.lexicographic.start_epoch=0
 # - train.lexicographic.projection_mode in {coarse_first, fine_first}
 # - train.lexicographic.projection_rule=conflict_only
 # for: cifar100, cub200, aircraft.
@@ -188,7 +187,6 @@ for ds in "${DATASETS[@]}"; do
       "model.transform_mode=full" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.start_epoch=0" \
       "train.lexicographic.projection_mode=$projection_mode" \
       "train.lexicographic.projection_rule=conflict_only"
   done

@@ -5,8 +5,12 @@ from unittest.mock import patch
 
 import numpy as np
 import torch
+from PIL import Image
+from torchvision import transforms as torchvision_transforms
 
-from models.ht_capsnet.losses import _margin_loss, compute_loss
+from datasets.loaders import _collate_fn
+from datasets.transforms import build_batch_normalizer, build_transforms
+from models.ht_capsnet.losses import _initial_level_weights, _margin_loss, compute_loss
 from models.ht_capsnet.model import (
     HTCapsNet,
     KerasMultiHeadAttention,
@@ -235,6 +239,174 @@ class HTCapsNetStateTests(unittest.TestCase):
             return_aux=False,
         )
         torch.testing.assert_close(restored.level_loss_weights, before_eval)
+
+    def test_dynamic_weights_read_epoch_running_accuracy_not_batch_accuracy(self):
+        # Upstream reads `acc_i` from the Keras `logs` dict inside
+        # `on_train_batch_end`, which carries the metric accumulated since the
+        # start of the epoch. Two batches with different accuracies must produce
+        # the weights implied by their pooled accuracy, not by the second batch.
+        model = self._model()
+        cfg = _loss_cfg()
+        targets = torch.zeros((2, 3), dtype=torch.long)
+        all_correct = [
+            torch.tensor([[2.0, 0.0], [2.0, 0.0]]),
+            torch.tensor([[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
+            torch.tensor([[2.0, 0.0, 0.0, 0.0], [2.0, 0.0, 0.0, 0.0]]),
+        ]
+        all_wrong = [torch.roll(level, shifts=1, dims=-1) for level in all_correct]
+
+        def step(logits):
+            output = {
+                "logits_per_level": logits,
+                "level_loss_weights": model.level_loss_weights.detach().clone(),
+                "lw_running_correct": model.lw_running_correct.detach().clone(),
+                "lw_running_count": model.lw_running_count.detach().clone(),
+            }
+            _, _, aux = compute_loss(output, targets, cfg, return_aux=True)
+            model.post_optimizer_step(aux)
+
+        model.set_epoch(0)
+        step(all_correct)
+        torch.testing.assert_close(model.lw_running_correct, torch.tensor([2.0, 2.0, 2.0]))
+        torch.testing.assert_close(model.lw_running_count, torch.tensor(2.0))
+
+        step(all_wrong)
+        # Pooled accuracy is 2/4 = 0.5 at every level, not the 0.0 of batch two.
+        torch.testing.assert_close(model.lw_running_correct, torch.tensor([2.0, 2.0, 2.0]))
+        torch.testing.assert_close(model.lw_running_count, torch.tensor(4.0))
+        pooled = model.level_loss_weights.detach().clone()
+
+        initial = _initial_level_weights([2, 3, 4])
+        taus = [1.0 - 0.5 * float(initial[level]) for level in range(3)]
+        expected = torch.tensor([tau / sum(taus) for tau in taus])
+        torch.testing.assert_close(pooled, expected)
+
+        # A new epoch clears the accumulator, so the next batch stands alone.
+        model.set_epoch(1)
+        torch.testing.assert_close(model.lw_running_count, torch.tensor(0.0))
+        step(all_wrong)
+        self.assertFalse(torch.equal(model.level_loss_weights, pooled))
+
+    def test_keras_efficientnet_stem_applies_rescaling_and_normalization(self):
+        # Keras `EfficientNetB7` embeds `Rescaling(1/255)` then `Normalization`,
+        # whose ImageNet weights carry mean [0.485, 0.456, 0.406] and variance
+        # [0.229, 0.224, 0.225]; the layer divides by sqrt(variance).
+        model = self._model()
+        model._keras_efficientnet_rescale = True
+        images = torch.randn(2, 3, 32, 32)
+
+        actual = model._prepare_backbone_input(images)
+
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        variance = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        expected = ((images / 255.0) - mean) / torch.sqrt(variance)
+        torch.testing.assert_close(actual, expected)
+
+    def test_custom_backbone_leaves_inputs_unrescaled(self):
+        model = self._model()
+        images = torch.randn(2, 3, 32, 32)
+        torch.testing.assert_close(model._prepare_backbone_input(images), images)
+
+
+class BatchScopedNormalizationTests(unittest.TestCase):
+    """Upstream maps `Normalize_StandardScaler` over the batched `tf.data` pipeline."""
+
+    @staticmethod
+    def _cfg(scope):
+        return SimpleNamespace(
+            dataset={
+                "image_size": 8,
+                "transforms": {
+                    "fixed_resize_only": True,
+                    "fixed_resize_interpolation": "bilinear",
+                    "use_timm": False,
+                    "normalization": "standardscaler",
+                    "normalization_scope": scope,
+                },
+            }
+        )
+
+    def test_batch_scope_moves_the_statistic_out_of_the_per_sample_transform(self):
+        image_pipeline = build_transforms(self._cfg("image"), "train")
+        batch_pipeline = build_transforms(self._cfg("batch"), "train")
+        self.assertEqual(len(image_pipeline.transforms), len(batch_pipeline.transforms) + 1)
+        self.assertIsNone(build_batch_normalizer(self._cfg("image")))
+        self.assertIsNotNone(build_batch_normalizer(self._cfg("batch")))
+
+    def test_collate_reduces_over_the_batch_and_matches_the_source_reduction(self):
+        torch.manual_seed(3)
+        # Distinct per-image brightness and contrast, which per-image scoping erases.
+        images = [torch.randn(3, 4, 4) * (i + 1) + i for i in range(5)]
+        batch = [(image, torch.zeros(3, dtype=torch.long), {}) for image in images]
+
+        stacked = torch.stack(images, dim=0)
+        expected = (stacked - stacked.mean()) / stacked.std(unbiased=False)
+
+        collated, _, _ = _collate_fn(
+            batch,
+            batch_normalizer=build_batch_normalizer(self._cfg("batch")),
+        )
+        torch.testing.assert_close(collated, expected)
+        self.assertAlmostEqual(float(collated.mean()), 0.0, places=5)
+        self.assertAlmostEqual(float(collated.std(unbiased=False)), 1.0, places=5)
+        # Per-image brightness/contrast survives, unlike under per-image scoping.
+        per_image_mean = collated.mean(dim=(1, 2, 3))
+        self.assertGreater(float(per_image_mean.max() - per_image_mean.min()), 0.5)
+
+    def test_image_scope_leaves_the_collate_untouched(self):
+        torch.manual_seed(3)
+        images = [torch.randn(3, 4, 4) * (i + 1) + i for i in range(5)]
+        batch = [(image, torch.zeros(3, dtype=torch.long), {}) for image in images]
+        collated, _, _ = _collate_fn(batch)
+        torch.testing.assert_close(collated, torch.stack(images, dim=0))
+
+
+class FixedResizeTests(unittest.TestCase):
+    @staticmethod
+    def _cfg(antialias=None, crop_bottom=None):
+        transforms_cfg = {
+            "fixed_resize_only": True,
+            "fixed_resize_interpolation": "bilinear",
+            "use_timm": False,
+            "normalization": "none",
+        }
+        if antialias is not None:
+            transforms_cfg["fixed_resize_antialias"] = antialias
+        if crop_bottom is not None:
+            transforms_cfg["manual"] = {"crop_bottom_pixels": crop_bottom}
+        return SimpleNamespace(dataset={"image_size": 16, "transforms": transforms_cfg})
+
+    def test_antialias_false_converts_before_resampling(self):
+        pipeline = build_transforms(self._cfg(antialias=False), "train").transforms
+        self.assertIsInstance(pipeline[0], torchvision_transforms.ToTensor)
+        self.assertIsInstance(pipeline[1], torchvision_transforms.Resize)
+        self.assertFalse(pipeline[1].antialias)
+
+    def test_antialias_default_keeps_the_pil_resample_order(self):
+        pipeline = build_transforms(self._cfg(), "train").transforms
+        self.assertIsInstance(pipeline[0], torchvision_transforms.Resize)
+        self.assertIsInstance(pipeline[1], torchvision_transforms.ToTensor)
+
+    def test_bottom_crop_runs_before_the_resize_on_both_branches(self):
+        image = Image.new("RGB", (40, 60))
+        for antialias in (True, False):
+            pipeline = build_transforms(self._cfg(antialias, crop_bottom=20), "train")
+            self.assertEqual(pipeline.transforms[0].pixels, 20)
+            self.assertEqual(pipeline.transforms[0](image).size, (40, 40))
+            self.assertEqual(tuple(pipeline(image).shape), (3, 16, 16))
+
+    def test_bottom_crop_is_absent_when_unset(self):
+        pipeline = build_transforms(self._cfg(antialias=False), "train").transforms
+        self.assertFalse(any(hasattr(op, "pixels") for op in pipeline))
+
+    def test_antialias_choice_changes_the_downsampled_image(self):
+        torch.manual_seed(11)
+        image = Image.fromarray(
+            (torch.rand(96, 96, 3).numpy() * 255).astype(np.uint8), mode="RGB"
+        )
+        aliased = build_transforms(self._cfg(antialias=False), "train")(image)
+        filtered = build_transforms(self._cfg(antialias=True), "train")(image)
+        self.assertGreater(float((aliased - filtered).abs().mean()), 1e-3)
 
 
 class MixupAndSchedulerTests(unittest.TestCase):

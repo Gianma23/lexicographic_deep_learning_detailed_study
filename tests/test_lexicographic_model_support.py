@@ -12,7 +12,6 @@ from train.lexicographic.config import validate_lexicographic_requirements
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEX_CFG = {
     "enabled": True,
-    "start_epoch": 0,
     "projection_mode": "coarse_first",
     "projection_rule": "orthogonalize_all",
     "eps": 1.0e-12,
@@ -31,7 +30,8 @@ class LexicographicModelSupportTests(unittest.TestCase):
         return cfg
 
     def test_native_supported_models_pass_static_validation(self):
-        hcast = self._with_lex("configs/hcast/hcast_lex_cifar100.yaml")
+        hcast = self._with_lex("configs/hcast/hcast_cifar100.yaml")
+        hcast["model"]["loss"]["globalkl"] = False
         validate_config(hcast)
 
         hiercos = self._with_lex("configs/hiercos/hiercos_cifar100.yaml")

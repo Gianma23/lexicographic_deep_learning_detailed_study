@@ -10,14 +10,6 @@ _LEX_PROJECTION_MODES = ("coarse_first", "fine_first", "pairwise_orthogonal")
 _LEX_PROJECTION_RULES = ("orthogonalize_all", "conflict_only")
 
 
-def _parse_nonnegative_int(value: Any, default: int = 0) -> int:
-    try:
-        parsed = int(value)
-    except (OverflowError, TypeError, ValueError):
-        parsed = int(default)
-    return max(parsed, 0)
-
-
 def _parse_positive_float(value: Any, default: float) -> float:
     try:
         parsed = float(value)
@@ -109,7 +101,6 @@ def resolve_lexicographic_config(cfg: Any) -> LexicographicConfig:
     enabled = bool(raw_lex_cfg.get("enabled", False))
     eps = _parse_positive_float(raw_lex_cfg.get("eps", 1e-12), default=1e-12)
     log_metrics = bool(raw_lex_cfg.get("log_metrics", True))
-    start_epoch = _parse_nonnegative_int(raw_lex_cfg.get("start_epoch", 0))
     projection_mode = _resolve_lex_projection_mode(raw_lex_cfg.get("projection_mode", "coarse_first"))
     projection_rule = _resolve_lex_projection_rule(raw_lex_cfg.get("projection_rule", "orthogonalize_all"))
 
@@ -117,7 +108,6 @@ def resolve_lexicographic_config(cfg: Any) -> LexicographicConfig:
         enabled=enabled,
         eps=eps,
         log_metrics=log_metrics,
-        start_epoch=start_epoch,
         projection_mode=projection_mode,
         projection_rule=projection_rule,
     )

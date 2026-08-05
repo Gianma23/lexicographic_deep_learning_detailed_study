@@ -5,6 +5,9 @@ set -euo pipefail
 # - hcast_hcc_<dataset>_step_0epoch
 # - hcast_hcc_<dataset>_step_80epoch
 # for: cifar100, cub200, aircraft.
+#
+# Starts from the plain H-CAST baseline config for each dataset and adds the
+# whole HCC block as CLI overrides, so `configs/hcast/` keeps only base presets.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -49,15 +52,35 @@ OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environmen
 parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
   cifar100 cub200 aircraft
 
-hcc_config_for_dataset() {
+config_for_dataset() {
   case "$1" in
-    cifar100) echo "configs/hcast/hcast_hcc_cifar100.yaml" ;;
-    cub200) echo "configs/hcast/hcast_hcc_cub200.yaml" ;;
-    aircraft) echo "configs/hcast/hcast_hcc_aircraft.yaml" ;;
+    cifar100) echo "configs/hcast/hcast_cifar100.yaml" ;;
+    cub200) echo "configs/hcast/hcast_cub200.yaml" ;;
+    aircraft) echo "configs/hcast/hcast_aircraft.yaml" ;;
     *)
       echo "Unknown dataset: $1" >&2
       exit 1
       ;;
+  esac
+}
+
+# HCC block applied on top of the baseline config; identical for every dataset.
+hcc_overrides=(
+  "hcc.enabled=true"
+  "hcc.temperature=10"
+  "hcc.eps=1e-12"
+  "hcc.alpha_schedule=step"
+  "hcc.alpha_ramp_epochs=0"
+  "hcc.alpha_tanh_beta=3.0"
+  "hcc.alpha_tanh_center=0.5"
+  "train.lexicographic.enabled=false"
+)
+
+# Aircraft HCC runs are the no-global-KL arm; their run dirs carry the _nokl tag.
+globalkl_for_dataset() {
+  case "$1" in
+    aircraft) echo "false" ;;
+    *) echo "true" ;;
   esac
 }
 
@@ -139,17 +162,15 @@ printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
 print_seed_run_settings
 
 for ds in "${DATASETS[@]}"; do
-  hcc_cfg="$(hcc_config_for_dataset "$ds")"
+  cfg="$(config_for_dataset "$ds")"
+  globalkl="$(globalkl_for_dataset "$ds")"
 
-  run_seeded_train "$hcc_cfg" "$(run_output_dir "$ds" e0)" \
-    "hcc.enabled=true" \
-    "hcc.alpha_start_epoch=0" \
-    "train.lexicographic.enabled=false"
-
-  run_seeded_train "$hcc_cfg" "$(run_output_dir "$ds" e80)" \
-    "hcc.enabled=true" \
-    "hcc.alpha_start_epoch=80" \
-    "train.lexicographic.enabled=false"
+  for alpha_start_epoch in 0 80; do
+    run_seeded_train "$cfg" "$(run_output_dir "$ds" "e${alpha_start_epoch}")" \
+      "${hcc_overrides[@]}" \
+      "model.loss.globalkl=$globalkl" \
+      "hcc.alpha_start_epoch=$alpha_start_epoch"
+  done
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

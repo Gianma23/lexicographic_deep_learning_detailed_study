@@ -22,6 +22,14 @@ dataset:
     use_timm: true                   # true: timm train pipeline, false: manual train pipeline
     normalization: torchvision       # torchvision | standardscaler | minmax | none
     normalization_eps: 1.0e-6        # Epsilon for standardscaler/minmax numerical stability
+    normalization_scope: image       # image | batch. Scope the standardscaler/minmax statistic is
+                                     # reduced over. `batch` reduces over the assembled batch in the
+                                     # collate (HT-CapsNet upstream behavior); requires
+                                     # standardscaler or minmax.
+    fixed_resize_antialias: true     # Only when fixed_resize_only=true. true: resample the PIL image
+                                     # (filter support scales with the ratio). false: convert to a
+                                     # float tensor first and resample with a fixed 2x2 kernel,
+                                     # matching `tf.image.resize`'s antialias=False default.
 
     timm:                            # Active only when use_timm=true (train split)
       color_jitter: 0.3              # timm color jitter strength
@@ -35,7 +43,8 @@ dataset:
 
     manual:                          # Active only when use_timm=false (train split)
       crop_mode: auto                # auto | random_crop | random_resized_crop | none
-      crop_bottom_pixels: 0          # Optional: crop fixed pixels from image bottom before train/eval resize/crop
+      crop_bottom_pixels: 0          # Optional: crop fixed pixels from image bottom before any resize/crop.
+                                     # Applies to the fixed_resize_only path as well as this one.
       resize_before_crop: false      # If true, apply a fixed Resize() before crop op
       resize_before_crop_size: 224   # Square side used by pre-crop Resize()
       resize_before_crop_interpolation: bicubic # Interpolation used by pre-crop Resize()

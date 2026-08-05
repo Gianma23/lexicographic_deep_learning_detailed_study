@@ -108,8 +108,10 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "use_timm",
         "normalization",
         "normalization_eps",
+        "normalization_scope",
         "fixed_resize_only",
         "fixed_resize_interpolation",
+        "fixed_resize_antialias",
         "timm",
         "manual",
         "eval",
@@ -173,7 +175,6 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
     },
     "train.lexicographic": {
         "enabled",
-        "start_epoch",
         "projection_mode",
         "projection_rule",
         "eps",
@@ -436,6 +437,11 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
         "fixed_resize_only",
         "dataset.transforms.fixed_resize_only",
     )
+    _validate_optional_bool(
+        transforms,
+        "fixed_resize_antialias",
+        "dataset.transforms.fixed_resize_antialias",
+    )
     manual_transforms = transforms.get("manual", {})
     if not isinstance(manual_transforms, Mapping):
         raise ValueError("`dataset.transforms.manual` must be a mapping.")
@@ -460,6 +466,18 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
         "dataset.transforms.normalization",
         {"torchvision", "standardscaler", "minmax", "none"},
     )
+    _require_enum(
+        transforms.get("normalization_scope", "image"),
+        "dataset.transforms.normalization_scope",
+        {"image", "batch"},
+    )
+    if transforms.get("normalization_scope", "image") == "batch" and transforms.get(
+        "normalization"
+    ) not in {"standardscaler", "minmax"}:
+        raise ValueError(
+            "`dataset.transforms.normalization_scope: batch` requires "
+            "`dataset.transforms.normalization` to be standardscaler or minmax."
+        )
     for key in ("mixup", "cutmix"):
         if _finite_float(transforms.get(key, 0.0), f"dataset.transforms.{key}") < 0.0:
             raise ValueError(f"`dataset.transforms.{key}` must be >= 0.")
@@ -891,11 +909,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             lex,
             "log_metrics",
             "train.lexicographic.log_metrics",
-        )
-        _positive_int(
-            lex.get("start_epoch", 0),
-            "train.lexicographic.start_epoch",
-            minimum=0,
         )
     if lex_enabled:
         if model_name == "lhdnn":

@@ -31,9 +31,9 @@ class HccModelSupportTests(unittest.TestCase):
         cfg["hcc"] = copy.deepcopy(HCC_CFG)
         return cfg
 
-    def test_hcc_on_hcast_passes_static_validation(self):
-        # H-CAST already ships a dedicated hcc preset config.
-        validate_config(self._load("configs/hcast/hcast_hcc_cifar100.yaml"))
+    def test_hcc_on_hcast_passes_static_validation_from_baseline(self):
+        hcast = self._with_hcc("configs/hcast/hcast_cifar100.yaml")
+        validate_config(hcast)
 
     def test_hcc_on_ht_capsnet_passes_static_validation_from_baseline(self):
         capsnet = self._with_hcc("configs/capsnet/capsnet_cifar100.yaml")

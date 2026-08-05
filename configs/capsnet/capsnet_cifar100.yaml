@@ -43,7 +43,11 @@ dataset:
   val_split_ratio: 0.1
   split_seed: 0
   transforms:
-    # Keep HT-CapsNet parity preprocessing (fixed resize + per-image z-score normalization).
+    # Keep HT-CapsNet parity preprocessing (fixed resize + z-score normalization).
+    # Known gap: CIFAR reaches the upstream `image_type='array'` branch, which
+    # standardizes the whole split array once (a per-split scalar). Neither `image`
+    # nor `batch` scope reproduces that; `image` is retained here pending a
+    # split-scoped implementation.
     fixed_resize_only: true
     fixed_resize_interpolation: bilinear
     use_timm: false

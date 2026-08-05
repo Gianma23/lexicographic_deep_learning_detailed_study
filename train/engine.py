@@ -66,7 +66,7 @@ def train_one_epoch(
     start_param_snapshot = capture_trainable_param_snapshot(trainable_params)
     resolved_trunk_masks: Optional[Dict[str, List[bool]]] = None
     lex_cfg = resolve_lexicographic_config(cfg)
-    lex_projection_active = lex_cfg.projection_active(epoch)
+    lex_projection_active = lex_cfg.enabled
     lex_validated = False
 
     use_amp = bool(cfg.train.get("amp", False)) and device.type == "cuda"

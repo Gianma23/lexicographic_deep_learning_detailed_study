@@ -18,14 +18,9 @@ DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
-LEX_START_EPOCH="${LEX_START_EPOCH:-0}"
 LEX_PROJECTION_MODE="${LEX_PROJECTION_MODE:-coarse_first}"
 LEX_PROJECTION_RULE="${LEX_PROJECTION_RULE:-orthogonalize_all}"
 
-if [[ ! "$LEX_START_EPOCH" =~ ^[0-9]+$ ]]; then
-  echo "LEX_START_EPOCH must be a non-negative integer, got: $LEX_START_EPOCH" >&2
-  exit 2
-fi
 case "$LEX_PROJECTION_MODE" in
   coarse_first|fine_first|pairwise_orthogonal) ;;
   *)
@@ -132,12 +127,11 @@ run_train() {
 
 run_output_dir() {
   local dataset="$1"
-  echo "$OUTPUTS_ROOT/ht_capsnet_${dataset}_lex_${LEX_PROJECTION_RULE}_${LEX_PROJECTION_MODE}_start${LEX_START_EPOCH}"
+  echo "$OUTPUTS_ROOT/ht_capsnet_${dataset}_lex_${LEX_PROJECTION_RULE}_${LEX_PROJECTION_MODE}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
-printf 'Lex start epoch: %s\n' "$LEX_START_EPOCH"
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
 printf 'Lex projection rule: %s\n' "$LEX_PROJECTION_RULE"
 printf 'HT-CapsNet level weights: unit (weight_mode=none)\n'
@@ -152,7 +146,6 @@ for dataset in "${DATASETS[@]}"; do
     "orthonormal_plugin.enabled=false" \
     "model.loss.weight_mode=none" \
     "train.lexicographic.enabled=true" \
-    "train.lexicographic.start_epoch=$LEX_START_EPOCH" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
     "train.lexicographic.projection_rule=$LEX_PROJECTION_RULE" \
     "train.lexicographic.eps=1.0e-12" \

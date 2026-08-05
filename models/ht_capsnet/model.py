@@ -270,6 +270,20 @@ class HTCapsNet(nn.Module):
         self.primary_dim = int(primary_dim)
         self.attn_postprocess = _normalize_attn_postprocess(attn_postprocess)
         self._keras_efficientnet_rescale = _normalize_backbone_name(backbone_name) == "efficientnet_b7"
+        # Adapted state carried by the Keras `efficientnetb7_notop.h5` ImageNet
+        # weights for the stem `Normalization` layer, which applies
+        # `(x - mean) / sqrt(variance)`. Keras stores the ImageNet standard
+        # deviations in the variance slot, so the divisor is their square root.
+        self.register_buffer(
+            "_keras_efficientnet_mean",
+            torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_keras_efficientnet_variance",
+            torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
+            persistent=False,
+        )
 
         if self.depth < 2:
             raise ValueError("HT-CapsNet expects at least 2 hierarchy levels.")
@@ -345,6 +359,21 @@ class HTCapsNet(nn.Module):
             "level_loss_weights",
             _initial_level_weights(self.num_classes_per_level),
         )
+        # Epoch-to-date accuracy state backing the dynamic loss-weight update.
+        # Keras resets stateful metrics at every epoch boundary, so the upstream
+        # callback reads the accuracy accumulated over the epoch so far, not the
+        # accuracy of the current batch. Not persisted: training always resumes
+        # on an epoch boundary, where the state is zero by construction.
+        self.register_buffer(
+            "lw_running_correct",
+            torch.zeros(self.depth, dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "lw_running_count",
+            torch.zeros((), dtype=torch.float32),
+            persistent=False,
+        )
 
         self.taxonomy_temperature = float(taxonomy_temperature)
         self.mask_threshold_high = float(mask_threshold_high)
@@ -361,6 +390,13 @@ class HTCapsNet(nn.Module):
 
     def set_epoch(self, epoch: int) -> None:
         self.hcc.set_epoch(epoch)
+        self.reset_dynamic_weight_accumulators()
+
+    @torch.no_grad()
+    def reset_dynamic_weight_accumulators(self) -> None:
+        """Mirror the Keras epoch-boundary reset of the metrics the LW callback reads."""
+        self.lw_running_correct.zero_()
+        self.lw_running_count.zero_()
 
     def set_hcc_final_test_active(self, active: bool) -> None:
         self.hcc.set_final_test_active(active)
@@ -424,10 +460,14 @@ class HTCapsNet(nn.Module):
 
         if int(x.size(-2)) < 32 or int(x.size(-1)) < 32:
             x = F.interpolate(x, size=(32, 32), mode="bilinear", align_corners=False)
-        # Keras EfficientNet embeds a 1/255 rescaling layer. The official
-        # HT-CapsNet pipeline applies per-image standardization before it.
+        # Keras EfficientNet embeds `Rescaling(1/255)` followed by a
+        # `Normalization` layer in its stem. The official HT-CapsNet pipeline
+        # applies per-image standardization before both.
         if self._keras_efficientnet_rescale:
             x = x / 255.0
+            mean = self._keras_efficientnet_mean.to(device=x.device, dtype=x.dtype)
+            variance = self._keras_efficientnet_variance.to(device=x.device, dtype=x.dtype)
+            x = (x - mean) / torch.sqrt(variance).clamp_min(torch.finfo(x.dtype).eps)
         return x
 
     def _taxonomy_matrix(self, level: int, device: torch.device, dtype: torch.dtype) -> Optional[torch.Tensor]:
@@ -554,6 +594,27 @@ class HTCapsNet(nn.Module):
             )
         self.level_loss_weights.copy_(next_weights)
 
+        next_correct = loss_aux.get("next_lw_running_correct")
+        next_count = loss_aux.get("next_lw_running_count")
+        if (
+            isinstance(next_correct, torch.Tensor)
+            and next_correct.shape == self.lw_running_correct.shape
+            and isinstance(next_count, torch.Tensor)
+            and next_count.numel() == 1
+        ):
+            self.lw_running_correct.copy_(
+                next_correct.to(
+                    device=self.lw_running_correct.device,
+                    dtype=self.lw_running_correct.dtype,
+                )
+            )
+            self.lw_running_count.copy_(
+                next_count.reshape(()).to(
+                    device=self.lw_running_count.device,
+                    dtype=self.lw_running_count.dtype,
+                )
+            )
+
     def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Dict[str, Any]:
         _ = targets
         feat = self.backbone(self._prepare_backbone_input(x))
@@ -594,5 +655,7 @@ class HTCapsNet(nn.Module):
             "secondary_caps": secondary_caps,
             "routing_stats": routing_stats,
             "level_loss_weights": self.level_loss_weights.detach().clone(),
+            "lw_running_correct": self.lw_running_correct.detach().clone(),
+            "lw_running_count": self.lw_running_count.detach().clone(),
             **hcc_output,
         }

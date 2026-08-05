@@ -1,0 +1,339 @@
+% =====================================================================
+% Datasets -- complete section, drop-in replacement.
+%
+% Structure:
+%   \section{Datasets}                      (unchanged)
+%     \subsection{Dataset selection}        (unchanged text, revised table)
+%     \subsection{Dataset descriptions}     (unchanged, minus the moved CUB text)
+%     \subsection{Hierarchy construction}   (new)
+%     \subsection{Dataset analysis}         (new)
+%
+% Changes with respect to the previous draft:
+%
+%  1. The CUB hierarchy discussion (HT-CapsNet 39/123/200 vs H-CAST 13/38/200,
+%     the provenance investigation, and the validation caveat) has been MOVED out
+%     of \subsubsection{CUB-200-2011} into \subsection{Hierarchy construction},
+%     where the same question is answered for all three datasets. The wording is
+%     preserved; only the connecting sentences are new. The CUB description now
+%     keeps its experimental-value paragraph and cross-references the new
+%     subsection.
+%
+%  2. tab:datasets_info still describes the datasets AS DISTRIBUTED, with their
+%     published splits. Two rows changed: the image-size row now reports native
+%     resolution instead of the model input size (the rest of the table describes
+%     the dataset, not the training setup), and rows for total images and
+%     hierarchy source were added. The partition actually used by the protocol is
+%     a separate table, tab:protocol_splits, in the analysis subsection.
+%
+%  3. \subsection{Hierarchy construction} and \subsection{Dataset analysis} are
+%     new. Ordering note: hierarchy construction is placed after the dataset
+%     descriptions so that the CUB material stays adjacent to the CUB
+%     description it came from, and so that the analysis, which operates on the
+%     taxonomies, immediately follows their definition.
+%
+% All quantitative statements in the new subsections are produced by
+% analysis/datasets_analysis.ipynb from the same dataset adapters used at
+% training time. The notebook exports to $DATASET_ANALYSIS_OUTPUT/figures/
+% (default /scratch/g.saggini1/outputs/analysis/datasets/figures/); a copy of the
+% current figures is staged in this repository under docs/images/dataset/. The
+% \includegraphics paths below assume they are copied into images/datasets/ of
+% the thesis tree. To refresh after re-running the notebook:
+%   cp /scratch/g.saggini1/outputs/analysis/datasets/figures/*.pdf \
+%      docs/images/dataset/
+%
+% Figures are authored at the printed text width (6.3 in) and must be included
+% with width=\linewidth and no further scaling, otherwise their font sizes no
+% longer match the body text.
+%
+% Figures not reproduced here are collected in the supplementary-figures
+% appendix (docs/thesis_appendix_figures.tex).
+%
+% Bibliography entries required by the new text (add if not already present):
+%   krizhevsky2009learning -- A. Krizhevsky. Learning Multiple Layers of
+%       Features from Tiny Images. Technical report, University of Toronto, 2009.
+%   wah2011caltech -- C. Wah, S. Branson, P. Welinder, P. Perona, S. Belongie.
+%       The Caltech-UCSD Birds-200-2011 Dataset. Technical Report
+%       CNS-TR-2011-001, California Institute of Technology, 2011.
+%   maji2013fine -- S. Maji, E. Rahtu, J. Kannala, M. Blaschko, A. Vedaldi.
+%       Fine-Grained Visual Classification of Aircraft. arXiv preprint, 2013.
+%   zhu2017bcnn -- X. Zhu, M. Bain. B-CNN: Branch Convolutional Neural Network
+%       for Hierarchical Classification. arXiv preprint, 2017.
+%       (The grouping actually used here is the one published in the reference
+%       implementation, cited by URL in the footnote.)
+%
+% Packages assumed: booktabs, tabularx, graphicx, hyperref, amsmath, enumitem.
+%
+% Image geometry is estimated from a deterministic sample of 2,000 training
+% images per split (MAX_IMAGES_PER_SPLIT in the notebook); increase it for an
+% exhaustive scan before quoting the geometry numbers as exact.
+% =====================================================================
+
+
+\section{Datasets}
+
+In the literature, methods for Hierarchical Image Classification (HIC) are typically evaluated on heterogeneous datasets, differing in scale, hierarchical structure, and overall complexity. This variability makes a direct, like-for-like comparison across approaches difficult.
+
+For example, LH-DNN \cite{fiaschi2024informed} is evaluated mainly on relatively simple datasets such as CIFAR-10, CIFAR-100, and Fashion-MNIST, where the class hierarchy is generally constructed artificially. Capsule-Network-based methods, such as HD-CapsNet \cite{noor2024consistency} and HT-CapsNet \cite{noor2025taxonomy}, employ both synthetic or simplified datasets (e.g., CIFAR and Fashion-MNIST) and fine-grained datasets with natural taxonomies, such as CUB-200-2011 and Stanford Cars. HRN \cite{chen2022label}, one of the earlier CNN-based hierarchical architectures, is evaluated on three widely used fine-grained visual classification (FGVC) benchmarks --- CUB-200-2011, FGVC-Aircraft, and Stanford Cars --- for which the label hierarchy is reconstructed from Wikipedia-derived taxonomies following the procedure of Chang et al. \cite{chang2021flamingo}. More recent Transformer-based approaches, such as H-CAST \cite{park2024visually}, additionally include hierarchical benchmarks derived from ImageNet, namely the BREEDS suite, alongside fine-grained datasets such as CUB-200-2011 and FGVC-Aircraft. Finally, Hier-COS \cite{sani2025hiercos} evaluates hierarchy-aware representation learning on FGVC-Aircraft and CIFAR-100, together with two large-scale, deeply nested taxonomies: iNaturalist-19 and tieredImageNet-H.
+
+Table \ref{tab:datasets_hic} summarizes the datasets used across the works considered in this survey.
+
+\begin{table}[!h]
+\centering
+\caption{Datasets used in the main works on Hierarchical Image Classification.}
+\label{tab:datasets_hic}
+
+\begin{tabularx}{\textwidth}{l l l X}
+\toprule
+\textbf{Dataset} & \textbf{Source} & \textbf{Hierarchy} & \textbf{Used by} \\
+\midrule
+
+Fashion-MNIST & \href{https://github.com/zalandoresearch/fashion-mnist}{Link} & artificial (tree) & LH-DNN, HD-CapsNet, HT-CapsNet \\
+\midrule
+
+CIFAR-10 & \href{https://www.cs.toronto.edu/~kriz/cifar.html}{Link} & artificial (tree) & LH-DNN, HD-CapsNet, HT-CapsNet \\
+\midrule
+
+CIFAR-100 & \href{https://www.cs.toronto.edu/~kriz/cifar.html}{Link} & natural (superclasses) & LH-DNN, HD-CapsNet, HT-CapsNet, Hier-COS \\
+\midrule
+
+Marine Tree & \href{https://github.com/visipedia/marine-tree}{Link} & natural (taxonomy) & HD-CapsNet, HT-CapsNet \\
+\midrule
+
+CUB-200-2011 & \href{https://www.vision.caltech.edu/datasets/cub_200_2011/}{Link} & natural (taxonomy) & HD-CapsNet, HT-CapsNet, H-CAST, HRN \\
+\midrule
+
+Stanford Cars & \href{https://ai.stanford.edu/~jkrause/cars/car_dataset.html}{Link} & natural (taxonomy) & HD-CapsNet, HT-CapsNet, HRN \\
+\midrule
+
+FGVC-Aircraft & \href{https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/}{Link} & natural (taxonomy) & H-CAST, HRN, Hier-COS \\
+\midrule
+
+iNat21-Mini & \href{https://github.com/visipedia/inat_comp/tree/master/2021}{Link} & natural (taxonomy) & H-CAST \\
+\midrule
+
+iNaturalist-19 & \href{https://github.com/visipedia/inat_comp/tree/master/2019}{Link} & natural (taxonomy) & Hier-COS \\
+\midrule
+
+tieredImageNet-H & See \cite{zeng2023learning} & natural (WordNet) & Hier-COS \\
+\midrule
+
+BREEDS benchmarks & \href{https://github.com/microsoft/robustness/tree/master/robustness/tools/breeds_helpers}{Link} & natural (WordNet) & H-CAST \\
+
+\bottomrule
+\end{tabularx}
+
+\end{table}
+
+This heterogeneity of benchmarks makes a direct comparison between the different approaches proposed in the literature difficult. For this reason, this work proposes to evaluate the considered architectures on a common set of datasets, in order to obtain a more consistent comparison across methods.
+
+
+\subsection{Dataset selection}
+\label{sec:dataset_selection}
+
+To evaluate the hierarchical classification models considered in this work, a set of benchmarks widely used in the recent literature was selected. Rather than including every dataset present in the analyzed works, a representative subset was chosen, covering different levels of complexity, dataset size, and hierarchy type.
+
+Specifically, the datasets used are \textit{CIFAR-100}, \textit{CUB-200-2011}, and \textit{FGVC-Aircraft}. This selection allows the models to be evaluated across markedly different scenarios: a small, artificially organized hierarchy (CIFAR-100), and fine-grained natural taxonomies with a limited number of training images (CUB-200-2011, FGVC-Aircraft). Table \ref{tab:datasets_info} summarizes the characteristics of the three datasets.
+
+The BREEDS suite was deliberately excluded from this selection, for two reasons. First, being derived from the full ImageNet training set, it imposes computational requirements well beyond those of the other three benchmarks, which is impractical given the computational budget available for this work. Second, and more fundamentally, BREEDS follows a different evaluation paradigm from CIFAR-100, CUB-200-2011, and FGVC-Aircraft: instead of measuring accuracy on a fixed, fully observed taxonomy, each of its four sub-benchmarks (Entity-13, Entity-30, Living-17, Nonliving-26) tests a model's ability to generalize coarse-level (superclass) knowledge to fine-level subclasses that are disjoint between training and test sets, over a two-level hierarchy rather than the three-level structure of the other datasets. Mixing this generalization-to-unseen-subpopulations protocol with the fixed-hierarchy classification protocol of CIFAR-100, CUB-200-2011, and FGVC-Aircraft would undermine the goal, stated above, of obtaining a coherent and directly comparable evaluation across all considered models.
+
+\begin{table}[ht]
+\centering
+\caption{Characteristics of the datasets used in the hierarchical classification experiments, as distributed by their authors. Splits are the published ones; the partition actually used by the protocol is reported in Table~\ref{tab:protocol_splits}.}
+\label{tab:datasets_info}
+\fontsize{8}{11}\selectfont
+\begin{tabular}{lccc}
+\toprule
+\textbf{Property} & \textbf{CIFAR-100} & \textbf{CUB-200-2011} & \textbf{FGVC-Aircraft} \\
+\midrule
+Levels                 & 3            & 3                     & 3 \\
+Level names            & coarse1/coarse2/fine & order/family/species & manufacturer/family/variant \\
+Classes per level      & 8/20/100     & 13/38/200             & 30/70/100 \\
+Hierarchy source       & 2 official levels    & inherited             & official \\
+                       & + imposed top level  & (H-CAST, HRN)         & (parallel annotations) \\
+\midrule
+Published train images & 50{,}000     & 5{,}994               & 3{,}334 \\
+Published val.\ images & ---          & ---                   & 3{,}333 \\
+Published test images  & 10{,}000     & 5{,}794               & 3{,}333 \\
+Total images           & 60{,}000     & 11{,}788              & 10{,}000 \\
+\midrule
+Native image size      & $32\times32$ & median $500\times375$ & median $1024\times699$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{Dataset descriptions}
+\label{sec:dataset_descriptions}
+
+\subsubsection{CIFAR-100}
+CIFAR-100 remains a relevant benchmark, since it still leaves room for improvement both in fine-level classification and in the overall consistency of the hierarchical path. Although recent works have already achieved competitive results, performance is not yet saturated, particularly considering that distinguishing between fine-grained classes remains non-trivial.
+
+\subsubsection{CUB-200-2011}
+CUB-200-2011 is one of the datasets with the greatest experimental value, as it allows a direct comparison with H-CAST, HT-CapsNet, and, as discussed below, HRN. H-CAST achieves the best overall results on this benchmark, with a Full-Path Accuracy of 83.28 and an improvement of about 3.2 points over HRN in the configuration reported by the authors \cite{park2024visually}. HT-CapsNet also reports substantial gains on CUB, with absolute improvements exceeding 10\% on some hierarchical metrics relative to the strongest baseline \cite{noor2025taxonomy}. This suggests that the dataset is competitive but not saturated: there remains room for improvement, particularly in balancing fine-grained accuracy against hierarchical consistency.
+
+The three works do not agree on the taxonomy: H-CAST and HRN use a 13/38/200 hierarchy while HT-CapsNet uses a 39/123/200 one. The taxonomy adopted here, and the reasons for preferring it over the alternatives found in the literature, are discussed in Section~\ref{sec:hierarchy_construction}.
+
+\subsubsection{FGVC-Aircraft}
+FGVC-Aircraft is particularly interesting because H-CAST clearly improves over hierarchical ViT baselines, yet remains far from the best HRN configuration: H-CAST reports an FPA of 83.72, while HRN reaches 91.39 in the best configuration reported by its authors \cite{park2024visually}. The same authors observe that, on small datasets such as Aircraft, ResNet-based models remain highly competitive \cite{park2024visually}. HT-CapsNet, on the other hand, has not been evaluated on this dataset. Overall, the benchmark is not saturated, but any improvement is likely to require a genuinely competitive method, especially in a fine-grained scenario with a limited number of training images.
+
+
+\subsection{Hierarchy construction}
+\label{sec:hierarchy_construction}
+
+The three selected benchmarks do not share a common notion of hierarchy: each of the label trees used in the experiments has a different origin, and only one of them is published as part of the dataset itself. Since every model in this study is trained against these trees, and since hierarchy-aware metrics such as AHD and TICE are defined \emph{on} them, the provenance of each tree is part of the experimental protocol rather than a detail of data preparation. This subsection therefore states, for each dataset, where every level comes from, which decisions were taken in this work, and what remains uncertain.
+
+Three properties are enforced identically across the three datasets, so that the comparison between models is not confounded by the shape of the label space. First, all hierarchies have exactly three levels, which is the depth required by H-CAST and HRN and the depth at which all considered methods can be run without modification. Second, every class has exactly one parent at every level, so the taxonomy is a tree and not a directed acyclic graph. Third, the label space --- the mapping from raw dataset identifiers to the contiguous class indices seen by the models --- is constructed once from the training split and reused unchanged by validation and test, which prevents split-local relabelling and guarantees that a class index denotes the same concept in every split.
+
+\subsubsection{CIFAR-100: two official levels and one imposed level}
+
+CIFAR-100 \cite{krizhevsky2009learning} publishes two of the three levels. The 100 fine labels are the leaves, and the 20 official superclasses --- which the dataset distributes as \texttt{coarse\_label\_names} --- form the middle level. This mapping is regular by construction: each superclass contains exactly five fine classes.
+
+The dataset provides no third level. The top level used here is the grouping of the 20 superclasses into 8 coarse classes introduced by the B-CNN reference implementation \cite{zhu2017bcnn}, which is adopted so that the CIFAR-100 hierarchy is three levels deep and therefore directly comparable with the other two benchmarks.\footnote{The grouping is taken from the published B-CNN source, \url{https://github.com/zhuxinqimac/B-CNN/blob/main/CIFAR_100_keras_vgg16_hierarchy_dynamic.py}, and is reproduced verbatim in the data adapter of this work.} The resulting eight groups are:
+
+\begin{enumerate}[label=(\arabic*), itemsep=0pt, topsep=3pt]
+  \item aquatic mammals, fish;
+  \item flowers, fruit and vegetables, trees;
+  \item food containers, household electrical devices, household furniture;
+  \item insects, non-insect invertebrates;
+  \item large carnivores, large omnivores and herbivores, medium mammals, reptiles, small mammals;
+  \item large man-made outdoor things, large natural outdoor scenes;
+  \item people;
+  \item vehicles~1, vehicles~2.
+\end{enumerate}
+
+Two consequences follow and are carried through the rest of this work. The top level is an \emph{external, manually defined} semantic grouping, not a property of CIFAR-100: results obtained on it describe this particular taxonomy and should not be read as results on ``the'' CIFAR-100 hierarchy. Furthermore, the grouping is deliberately uneven --- the mammal-and-reptile group collects five superclasses while the \emph{people} group collects one --- so CIFAR-100 combines a perfectly regular lower transition with a visibly irregular upper one, a combination that turns out to be useful when interpreting the analysis in Section~\ref{sec:dataset_analysis}.
+
+\subsubsection{CUB-200-2011: a taxonomy inherited from the literature}
+
+CUB-200-2011 \cite{wah2011caltech} publishes 200 species and their images, but no higher taxonomic level. The hierarchy used here is the 13 orders / 38 families / 200 species tree retained from the H-CAST codebase \cite{park2024visually}, stored in this work as an explicit species-to-(order, family) table so that it is versioned together with the experiments rather than reconstructed at load time.
+
+From the H-CAST codebase, the hierarchy can be identified as order/family/species; this was further confirmed by retrieving the actual class names associated with each order, family, and species. Notably, the same 13/38/200 order--family--species hierarchy is independently reported by HRN \cite{chen2022label}, which reconstructs the CUB taxonomy following the procedure of Chang et al. \cite{chang2021flamingo}. The agreement between these two independently obtained hierarchies lends external support to the taxonomy used by H-CAST, and it is the reason this tree was preferred over the alternatives found in the literature.
+
+HT-CapsNet \cite{noor2025taxonomy}, by contrast, adopts a 39/123/200 hierarchy derived from another paper that originally published the corresponding labels through links that are no longer accessible. Moreover, the metrics it reports appear suspiciously low (20--30\%, against roughly 90\% for H-CAST). Further investigation revealed that the paper cited by HT-CapsNet had in turn taken its hierarchy from yet another source. From this latter source, the 39/123/200 split appears to correspond to family/genus/species; however, (i) that paper actually reports a 36/113/200 hierarchy, and (ii) the accuracy it obtains is comparable to that of H-CAST (approximately 80\%). The hierarchy used by HT-CapsNet cannot therefore be considered reliable or independently verifiable, and it was not adopted here.
+
+Additional discrepancies in the H-CAST hierarchy were also flagged during a preliminary, LLM-assisted check; being non-authoritative, this check does not substitute for a rigorous verification. A systematic ground-truth validation of the taxonomic hierarchy actually used --- for instance, by cross-checking every order, family, and species label against an authoritative biological taxonomy database --- therefore remains a necessary next step before this hierarchy can be adopted with full confidence.
+
+\subsubsection{FGVC-Aircraft: the official hierarchy, joined from parallel annotations}
+
+FGVC-Aircraft \cite{maji2013fine} is the only one of the three benchmarks that publishes a complete hierarchy, and it is used here without any external input. The official download distributes the class lists (\texttt{manufacturers.txt}, \texttt{families.txt}, \texttt{variants.txt}) and, for every split, three \emph{parallel} per-image annotation files that label the same images at the manufacturer, family, and variant levels. The tree is therefore not published as a set of parent--child edges: it has to be recovered by joining the three annotation files on the image identifier.
+
+This work performs that join and, in doing so, verifies the assumptions it relies on: the three annotation files of a split are required to cover exactly the same image identifiers; every variant must be observed with a single family and every family with a single manufacturer across the entire dataset, so that the recovered relation is a function; and the resulting parent maps must cover every published class. Violations raise an error rather than being silently repaired. The resulting hierarchy has 30 manufacturers, 70 families, and 100 variants, matching the official class lists.
+
+The official annotation also defines a fourth, finer \emph{model} level, which is not used: three levels are kept for comparability with CIFAR-100 and CUB-200-2011, and the variant level is the one on which the published FGVC-Aircraft results of HRN, H-CAST, and Hier-COS are reported.
+
+\subsubsection{Status of the three taxonomies}
+
+The three trees consequently have different epistemic status, and this asymmetry is a threat to the external validity of any cross-dataset claim made in this work. The FGVC-Aircraft hierarchy is official and fully verifiable from the distributed annotations. The CUB-200-2011 hierarchy is inherited from H-CAST and corroborated by an independent reconstruction in HRN, but it has not yet been validated against an authoritative biological taxonomy. The CIFAR-100 top level is externally imposed and is one grouping among many possible ones. Results are therefore reported for the explicit taxonomies described above, and no claim is made that they transfer to a different hierarchy defined over the same images.
+
+
+\subsection{Dataset analysis}
+\label{sec:dataset_analysis}
+
+This subsection characterizes what the unified protocol actually sees. It has two purposes: to document the splits and the amount of supervision available per class, and to quantify the properties of the label trees that are expected to interact with hierarchical methods --- how unbalanced each tree is, and how much of the fine decision is already determined by the coarse one. All figures and numbers below are produced by the analysis notebook from the same dataset adapters used during training, so split sizes, label indices, and hierarchy edges are identical to those seen by the models.
+
+Throughout this subsection the statements are \emph{descriptive}. They characterize the data and the label space, not the behaviour of any model: no claim about accuracy, hierarchical consistency, or the relative merits of the methods is derived from them here. Those comparisons belong to the experimental chapter.
+
+\subsubsection{Splits and supervision per class}
+
+Table~\ref{tab:datasets_info} reports the datasets as they are distributed. The protocol departs from those published partitions in one respect only, and it does so because model selection requires a validation set that is disjoint from the test set. FGVC-Aircraft ships an official train/validation/test partition, which is used unchanged. CIFAR-100 and CUB-200-2011 publish only a train/test partition, so a validation split is carved deterministically out of the published training pool: the split is stratified at the leaf level, uses a fixed seed, and reserves a nominal 10\% of the CIFAR-100 training pool and 15\% of the CUB training pool. Per-class rounding makes the realized CUB fraction slightly smaller --- exactly four images per species, or 13.3\% of the pool --- while CIFAR-100 divides exactly. The published test sets are never touched, so test results remain comparable with the numbers reported in the literature. Table~\ref{tab:protocol_splits} reports the resulting partition.
+
+\begin{table}[ht]
+\centering
+\caption{Partition actually used by the unified protocol, derived from the published splits of Table~\ref{tab:datasets_info}. ``Images per leaf class'' is the observed range across the classes of that split. The validation splits of CIFAR-100 and CUB-200-2011 are deterministic, leaf-stratified subsets of the published training pools; FGVC-Aircraft uses its official partition unchanged.}
+\label{tab:protocol_splits}
+\fontsize{8}{11}\selectfont
+\begin{tabular}{lccc}
+\toprule
+\textbf{} & \textbf{CIFAR-100} & \textbf{CUB-200-2011} & \textbf{FGVC-Aircraft} \\
+\midrule
+Training images             & 45{,}000      & 5{,}194           & 3{,}334 \\
+Validation images           & 5{,}000       & 800               & 3{,}333 \\
+Test images                 & 10{,}000      & 5{,}794           & 3{,}333 \\
+Validation origin           & 10\% of published train & 4 per species (13.3\%) & official split \\
+\midrule
+Train images per leaf class & 450           & 25--26            & 33--34 \\
+Test images per leaf class  & 100           & 11--30            & 33--34 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two facts in this table matter more than the totals. The first is the amount of supervision per leaf class, which differs by more than an order of magnitude: a CIFAR-100 fine class is trained on 450 images, whereas a CUB species is trained on 25 or 26 and an Aircraft variant on 33 or 34. Any observation about fine-grained behaviour on CUB and Aircraft is therefore made in a low-data regime that CIFAR-100 does not share. The second is the split composition: CIFAR-100 devotes 75\% of its images to training and 8\% to validation, whereas the official FGVC-Aircraft partition devotes only one third to training and a full third to validation. Aircraft consequently trains on the smallest pool of the three while offering the largest model-selection set, and the reliability of the checkpoint-selection procedure is not comparable across datasets.
+
+Sample balance itself needs no further discussion. Leaf-class counts are uniform or near-uniform in every training split (exactly 450 per class on CIFAR-100, 33 or 34 per variant on Aircraft, 25 or 26 per species on CUB), and the only visible dispersion is the CUB test split, which ranges from 11 to 30 images per species. Class imbalance is therefore not a confound in these experiments; imbalance of the \emph{hierarchy}, examined next, is a different matter.
+
+\subsubsection{Shape of the label trees}
+
+Figure~\ref{fig:taxonomy_icicle} shows the three taxonomies drawn to scale: the three bands are the three levels, every rectangle is a class, its width is the fraction of leaf classes in its subtree, and children are drawn beneath their parent. The three trees have visibly different shapes despite having the same depth.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{images/datasets/taxonomy_icicle.pdf}
+\caption{Structure of the three taxonomies. Each band is one hierarchy level and each rectangle one class, with width proportional to the number of leaf classes in its subtree; subtrees are ordered by size, so the horizontal axis is a ranking and not a class identifier. A rectangle whose width is unchanged from one band to the next is a single-child chain. Widths are shares of leaf classes, not of images.}
+\label{fig:taxonomy_icicle}
+\end{figure}
+
+CIFAR-100 is regular at the bottom and irregular at the top: every superclass has exactly five fine classes, but the eight imposed coarse classes cover between 5 and 25 fine classes. CUB-200-2011 is dominated by a single top-level class, which covers 133 of the 200 species (66.5\%); the two largest orders together cover 78\%. FGVC-Aircraft is the most evenly distributed at the top --- its largest manufacturer covers 22 of 100 variants --- but it is the most degenerate at the bottom, as the icicle makes visible in the many family rectangles whose width is identical to that of the single variant beneath them.
+
+Table~\ref{tab:branching} quantifies both transitions. The last column is the one with the clearest consequence for hierarchical classification: a parent with a single child is not a decision but a relabelling, since the coarse label already determines the fine one. On FGVC-Aircraft, 54 of the 70 families (77\%) contain exactly one variant, and 8 of the 13 CUB orders (62\%) contain a single family. CIFAR-100 has almost none, by construction.
+
+\begin{table}[ht]
+\centering
+\caption{Branching statistics of the two transitions of each taxonomy. ``Single-child parents'' counts the parents with exactly one child, for which the level pair carries no decision.}
+\label{tab:branching}
+\fontsize{8}{11}\selectfont
+\begin{tabular}{llccccc}
+\toprule
+\textbf{Dataset} & \textbf{Transition} & \textbf{Parents} & \textbf{Children} & \textbf{Median} & \textbf{Max} & \textbf{Single-child parents} \\
+\midrule
+CIFAR-100     & coarse1 $\to$ coarse2      & 8  & 20  & 2.0 & 5  & 1 (12\%) \\
+CIFAR-100     & coarse2 $\to$ fine         & 20 & 100 & 5.0 & 5  & 0 (0\%) \\
+\midrule
+CUB-200-2011  & order $\to$ family         & 13 & 38  & 1.0 & 21 & 8 (62\%) \\
+CUB-200-2011  & family $\to$ species       & 38 & 200 & 3.5 & 30 & 12 (32\%) \\
+\midrule
+FGVC-Aircraft & manufacturer $\to$ family  & 30 & 70  & 2.0 & 8  & 14 (47\%) \\
+FGVC-Aircraft & family $\to$ variant       & 70 & 100 & 1.0 & 8  & 54 (77\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{How much of the fine decision the coarse level already makes}
+
+Branching statistics can be summarized in a single quantity per transition: the uncertainty about the child class that remains once the parent is known. Measuring it in bits as the conditional entropy $H(\text{child}\mid\text{parent})$, and comparing it against the $H(\text{child})$ that would remain without any hierarchy, gives a direct measure of how much information a correct coarse prediction supplies. Figure~\ref{fig:conditional_entropy} reports both.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{images/datasets/hierarchy_conditional_entropy.pdf}
+\caption{Uncertainty about the child class of each transition, in bits. The full bar is the uncertainty without the hierarchy, $H(\text{child})$; the colored part is what remains once the parent is known, $H(\text{child}\mid\text{parent})$; the grey part above it, annotated with its percentage, is what the hierarchy removes. Values are structural, that is, computed from the taxonomy with a uniform distribution over classes.}
+\label{fig:conditional_entropy}
+\end{figure}
+
+The three datasets separate clearly. On FGVC-Aircraft, identifying a variant among 100 costs $\log_2 100 = 6.64$ bits without the hierarchy, but knowing the family leaves only $0.78$ bits --- the equivalent of fewer than two equally likely variants --- an 88\% reduction that is the direct consequence of the 54 single-variant families. On CUB-200-2011 the same transition leaves $3.10$ of $7.64$ bits, roughly nine equally likely species, a reduction of 59\%; the order-to-family transition is the weakest of all six, at 48\%, because one order dominates. CIFAR-100 sits in between and is the most uniform across its two transitions, at 66\% and 65\%.
+
+Two qualifications are necessary. First, these values are \emph{structural}: they are computed with a uniform distribution over classes and therefore describe the label tree alone. The analysis also computes the empirical version, weighted by training-image counts. The two agree to within $0.13$ bits on every transition and are identical on CIFAR-100, where each fine class has exactly 450 training images, which confirms that the effect measured here is a property of the taxonomy rather than of sample imbalance. Second, and more importantly, this is a statement about the label space, not a prediction: it says how much a correct coarse prediction constrains the leaf, not how easily a model recovers that constraint, and not whether a method that enforces the constraint will classify better. It does, however, delimit what a hierarchy-exploiting method can gain on each benchmark, and it makes the three datasets genuinely complementary --- one where the coarse level nearly determines the leaf (Aircraft), one where it is dominated by a single branch (CUB), and one where the two transitions are balanced (CIFAR-100).
+
+\subsubsection{Image geometry and its interaction with the model presets}
+
+Figure~\ref{fig:image_geometry} shows the native resolution of the training images. The three datasets occupy three separate regions: CIFAR-100 collapses into a single point at $32\times32$, CUB-200-2011 has a median of $500\times375$ pixels, with no sampled image exceeding 500 pixels on its long side, and FGVC-Aircraft has a median of $1024\times699$ pixels, roughly four times the area of a CUB image and seven hundred times that of a CIFAR-100 image.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{images/datasets/native_image_geometry.pdf}
+\caption{Native resolution of the sampled training images, on logarithmic axes. Each point is one image; the dashed diagonal marks square images, so points below it are landscape. The small open square marks the $224\times224$ input used by most model presets. All CIFAR-100 images coincide in the single marker at $32\times32$; the right-angled edge of the CUB cloud is the 500-pixel cap observed on the long side of every sampled CUB image, not a property of the photographs.}
+\label{fig:image_geometry}
+\end{figure}
+
+This matters because the presets do not consume these images at a single resolution. CIFAR-100 is used natively at $32\times32$ by every model. CUB-200-2011 and FGVC-Aircraft are resized to $224\times224$ by the H-CAST, Hier-COS, and LH-DNN presets, to $448\times448$ by the HRN preset, and to $64\times64$ by the HT-CapsNet preset. An Aircraft image is therefore downsampled by a factor of roughly 14 in area for a $224$-pixel model, 3.6 for HRN, and 175 for HT-CapsNet. These values follow each method's own configuration rather than a common normalization, so input resolution is a confound that is \emph{not} controlled in this comparison: any difference in fine-grained accuracy between HRN and the $224$-pixel models on CUB and Aircraft is partly attributable to it. The choice is stated explicitly among the threats to validity rather than silently normalized away, since imposing a single resolution would depart from the settings under which each baseline is designed to operate.
+
+\subsubsection{Summary and threats to validity}
+
+The analysis supports four statements that are used when interpreting the experimental results.
+
+\begin{itemize}[itemsep=2pt, topsep=3pt]
+  \item \textbf{Supervision differs by an order of magnitude per class.} CIFAR-100 provides 450 training images per leaf class against 25--34 for CUB and Aircraft, so the two fine-grained benchmarks are low-data regimes and CIFAR-100 is not.
+  \item \textbf{The trees are unbalanced in different ways.} CUB is dominated by one order covering 66.5\% of the species; Aircraft is nearly degenerate at its lower transition, with 77\% single-variant families; CIFAR-100 is perfectly regular below and deliberately irregular above.
+  \item \textbf{The hierarchy carries very different amounts of information.} A correct parent removes 88\% of the leaf uncertainty on Aircraft, 59\% on CUB, and 65\% on CIFAR-100. The datasets therefore probe hierarchical methods in complementary rather than redundant conditions.
+  \item \textbf{Two experimental factors are not controlled.} Split composition is inherited (Aircraft validates on a third of its data, CIFAR-100 on 8\%), and input resolution is inherited from each method's published configuration (64, 224, or 448 pixels on the fine-grained datasets).
+\end{itemize}
+
+Finally, the descriptive nature of this analysis bounds what it can support. The statistics above are computed on the taxonomies of Section~\ref{sec:hierarchy_construction}, two of which are not published with their datasets; they would change under a different, equally defensible hierarchy over the same images. Native image geometry describes the source data and not the tensors seen by a model after resizing, cropping, and augmentation. And none of these quantities predicts performance: they describe the conditions under which the methods are compared, and they are used in the following chapters only to explain results, never to anticipate them.

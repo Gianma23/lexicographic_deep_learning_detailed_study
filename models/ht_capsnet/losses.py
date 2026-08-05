@@ -125,31 +125,52 @@ def _dynamic_level_weights(
     logits_per_level: List[torch.Tensor],
     target_indices_per_level: List[torch.Tensor],
     decay: float,
-) -> List[float]:
-    """Upstream dynamic LW update: (1-w) * tau_i / sum_j tau_j, tau_i = 1 - acc_i * init_i."""
+    running_correct: Optional[torch.Tensor] = None,
+    running_count: Optional[torch.Tensor] = None,
+) -> Tuple[List[float], Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """Upstream dynamic LW update: (1-w) * tau_i / sum_j tau_j, tau_i = 1 - acc_i * init_i.
+
+    The upstream callback runs on `on_train_batch_end` and reads `acc_i` from the
+    Keras `logs` dict, which carries the metric accumulated since the start of the
+    epoch rather than the accuracy of the current batch. `running_correct` and
+    `running_count` hold that epoch-to-date state; passing them as `None` treats
+    the batch as the first of an epoch.
+
+    Returns the next level weights plus the updated accumulators.
+    """
     num_levels = len(logits_per_level)
     initial = _initial_level_weights([int(logits.size(-1)) for logits in logits_per_level])
     if not initial or len(initial) != num_levels:
-        return [1.0 for _ in range(num_levels)]
+        return [1.0 for _ in range(num_levels)], None, None
     if len(target_indices_per_level) != num_levels:
-        return initial
+        return initial, None, None
 
-    acc_per_level: List[float] = []
+    device = logits_per_level[0].device
+    correct = torch.zeros(num_levels, dtype=torch.float32, device=device)
+    batch_count = 0
     for level, logits in enumerate(logits_per_level):
         target = target_indices_per_level[level].to(device=logits.device, dtype=torch.long)
         if target.ndim != 1 or int(target.size(0)) != int(logits.size(0)):
-            return initial
+            return initial, None, None
         pred = logits.argmax(dim=-1)
-        acc = (pred == target).float().mean().detach().item()
-        acc_per_level.append(float(acc))
+        correct[level] = (pred == target).sum().detach().float()
+        batch_count = int(target.size(0))
 
-    taus = [1.0 - (acc_per_level[level] * initial[level]) for level in range(num_levels)]
+    if isinstance(running_correct, torch.Tensor) and tuple(running_correct.shape) == (num_levels,):
+        correct = correct + running_correct.detach().to(device=device, dtype=correct.dtype)
+    total = torch.as_tensor(float(batch_count), dtype=correct.dtype, device=device)
+    if isinstance(running_count, torch.Tensor) and running_count.numel() == 1:
+        total = total + running_count.detach().reshape(()).to(device=device, dtype=correct.dtype)
+
+    acc_per_level = (correct / total.clamp_min(1.0)).tolist()
+
+    taus = [1.0 - (float(acc_per_level[level]) * initial[level]) for level in range(num_levels)]
     tau_sum = float(sum(taus))
     if tau_sum <= 0.0:
-        return initial
+        return initial, correct, total
 
     scale = 1.0 - min(max(float(decay), 0.0), 1.0)
-    return [scale * (tau / tau_sum) for tau in taus]
+    return [scale * (tau / tau_sum) for tau in taus], correct, total
 
 
 def _level_weights(
@@ -226,14 +247,19 @@ def compute_loss(
 
     aux_payload: Dict[str, Any] = {"level_losses": list(level_losses)}
     if str(loss_cfg.get("weight_mode", "dynamic")) == "dynamic":
-        next_weights = _dynamic_level_weights(
+        next_weights, next_correct, next_count = _dynamic_level_weights(
             logits_per_level=score_source_per_level,
             target_indices_per_level=target_indices,
             decay=float(loss_cfg.get("dynamic_weight", 0.0)),
+            running_correct=output.get("lw_running_correct"),
+            running_count=output.get("lw_running_count"),
         )
         aux_payload["next_level_loss_weights"] = torch.tensor(
             next_weights,
             device=score_source_per_level[0].device,
             dtype=score_source_per_level[0].dtype,
         )
+        if next_correct is not None and next_count is not None:
+            aux_payload["next_lw_running_correct"] = next_correct
+            aux_payload["next_lw_running_count"] = next_count
     return total, metrics, aux_payload

@@ -9,6 +9,19 @@ _GRAD_LEVEL_NAMES = ("coarse", "mid", "fine")
 _LEX_PROJECTION_MODES = ("coarse_first", "fine_first", "pairwise_orthogonal")
 _LEX_PROJECTION_RULES = ("orthogonalize_all", "conflict_only")
 
+# Internal projection-flag key -> logged metric name. Flags are produced as
+# on-device 0-dim tensors and reduced to floats in the batched metric transfer.
+_PROJECTION_FLAG_METRICS = {
+    "mid_off_coarse_t2": "post_projection_applied_t2_mid_coarse",
+    "mid_off_coarse_t1": "post_projection_applied_t1_mid_coarse",
+    "fine_off_higher_t1": "post_projection_applied_t1_fine_higher",
+    "mid_off_fine_t1": "post_projection_applied_t1_mid_fine",
+    "coarse_off_mid_t2": "post_projection_applied_t2_coarse_mid",
+    "coarse_off_higher_t1": "post_projection_applied_t1_coarse_higher",
+    "fine_off_coarse_t1": "post_projection_applied_t1_fine_coarse",
+    "fine_off_mid_t1": "post_projection_applied_t1_fine_mid_proj",
+}
+
 
 def get_trainable_named_params(model: torch.nn.Module) -> List[Tuple[str, torch.nn.Parameter]]:
     return [(name, param) for name, param in model.named_parameters() if param.requires_grad]
@@ -96,6 +109,7 @@ def _batched_grad_metrics(
             float,
         ]
     ],
+    scalar_specs: Sequence[Tuple[str, torch.Tensor]] = (),
 ) -> Dict[str, float]:
     """Reduce several gradient diagnostics in one parameter scan.
 
@@ -103,6 +117,10 @@ def _batched_grad_metrics(
     Per-parameter FP32 squares and dot products are shared across metrics, and
     the final scalar tensors are transferred to the CPU together to avoid one
     synchronization per logged value.
+
+    ``scalar_specs`` carries already-reduced 0-dim tensors (for example the
+    projection applied flags) so they join that same batched transfer instead of
+    each forcing its own synchronization.
     """
     norm_sums: Dict[str, Optional[torch.Tensor]] = {
         name: None for name, _, _ in norm_specs
@@ -199,6 +217,9 @@ def _batched_grad_metrics(
         )
         cosine = dot / (denom + cosine_eps[name])
         scalar_tensors[name] = cosine.clamp(min=-1.0, max=1.0)
+
+    for name, value in scalar_specs:
+        scalar_tensors[name] = value.detach().to(dtype=torch.float32)
 
     # A model normally keeps all trainable parameters on one device. Grouping
     # by device also preserves correct behavior for the less common case where
@@ -321,26 +342,40 @@ def _project_onto_reference(
     include_mask: Sequence[bool],
     eps: float,
     projection_rule: str = "orthogonalize_all",
-) -> Tuple[GradTuple, float, bool]:
+) -> Tuple[GradTuple, torch.Tensor, torch.Tensor]:
+    """Project ``target_grads`` off ``reference_grads`` without host synchronization.
+
+    The coefficient and the applied flag are returned as 0-dim tensors and stay
+    on the gradient device, so the projection never blocks on ``.item()``. A
+    projection that does not apply resolves to a zero coefficient, and
+    ``grad_target - 0 * grad_ref`` is bitwise equal to ``grad_target`` for finite
+    references. The trade-off is that a non-applied projection now allocates a
+    tuple instead of aliasing ``target_grads``; this matters mainly for
+    ``conflict_only``, where non-application is the common case.
+    """
     if projection_rule not in _LEX_PROJECTION_RULES:
         raise ValueError(
             f"Unsupported lex projection rule '{projection_rule}'. "
             f"Expected one of {list(_LEX_PROJECTION_RULES)}."
         )
 
+    eps_value = float(eps)
     denom = _dot_from_autograd_grads(reference_grads, reference_grads, include_mask)
-    denom_value = float(denom.item())
+    # Both dots skip the same entries, but an empty reduction falls back to a CPU
+    # scalar, so align the pair before combining them.
+    numer = _dot_from_autograd_grads(target_grads, reference_grads, include_mask).to(
+        device=denom.device,
+        dtype=denom.dtype,
+    )
 
-    if denom_value <= float(eps):
-        return tuple(target_grads), 0.0, False
-
-    numer = _dot_from_autograd_grads(target_grads, reference_grads, include_mask)
-    numer_value = float(numer.item())
-    conflict = numer_value < -float(eps)
-    if projection_rule == "conflict_only" and not conflict:
-        return tuple(target_grads), 0.0, False
-
-    coeff = float((numer / denom).item())
+    applied = denom > eps_value
+    if projection_rule == "conflict_only":
+        applied = applied & (numer < -eps_value)
+    coeff = torch.where(
+        applied,
+        numer / denom.clamp_min(eps_value),
+        torch.zeros((), dtype=denom.dtype, device=denom.device),
+    )
 
     projected: List[Optional[torch.Tensor]] = []
     for grad_target, grad_ref, include in zip(target_grads, reference_grads, include_mask):
@@ -351,7 +386,7 @@ def _project_onto_reference(
             projected.append(grad_target)
             continue
         projected.append(grad_target - (coeff * grad_ref))
-    return tuple(projected), coeff, True
+    return tuple(projected), coeff, applied
 
 
 def _sum_grad_tuples(
@@ -437,14 +472,6 @@ def _scale_grad_tuple(
     return tuple(scaled)
 
 
-def _scale_grad_pack(
-    grad_pack: Mapping[str, Sequence[Optional[torch.Tensor]]],
-    factor: float,
-) -> Dict[str, GradTuple]:
-    factor_f = float(factor)
-    return {str(key): _scale_grad_tuple(grads, factor_f) for key, grads in grad_pack.items()}
-
-
 def _trunk_grad_norm_specs(
     coarse_grads: Sequence[Optional[torch.Tensor]],
     mid_grads: Sequence[Optional[torch.Tensor]],
@@ -516,15 +543,10 @@ def _build_lexicographic_grads(
     t1_mask = list(trunk_masks.get("t1", []))
     t2_mask = list(trunk_masks.get("t2", []))
 
-    projection_flags: Dict[str, bool] = {
-        "mid_off_coarse_t2": False,
-        "mid_off_coarse_t1": False,
-        "fine_off_higher_t1": False,
-        "mid_off_fine_t1": False,
-        "coarse_off_mid_t2": False,
-        "coarse_off_higher_t1": False,
-        "fine_off_coarse_t1": False,
-        "fine_off_mid_t1": False,
+    # `None` means the projection was never attempted in this mode; anything set
+    # below is an on-device 0-dim bool tensor, kept unread to avoid a sync.
+    projection_flags: Dict[str, Optional[torch.Tensor]] = {
+        key: None for key in _PROJECTION_FLAG_METRICS
     }
 
     if projection_mode == "coarse_first":
@@ -562,9 +584,9 @@ def _build_lexicographic_grads(
             projection_rule=projection_rule,
         )
         coarse_projected = tuple(coarse_grads)
-        projection_flags["mid_off_coarse_t2"] = bool(mid_applied_t2)
-        projection_flags["mid_off_coarse_t1"] = bool(mid_applied_t1)
-        projection_flags["fine_off_higher_t1"] = bool(fine_applied_higher)
+        projection_flags["mid_off_coarse_t2"] = mid_applied_t2
+        projection_flags["mid_off_coarse_t1"] = mid_applied_t1
+        projection_flags["fine_off_higher_t1"] = fine_applied_higher
     elif projection_mode == "fine_first":
         mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
             target_grads=mid_grads,
@@ -609,9 +631,9 @@ def _build_lexicographic_grads(
         )
         fine_projected = tuple(fine_grads)
 
-        projection_flags["mid_off_fine_t1"] = bool(mid_applied_t1)
-        projection_flags["coarse_off_mid_t2"] = bool(coarse_applied_t2)
-        projection_flags["coarse_off_higher_t1"] = bool(coarse_applied_t1)
+        projection_flags["mid_off_fine_t1"] = mid_applied_t1
+        projection_flags["coarse_off_mid_t2"] = coarse_applied_t2
+        projection_flags["coarse_off_higher_t1"] = coarse_applied_t1
     else:
         mid_projected_t2, _mid_coeff_t2, mid_applied_t2 = _project_onto_reference(
             target_grads=mid_grads,
@@ -651,10 +673,10 @@ def _build_lexicographic_grads(
         )
         coarse_projected = tuple(coarse_grads)
 
-        projection_flags["mid_off_coarse_t2"] = bool(mid_applied_t2)
-        projection_flags["mid_off_coarse_t1"] = bool(mid_applied_t1)
-        projection_flags["fine_off_coarse_t1"] = bool(fine_applied_coarse)
-        projection_flags["fine_off_mid_t1"] = bool(fine_applied_mid)
+        projection_flags["mid_off_coarse_t2"] = mid_applied_t2
+        projection_flags["mid_off_coarse_t1"] = mid_applied_t1
+        projection_flags["fine_off_coarse_t1"] = fine_applied_coarse
+        projection_flags["fine_off_mid_t1"] = fine_applied_mid
 
     total_grads = _sum_grad_tuples(coarse_projected, mid_projected, fine_projected)
     grad_pack: Dict[str, GradTuple] = {
@@ -677,15 +699,16 @@ def _build_lexicographic_grads(
         "lex_projection_mode_coarse_first": 1.0 if projection_mode == "coarse_first" else 0.0,
         "lex_projection_mode_fine_first": 1.0 if projection_mode == "fine_first" else 0.0,
         "lex_projection_mode_pairwise_orthogonal": 1.0 if projection_mode == "pairwise_orthogonal" else 0.0,
-        "post_projection_applied_t2_mid_coarse": 1.0 if projection_flags["mid_off_coarse_t2"] else 0.0,
-        "post_projection_applied_t1_mid_coarse": 1.0 if projection_flags["mid_off_coarse_t1"] else 0.0,
-        "post_projection_applied_t1_fine_higher": 1.0 if projection_flags["fine_off_higher_t1"] else 0.0,
-        "post_projection_applied_t1_mid_fine": 1.0 if projection_flags["mid_off_fine_t1"] else 0.0,
-        "post_projection_applied_t2_coarse_mid": 1.0 if projection_flags["coarse_off_mid_t2"] else 0.0,
-        "post_projection_applied_t1_coarse_higher": 1.0 if projection_flags["coarse_off_higher_t1"] else 0.0,
-        "post_projection_applied_t1_fine_coarse": 1.0 if projection_flags["fine_off_coarse_t1"] else 0.0,
-        "post_projection_applied_t1_fine_mid_proj": 1.0 if projection_flags["fine_off_mid_t1"] else 0.0,
     }
+    # Modes that never attempt a projection report 0.0 directly; the rest ride
+    # along in the single batched device-to-host transfer below.
+    flag_specs: List[Tuple[str, torch.Tensor]] = []
+    for flag_key, metric_name in _PROJECTION_FLAG_METRICS.items():
+        flag = projection_flags[flag_key]
+        if flag is None:
+            metrics[metric_name] = 0.0
+        else:
+            flag_specs.append((metric_name, flag))
     mask_views = _mask_views_from_trunk_masks(trunk_masks)
     metrics.update(
         _batched_grad_metrics(
@@ -710,6 +733,7 @@ def _build_lexicographic_grads(
                 ("post_cos_t1_fine_proj_coarse", fine_projected, coarse_projected, t1_mask, eps),
                 ("post_cos_t1_fine_proj_mid_proj", fine_projected, mid_projected, t1_mask, eps),
             ],
+            scalar_specs=flag_specs,
         )
     )
 
@@ -755,8 +779,10 @@ def prepare_lexicographic_update(
 
     When AMP is active the caller passes the current GradScaler scale as
     ``grad_scale``. Projection coefficients and metrics stay in unscaled units,
-    while returned gradients are multiplied by ``grad_scale`` so
-    ``GradScaler.step`` can unscale and check them normally.
+    and only the ``"total"`` entry is multiplied by ``grad_scale`` so
+    ``GradScaler.step`` can unscale and check it normally. ``"total"`` is the
+    only entry the training loop assigns to ``param.grad``; the per-level
+    entries are diagnostic and stay in unscaled units.
     """
     level_grad_map = _coerce_level_grad_map(
         level_grad_map=precomputed_level_grad_map,
@@ -792,7 +818,11 @@ def prepare_lexicographic_update(
     )
 
     safe_scale = float(grad_scale) if float(grad_scale) > 0.0 else 1.0
-    projected_grads_for_step = _scale_grad_pack(projected_grads, safe_scale)
+    projected_grads_for_step = dict(projected_grads)
+    projected_grads_for_step["total"] = _scale_grad_tuple(
+        projected_grads["total"],
+        safe_scale,
+    )
 
     state = LexicographicUpdateState(
         trunk_masks=trunk_masks,
