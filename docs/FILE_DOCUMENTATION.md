@@ -226,18 +226,48 @@ named `<model>_<dataset>[_<loss>]_lex_<rule>_<mode>[...]`.
 - `notebooks/model_comparison_utils.py`
 - `notebooks/multiseed_utils.py`
 
-Current-run trade-off analyses are grouped by model under `analysis/current_runs/`:
+Current-run trade-off analyses live directly under `analysis/current_runs/`, one
+notebook per model family:
 
-- `analysis/current_runs/hiercos/hiercos_current_plots.ipynb` — the full
-  Hier-COS baseline, lexicographic, projection, and ablation analysis.
-- `analysis/current_runs/hcast/hcast_current_plots.ipynb` — compact H-CAST
-  baseline, explicit-lexicographic, and HCC comparison.
-- `analysis/current_runs/hrn/hrn_current_plots.ipynb` — compact HRN baseline,
+- `analysis/current_runs/hiercos_current_plots.ipynb` — the full Hier-COS
+  baseline, lexicographic, projection, and ablation analysis.
+- `analysis/current_runs/hcast_current_plots.ipynb` — H-CAST baseline,
+  no-global-KL baseline, explicit-lexicographic, and HCC comparison.
+- `analysis/current_runs/hrn_current_plots.ipynb` — HRN baseline,
   explicit-lexicographic, and HCC comparison.
+- `analysis/current_runs/lhdnn_current_plots.ipynb` — the single LH-DNN baseline
+  arm placed among the other model families on a shared scale.
+- `analysis/current_runs/htcapsnet_current_plots.ipynb` — HT-CapsNet baseline,
+  explicit-lexicographic, and HCC comparison, with the margin-collapse check
+  that must precede any reading of the numbers.
 - `analysis/current_runs/current_run_plot_utils.py` — shared aggregation,
   reference-model discovery, off-scale gutter layout, collision-aware labels,
-  HCC-activation verification, FPA–TICE plotting, level-delta plotting, and
-  Pareto-summary helpers for all current-run notebooks.
+  HCC-activation verification, trade-off plotting, absolute and delta
+  level-accuracy plotting, and Pareto-summary helpers for all current-run
+  notebooks.
+
+Every current-run notebook reads the independently selected checkpoint and the
+independent metric family. Top-down decoding is intentionally not offered there:
+its predicted path is consistent by construction, so `tice_topdown` is
+identically zero and `fpa_topdown` collapses onto top-down fine accuracy, leaving
+a top-down trade-off view with nothing to show. Top-down results remain available
+from `test_metrics.yaml` and from the older `notebooks/` analyses.
+
+Figures are authored for the thesis, not for the screen. `use_paper_style()` in
+`current_run_plot_utils.py` applies the same rcParams as
+`analysis/datasets_analysis.ipynb` (DejaVu Serif, 9 pt base, 400 dpi raster,
+`pdf.fonttype=42`, constrained layout), and `save_figure()` writes a PDF and a
+PNG at the authored size without `bbox_inches='tight'`. Every figure is 6.3 in
+wide — an A4 text block with 2.5 cm margins — and must be included at
+`\linewidth` with no further scaling, since resizing in LaTeX would shrink the
+fonts along with the artwork. Figure titles are omitted on purpose; they belong
+in the caption.
+
+Each figure stacks one full-width panel per dataset rather than three panels in
+a row: at 6.3 in a 1×3 row leaves about 2 in per panel, too little for the direct
+labels or for grouped bars once a run matrix grows. The delta figure gives each
+panel its own vertical scale, because delta ranges differ by an order of
+magnitude across datasets; captions should say so.
 
 Notebook files are not rewritten by repository audits.
 

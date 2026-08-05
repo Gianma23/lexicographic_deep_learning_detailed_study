@@ -122,7 +122,24 @@ samples, or choose models on test data.
   per-image standardization and called that source-aligned; that was incorrect.
   CIFAR reaches the upstream `image_type='array'` branch, which standardizes the
   whole split array once, and remains per-image locally — a known open gap.
-- Cross-capsule attention keeps Keras semantics (`16` heads with independent
+- CUB/Aircraft downsample without antialiasing
+  (`dataset.transforms.fixed_resize_antialias: false`), matching
+  `tf.image.resize`'s default: a fixed 2x2 source kernel regardless of the
+  downsample ratio, applied after the float conversion. At 64 px this discards
+  most of a 1–2 MP source. The source's intermediate 512 px resize is a
+  `padded_batch` artifact and is deliberately not reproduced; measured against
+  the antialiased single-stage pipeline it contributes about a third as much
+  pixel difference as the antialias setting does. The paper specifies only
+  "64 x 64 pixels", so the code is the sole authority here.
+- Aircraft crops the 20 px copyright banner
+  (`dataset.transforms.manual.crop_bottom_pixels: 20`). This is a documented
+  local decision, not a reproduction: HT-CapsNet reports Stanford Cars, which
+  has no banner, so the source pipeline has no defined behaviour for it. The
+  FGVC-Aircraft README instructs that the banner be removed, and every other
+  model in this repository removes it — Hier-COS explicitly, HRN and H-CAST via
+  their evaluation centre crops. Leaving it in would have made HT-CapsNet the
+  only Aircraft row trained and evaluated on a constant artifact. LH-DNN also
+  uses the fixed-resize path on Aircraft and does not yet crop. (`16` heads with independent
   `key_dim=value_dim=32`) through PyTorch scaled-dot-product attention; Q/K/V
   width is therefore 512 at every level rather than being divided from the
   capsule dimension.
