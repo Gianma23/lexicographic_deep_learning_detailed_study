@@ -261,7 +261,6 @@ class HTCapsNet(nn.Module):
         attn_postprocess: str = "layernorm",
         input_size: int = 224,
         hcc_cfg: Optional[Dict[str, Any]] = None,
-        train_epochs: int = 1,
     ):
         super().__init__()
         self.num_classes_per_level = [int(v) for v in num_classes_per_level]
@@ -385,11 +384,9 @@ class HTCapsNet(nn.Module):
             num_classes_per_level=self.num_classes_per_level,
             taxonomy=taxonomy,
             hcc_cfg=hcc_cfg,
-            train_epochs=train_epochs,
         )
 
     def set_epoch(self, epoch: int) -> None:
-        self.hcc.set_epoch(epoch)
         self.reset_dynamic_weight_accumulators()
 
     @torch.no_grad()

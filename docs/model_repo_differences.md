@@ -202,10 +202,15 @@ samples, or choose models on test data.
 - Upstream scripts can select/report on test data. Local checkpoints are
   selected only on validation data.
 - Partial-label HRN branches are out of scope.
-- CIFAR-100 is a local extrapolation that retains the repository-wide native
-  32 px CIFAR preprocessing for cross-model comparability. Consequently it is
-  not an input-resolution reproduction of an HRN paper run.
-- Requested ImageNet initialization is mandatory; unavailable weights fail.
+- CIFAR-100 is a local HRN-WRN-28-8 adaptation that retains the
+  repository-wide native 32 px preprocessing and uses the same CIFAR-style
+  backbone geometry as Hier-COS. The WideResNet trunk preserves an `8 x 8`
+  spatial map for the HRN branches, whereas a standard ResNet-50 would reduce
+  the native CIFAR input to approximately `1 x 1`. Consequently this preset is
+  neither an architecture nor an input-resolution reproduction of an HRN paper
+  run; CUB and Aircraft remain the ResNet-50/448 px source-aligned presets.
+- For the ResNet-50 presets, requested ImageNet initialization is mandatory;
+  unavailable weights fail rather than silently falling back to random weights.
 
 ## Hier-COS
 

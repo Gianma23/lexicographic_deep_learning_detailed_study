@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs HRN + HCC variants (HCC generalized from H-CAST, see
+# Runs the HRN + HCC arm (HCC generalized from H-CAST, see
 # models/common/hcc.py) on top of the plain HRN baseline configs:
-# - hrn_hcc_<dataset>_step_0epoch
-# - hrn_hcc_<dataset>_step_160epoch
+# - hrn_hcc_<dataset>_level_marginal_step_0epoch
 # for: cifar100, cub200, aircraft.
+#
+# HCC is a binary on/off switch; there is no onset/alpha/temperature ablation.
+# The `_step_0epoch` suffix is legacy naming kept so existing run directories
+# and analysis notebooks stay valid.
 #
 # HRN's real hierarchical training signal is a combinatorial marginal loss
 # over sigmoid tree scores (_hierarchical_loss/_level_marginal_tree_losses),
@@ -125,15 +128,13 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local epoch_tag="$2"
-  echo "$OUTPUTS_ROOT/hrn_hcc_${ds}_level_marginal_step_${epoch_tag}"
+  echo "$OUTPUTS_ROOT/hrn_hcc_${ds}_level_marginal_step_0epoch"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lexicographic mode: disabled\n'
 printf 'HCC: enabled\n'
-printf 'HCC alpha schedule: step\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -142,23 +143,10 @@ print_seed_run_settings
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
-  run_seeded_train "$cfg" "$(run_output_dir "$ds" 0epoch)" \
+  run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
     "model.loss=level_marginal" \
     "hcc.enabled=true" \
-    "hcc.temperature=10" \
     "hcc.eps=1e-12" \
-    "hcc.alpha_schedule=step" \
-    "hcc.alpha_start_epoch=0" \
-    "train.lexicographic.enabled=false"
-
-  # 80% of train.epochs (200), matching H-CAST's own 80/100 convention.
-  run_seeded_train "$cfg" "$(run_output_dir "$ds" 160epoch)" \
-    "model.loss=level_marginal" \
-    "hcc.enabled=true" \
-    "hcc.temperature=10" \
-    "hcc.eps=1e-12" \
-    "hcc.alpha_schedule=step" \
-    "hcc.alpha_start_epoch=160" \
     "train.lexicographic.enabled=false"
 done
 

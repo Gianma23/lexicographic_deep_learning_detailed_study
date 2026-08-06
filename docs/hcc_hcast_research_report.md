@@ -2,6 +2,14 @@
 
 Date: 2026-05-12
 
+> **Status note (2026-08-06).** HCC is now a binary on/off switch in this
+> codebase: the `alpha_schedule` / `alpha_start_epoch` / `temperature` knobs were
+> removed, so the delayed arm (`step@80`) is no longer reproducible from a
+> current config. The `step@0` arm is numerically identical to today's
+> `hcc.enabled: true`. Findings below are retained as a record of the runs that
+> were executed while the schedule existed; the delayed-HCC recommendation no
+> longer corresponds to a supported setting.
+
 This report analyzes whether, where, and why HCC helps H-CAST. It uses only the uncommented runs in `notebooks/hcast_analysis.ipynb`: CIFAR-100, CUB-200-2011, and FGVC-Aircraft, each with H-CAST, HCAST no-KL, HCC step@80, HCC step@80 no-KL, HCC step@0, and HCC step@0 no-KL.
 
 The `hcc_internal_diagnostics` notebook is used only as a glossary for metric interpretation. Numeric HCC conclusions below come from the scoped run logs and `test_metrics.yaml` files under `/scratch/g.saggini1/outputs`.

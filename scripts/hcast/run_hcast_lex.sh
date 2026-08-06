@@ -52,10 +52,10 @@ LEX_PROJECTION_MODE="${LEX_PROJECTION_MODE:-coarse_first}"
 LEX_PROJECTION_RULE="${LEX_PROJECTION_RULE:-orthogonalize_all}"
 
 case "$LEX_PROJECTION_MODE" in
-  coarse_first|fine_first|pairwise_orthogonal) ;;
+  coarse_first|fine_first) ;;
   *)
     echo "Unsupported LEX_PROJECTION_MODE: $LEX_PROJECTION_MODE" >&2
-    echo "Expected coarse_first, fine_first, or pairwise_orthogonal." >&2
+    echo "Expected coarse_first or fine_first." >&2
     exit 2
     ;;
 esac

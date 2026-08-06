@@ -125,7 +125,6 @@ class HierCosNativeEquivalenceTests(unittest.TestCase):
             wide_widen_factor=1,
             wide_drop_rate=0.0,
             hcc_cfg=hcc_cfg,
-            train_epochs=10,
         )
         model.eval()
         return model
@@ -145,15 +144,7 @@ class HierCosNativeEquivalenceTests(unittest.TestCase):
 
     def test_hcc_subspace_norm_reproduces_the_trained_hcc_forward_pass(self):
         baseline = self._build_model()
-        with_hcc = self._build_model(
-            {
-                "enabled": True,
-                "temperature": 1.0,
-                "eps": 1e-12,
-                "alpha_schedule": "step",
-                "alpha_start_epoch": 0,
-            }
-        )
+        with_hcc = self._build_model({"enabled": True, "eps": 1e-12})
         with torch.no_grad():
             baseline_output = baseline(self._images())
             hcc_output = with_hcc(self._images())

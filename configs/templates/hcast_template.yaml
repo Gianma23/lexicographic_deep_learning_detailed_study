@@ -40,13 +40,6 @@ model:
 
 # Optional model-agnostic Hierarchical Constraint Cascade (HCC) projection block.
 hcc:
-  enabled: false                   # true enables hierarchical affine projection constraints
+  enabled: false                   # true enables hierarchical affine projection constraints (fully on from epoch 0)
   final_test_only: false           # true applies HCC only during final test evaluations
-  # temperature is REQUIRED when enabled=true
-  temperature: 20.0                # Base projection temperature (> 0 when enabled)
   eps: 1.0e-12                     # Numerical stability epsilon (auto-clamped to > 0)
-  alpha_schedule: exp              # exp | tanh | linear | step
-  alpha_start_epoch: 0             # Epoch index where constraint blending starts
-  alpha_ramp_epochs: 0             # Ramp length; <=0 means "until train end"
-  alpha_tanh_beta: 3.0             # Steepness for centered tanh alpha schedule, used for alpha_schedule=tanh
-  alpha_tanh_center: 0.5           # Midpoint in [0,1] for tanh schedule

@@ -26,16 +26,19 @@ Convention used below:
 | 3 | Level weighting | `model.weight_mode` | `equal`, `kl_leaf`, `kl_coarse` | [losses.py:12](models/orthonormal_plugin/losses.py#L12) |
 | 4 | Learnable transform | `model.transform_mode` | `full`, `bn_linear`, `final_only` | [model.py:343-347](models/hiercos/model.py#L343-L347) |
 | 5 | Gradient-space lex | `train.lexicographic.enabled` | `false`, `true` | [config.py:106-123](train/lexicographic/config.py#L106-L123) |
-| 5a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first`, `pairwise_orthogonal` | [config.py:9](train/lexicographic/config.py#L9) |
+| 5a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first` | [config.py:9](train/lexicographic/config.py#L9) |
 | 5b | Lex projection rule | `.projection_rule` | `orthogonalize_all`, `conflict_only` | [config.py:10](train/lexicographic/config.py#L10) |
 | 6 | LH-style projection | `model.projection.enabled` | `false`, `true` | [model.py:270](models/hiercos/model.py#L270) |
-| 6a | PReLU ρ variant | `.rho_enabled` | `false`, `true` | [model.py:271-274](models/hiercos/model.py#L271-L274) |
-| 6b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:275-278](models/hiercos/model.py#L275-L278) |
+| 6b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:142-145](models/hiercos/model.py#L142-L145) |
 | 6c | Feature width | `.feature_dim` | `0` (= total nodes), `512`, … | [model.py:290-317](models/hiercos/model.py#L290-L317) |
 | 7 | Output-space HCC | `hcc.enabled` | `false`, `true` | [config_validation.py:763](train/config_validation.py#L763) |
-| 7a | α schedule | `hcc.alpha_schedule` | `exp`, `tanh`, `linear`, `step` | [config_validation.py:788-792](train/config_validation.py#L788-L792) |
-| 7b | α onset | `hcc.alpha_start_epoch` | `0`, `80` | [run_hiercos_hcc_grid.sh](scripts/hiercos/run_hiercos_hcc_grid.sh) |
-| 7c | Test-time only | `hcc.final_test_only` | `false`, `true` | [config_validation.py:764](train/config_validation.py#L764) |
+| 7a | Test-time only | `hcc.final_test_only` | `false`, `true` | [config_validation.py:764](train/config_validation.py#L764) |
+
+HCC has no onset, α-schedule, or temperature axis: it is a binary switch, fully applied
+from the first batch whenever `hcc.enabled: true`. The former `alpha_schedule` /
+`alpha_start_epoch` / `temperature` ablation was removed from the codebase; runs recorded
+below as `step@0` are the retained arm, and `step@80` / `step@160` arms are historical
+only.
 | 8 | Backbone | `model.variant`, `model.pretrained`, `model.pool` | `haframe_wide_resnet` / `haframe_resnet50`; `true`/`false`; `max`/`average` | [model.py:349-366](models/hiercos/model.py#L349-L366) |
 | 9 | Dataset | `dataset.name` | `cifar-100`, `cub-200-2011`, `fgvc-aircraft` (iNat21 supported by the framework, no Hier-COS runs) | `configs/hiercos/` |
 | 10 | Seed | `train.seed` | 3 seeds default (`NUM_RUNS=3`) | `scripts/run_seed_utils.sh` |
@@ -132,13 +135,15 @@ lex; `run_hiercos_transform_ablation.sh`.
 
 **Lex variants** — `coarse_first` vs `fine_first` on all three datasets;
 `conflict_only` on CIFAR-100 only (`hiercos_cifar100_global_softmax_ce_reg_lex_conflict_only_coarse_first`).
-`pairwise_orthogonal` has a script path but no run directory.
 
-**LH projection** — CIFAR-100, CUB, Aircraft with `level_softmax_ce_reg` + identity frame;
-`_d512` width variant; `_rho` variant (CUB only); `_noadapt` (CIFAR-100 only).
+**LH projection** — the PReLU derivative is now part of the method and always applied, and
+`projection` is the only projection variant; the earlier batch-shared-`A` adapter-free
+variant was removed on 2026-08-06 and its run directories deleted. Only two runs survive:
+`hiercos_cub200_level_softmax_ce_reg_projection_kl_leaf_identity` and its `_d512`
+width variant, both CUB. **CIFAR-100 and Aircraft have no valid projection run.**
 `advantage_enabled` is implemented and script-exposed but I found no run directory.
 
-**HCC on Hier-COS** — `run_hiercos_hcc_grid.sh` exists (step@0, step@80, T=10) but I found
+**HCC on Hier-COS** — `run_hiercos_hcc_grid.sh` exists (single HCC-on arm) but I found
 no `hiercos_*hcc*` output directories. Treat as **specified, not yet run**.
 
 Note: the working tree (uncommitted) removes two former preconditions on HCC + Hier-COS —
@@ -155,11 +160,11 @@ on CIFAR-100), `hiercos_aircraft_..._fromscratch_...` vs pretrained.
 
 | Gap | Why it matters |
 |---|---|
-| `pairwise_orthogonal` never run | The order-free control for RQ4; without it "coarse-first helps" cannot be separated from "any projection helps" |
+| No order-free lex control | Axis 5a only offers ordered modes, so "coarse-first helps" cannot be separated from "any projection helps"; see RQ4 |
 | `conflict_only` on one dataset only | Cannot tell whether the conflict-gating result generalizes |
 | `kl_coarse` never run | Leaves the weight axis one-sided; see RQ3 |
 | HCC on Hier-COS not run | RQ7 currently has no Hier-COS arm at all |
-| `advantage_enabled` never run | One of the three LH-projection sub-variants is untested |
+| `advantage_enabled` never run | One of the two LH-projection sub-variants is untested |
 | No seed-matched lex × weight cross | The known `equal` / `kl_leaf` confound (RQ3) |
 | **No HCC × lex validation guard** | The pair is incoherent (A.2b) but currently accepted; an invalid run could be produced and analysed in good faith |
 | No LH vs. lex head-to-head at matched settings | RQ6's central comparison; the two implementations of one principle have not been run against each other on identical frame/loss/weights/seeds |
@@ -269,17 +274,19 @@ Lex projects the per-level gradients so that higher-priority levels are protecte
 question is not only "does it help" but "does the lexicographic *structure* help, or is any
 gradient decorrelation enough?" [interp]
 
-The design has a control built in, which is why axis 5a has three values and not two:
+Axis 5a supplies the ordering contrast:
 
 | Arm | Role |
 |---|---|
 | `coarse_first` | the hypothesis — coarse levels take priority |
 | `fine_first` | reversed priority; if it matches coarse-first, ordering is not the mechanism |
-| `pairwise_orthogonal` | **order-free control** — decorrelates without imposing any priority |
 
-`pairwise_orthogonal` is the arm that makes this a real test and it has not been run. Without
-it, "coarse-first improves TICE" is compatible with "projecting gradients at all improves
-TICE." I would prioritize this above any new dataset.
+There is no order-free control arm: every implemented mode imposes a priority direction. The
+reversed-order arm still discriminates *which* ordering matters, but on its own it cannot
+separate "coarse-first improves TICE" from "projecting gradients at all improves TICE" —
+if the two orderings behave alike, the residual explanation (any decorrelation helps) stays
+untested. Treat that as a standing limitation of RQ4 rather than a gap that a currently
+available config could close.
 
 Axis 5b asks a different question: `orthogonalize_all` projects unconditionally,
 `conflict_only` projects only when gradients actually conflict. If `conflict_only` matches
@@ -289,8 +296,9 @@ lexicographic diagnostics in `run_log.jsonl` (how often the conflict gate fires)
 
 There is no lex-onset axis: gradient projection is active for the whole run whenever
 `train.lexicographic.enabled=true`, so lex is studied only as a training-dynamics
-intervention, not as a fine-tuning correction. The HCC step@0 / step@80 contrast (axis 7b)
-has no lexicographic counterpart.
+intervention, not as a fine-tuning correction. HCC now matches that convention — it is
+active for the whole run whenever `hcc.enabled=true` — so neither mechanism carries an
+onset axis.
 
 ## RQ5 — Does lex need a learnable transform to act on?
 
@@ -337,10 +345,11 @@ first-order/branch-point restriction cost real hierarchy consistency?** That is 
 head-to-head at matched frame, loss, weights, and seeds, scored primarily on TICE and AHD,
 with the `none` baseline as the shared reference.
 
-Sub-axes on the LH side probe exactly where its guarantee is thin: `rho_enabled` makes the
-protected subspace sample-dependent through the PReLU derivative
-([model.py:530-545](models/hiercos/model.py#L530-L545)), testing whether the idempotency
-requirement bites in practice; `advantage_enabled` adds a parent-logit baseline (untested);
+Sub-axes on the LH side probe exactly where its guarantee is thin. The PReLU derivative
+that makes the protected subspace sample-dependent
+([model.py:373-392](models/hiercos/model.py#L373-L392)) is no longer one of them: it is
+part of the method and is always applied, so the former `rho_enabled` axis is gone and
+runs without it are superseded. `advantage_enabled` adds a parent-logit baseline (untested);
 `feature_dim` (512 vs. total nodes) sets how much room exists above the protected subspace,
 floored by constraint 7.
 
@@ -358,9 +367,8 @@ and the absence of combination arms is itself the result: hierarchy consistency 
 bought in output space *or* in gradient space, but the two are not composable, because HCC
 destroys the objective separability that gradient ordering requires.
 
-The α-schedule axis (step@0 vs step@80) asks whether hierarchy consistency should be imposed
-from initialization or applied as a late correction, and `final_test_only` isolates the
-extreme case: constraint applied *only* at test time, which cleanly separates "the
+HCC is applied from initialization, with no onset ablation. `final_test_only` remains the
+one timing contrast: constraint applied *only* at test time, which cleanly separates "the
 constraint improved the learned representation" from "the constraint fixed up the
 predictions." That is the cheapest and most decisive HCC arm, and the whole HCC-on-Hier-COS
 family is currently unrun.
@@ -455,8 +463,7 @@ everything but the implementation fixed.
 
 Lex is the one mechanism that reaches four models, so it carries most of the
 cross-architecture weight. Each new model arm should carry at minimum the RQ4 core:
-`coarse_first` / `fine_first` / `pairwise_orthogonal` × `orthogonalize_all` /
-`conflict_only`, at matched weights.
+`coarse_first` / `fine_first` × `orthogonalize_all` / `conflict_only`, at matched weights.
 
 | Model | Status |
 |---|---|
@@ -495,7 +502,7 @@ LH-DNN is excluded (C.0). Requires exactly three levels; HRN additionally requir
 
 | Model | Status |
 |---|---|
-| H-CAST | run extensively (step@0, step@80, inversestep@80, linear, cond2, nokl) |
+| H-CAST | run extensively; only the always-on arm (historically `step@0`) remains reachable — `step@80`, `inversestep@80`, `linear`, `cond2` were schedule variants and are historical records only |
 | Hier-COS | **not run** (see A.3 — arm recently widened) |
 | HRN | **not run** — needs `level_marginal` |
 | HT-CapsNet | **not run** |
@@ -517,16 +524,14 @@ Ranked by information gained per GPU-hour, not by convenience:
    `none` baseline. This is the thesis's central mechanistic claim: whether the in-graph
    differentiable formulation buys the same ordering as explicit projection. Requires
    `level_softmax_ce_reg` + identity frame on both arms, which the existing runs partly cover.
-3. **Run `pairwise_orthogonal`** — without the order-free control, RQ4's central claim is
-   not identified.
-4. **HCC on Hier-COS**, starting with `final_test_only` — cheapest decisive arm, and RQ7
+3. **HCC on Hier-COS**, starting with `final_test_only` — cheapest decisive arm, and RQ7
    currently has no Hier-COS data at all.
-5. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a
+4. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a
    cross-architecture claim.
-6. **Plugin frame ladder on one of H-CAST / HRN / HT-CapsNet** — tests whether RQ1
+5. **Plugin frame ladder on one of H-CAST / HRN / HT-CapsNet** — tests whether RQ1
    generalizes. Not LH-DNN (C.0).
-7. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.
-8. **`advantage_enabled`, `conflict_only` on remaining datasets** — completeness.
+6. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.
+7. **`advantage_enabled`, `conflict_only` on remaining datasets** — completeness.
 
 ## C.5 Reporting rules to hold across the whole matrix
 

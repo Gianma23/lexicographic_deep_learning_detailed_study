@@ -21,9 +21,10 @@ model:
   fixed_frame_per_level: false      # false = one global fixed layer; true = one frozen block per hierarchy level
 
   # Optional LH-style projection after the complete transform. Projection keeps
-  # the transform's PReLU activations and residual skips unchanged; the level
-  # branches read the transform output directly unless rho_enabled inserts a
-  # shared PReLU and adds its derivative to the projection matrix.
+  # the transform's PReLU activations and residual skips unchanged, then inserts
+  # a shared terminal PReLU whose derivative enters the projection matrix as
+  # A[b]=[W_1; ...; W_(l-1)] * rho'(k[b]). That derivative is part of the LH
+  # method and is always applied.
   # Each projected branch has a learnable FC head; the level outputs are
   # concatenated and passed through an identity or per-level block-diagonal
   # fixed frame; a dense global frame would mix the independent LH branches.
@@ -31,7 +32,6 @@ model:
   # train.lexicographic.enabled=true.
   projection:
     enabled: false                  # true enables the projected learnable level heads
-    rho_enabled: false              # true uses per-sample A[b]=[W_1; ...; W_(l-1)] * rho'(k[b])
     advantage_enabled: false        # true adds detached parent logits as LH-DNN advantage baselines
     feature_dim: 0                  # Shared width, projection only; 0 uses sum(num_classes_per_level)
     eps: 1.0e-6                     # Stabilizer for the projection solve

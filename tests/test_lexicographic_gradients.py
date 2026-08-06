@@ -119,7 +119,7 @@ class LexicographicProjectionReuseTests(unittest.TestCase):
             self.level_grad_map["mid"],
             self.level_grad_map["fine"],
         )
-        for projection_mode in ("coarse_first", "fine_first", "pairwise_orthogonal"):
+        for projection_mode in ("coarse_first", "fine_first"):
             for projection_rule in ("orthogonalize_all", "conflict_only"):
                 with self.subTest(mode=projection_mode, rule=projection_rule):
                     expected_grads, expected_metrics = gradient_ops._build_lexicographic_grads(

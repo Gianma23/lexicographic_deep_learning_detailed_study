@@ -1,6 +1,6 @@
 # HRN + Hier-COS Alignment Audit
 
-Updated: 2026-08-01
+Updated: 2026-08-05
 
 This note audits local `hrn` and `hiercos` implementations against upstream repositories:
 
@@ -18,7 +18,8 @@ The implementation choices below follow the selected clean-protocol constraints 
 ## HRN Alignment Status
 
 ### Architecture
-- **Aligned**: local `models/hrn/model.py` mirrors upstream `CUB_Aircraft/RFM.py` core design.
+- **Aligned for CUB/Aircraft**: the ResNet-50 path in local
+  `models/hrn/model.py` mirrors upstream `CUB_Aircraft/RFM.py` core design.
 - Evidence:
   - ResNet-50 trunk.
   - 3 branch conv blocks (`1x1 -> 3x3`, BN+ReLU).
@@ -48,6 +49,29 @@ The implementation choices below follow the selected clean-protocol constraints 
 - **Dataset-native CIFAR extrapolation**:
   - 32 px reflect-padded random crop and CIFAR normalization, matching the
     repository's other CIFAR-100 baselines rather than the HRN FGVC recipe.
+
+### CIFAR Backbone Choice
+
+The CIFAR-100 preset uses a WideResNet-28-8 trunk trained from scratch at the
+dataset-native 32 px resolution. This is a deliberate local adaptation, not an
+HRN paper setting. A standard ResNet-50 at this resolution would produce an
+approximately `1 x 1` final spatial feature map before HRN's three RFM
+branches. Consequently, the branches' subsequent `3 x 3` convolutions would
+have essentially no remaining spatial neighbourhoods to process.
+
+HRN and Hier-COS instantiate the same shared CIFAR WideResNet trunk
+implementation, with identical depth, width, residual blocks, initialization,
+and downsampling geometry. HRN consumes the shared trunk's spatial
+`512 x 8 x 8` output directly, whereas Hier-COS appends its existing node-space
+projection and global pooling to obtain a feature vector. This choice controls
+the backbone geometry when comparing their hierarchical mechanisms and avoids
+interpolating CIFAR images to 224 px, which would add no genuine visual detail.
+
+The CIFAR model must therefore be reported explicitly as **HRN-WRN-28-8**, a
+local backbone-controlled adaptation, and must not be described as the
+paper-aligned HRN architecture. Historical HRN-ResNet50 CIFAR results are not
+directly interchangeable with new HRN-WRN-28-8 runs and should retain their
+original run identifiers if used as a separate backbone ablation.
 
 ### Split/Evaluation Protocol
 - **Intentionally different**:
@@ -94,13 +118,14 @@ The implementation choices below follow the selected clean-protocol constraints 
 1. Hier-COS CIFAR remains 3-level in this repo (not upstream 5-level CIFAR protocol).
 2. HRN partial-label (`proportion`) experiments are not implemented in this pass.
 3. Checkpoint selection remains `FPA/TICE/weighted AP` to preserve repository-wide comparability.
-4. CIFAR-100 is an explicit native-32 px extrapolation because upstream HRN
-   does not report CIFAR-100; it prioritizes unified CIFAR comparability over
-   the paper's 448 px FGVC geometry.
+4. CIFAR-100 is an explicit native-32 px HRN-WRN-28-8 adaptation because
+   upstream HRN does not report CIFAR-100; it prioritizes CIFAR-appropriate
+   spatial geometry and backbone control with Hier-COS over the paper's
+   ResNet-50/448 px FGVC geometry.
 
 ## Active presets
 
-- `configs/hrn/hrn_cifar100.yaml` (local extrapolation)
+- `configs/hrn/hrn_cifar100.yaml` (local HRN-WRN-28-8 adaptation)
 - `configs/hrn/hrn_cub200.yaml`
 - `configs/hrn/hrn_aircraft.yaml`
 - `configs/hiercos/hiercos_cifar100.yaml`

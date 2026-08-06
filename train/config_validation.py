@@ -47,6 +47,9 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "name",
         "backbone",
         "pretrained",
+        "wide_depth",
+        "wide_widen_factor",
+        "wide_drop_rate",
         "branch_hidden_dim",
         "embedding_dim",
         "dropout",
@@ -210,13 +213,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
     "hcc": {
         "enabled",
         "final_test_only",
-        "temperature",
         "eps",
-        "alpha_schedule",
-        "alpha_start_epoch",
-        "alpha_ramp_epochs",
-        "alpha_tanh_beta",
-        "alpha_tanh_center",
     },
     "orthonormal_plugin": {
         "enabled",
@@ -240,7 +237,6 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
     },
     "model.projection": {
         "enabled",
-        "rho_enabled",
         "advantage_enabled",
         "feature_dim",
         "eps",
@@ -269,6 +265,20 @@ _REQUIRED_ROOT_SECTIONS = {
 }
 
 
+# Keys that used to be configurable and now have a single fixed behavior.
+# Kept here so stale configs and launcher overrides fail with a migration hint
+# instead of a bare unknown-key error.
+_RETIRED_KEYS: Dict[str, Dict[str, str]] = {
+    "model.projection": {
+        "rho_enabled": (
+            "The LH projection always applies the shared terminal PReLU and its "
+            "derivative rho'; it is the standard method, not an ablation. "
+            "Remove the key."
+        ),
+    },
+}
+
+
 def _plain_config(cfg: Any) -> Dict[str, Any]:
     if OmegaConf.is_config(cfg):
         payload = OmegaConf.to_container(cfg, resolve=True)
@@ -288,6 +298,9 @@ def _validate_unknown_keys(
 ) -> None:
     if not isinstance(value, Mapping):
         return
+    for key, reason in _RETIRED_KEYS.get(path, {}).items():
+        if key in value:
+            raise ValueError(f"`{path}.{key}` is no longer configurable. {reason}")
     if path == "model":
         allowed = _MODEL_KEYS.get(model_name or "", set().union(*_MODEL_KEYS.values()))
     else:
@@ -655,11 +668,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             raise ValueError(
                 "`model.projection.feature_dim` is supported only for model.name='hiercos'."
             )
-        if "rho_enabled" in projection:
-            raise ValueError(
-                "`model.projection.rho_enabled` is supported only for model.name='hiercos'; "
-                "LH-DNN always includes its ReLU derivative."
-            )
         if "enabled" in projection and not _require_bool(
             projection.get("enabled"),
             "model.projection.enabled",
@@ -677,8 +685,24 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             _positive_int(adaptive_pool_size, "model.adaptive_pool_size")
 
     if model_name == "hrn":
-        _require_enum(model.get("backbone", "resnet50"), "model.backbone", {"resnet50"})
+        hrn_backbone = _require_enum(
+            model.get("backbone", "resnet50"),
+            "model.backbone",
+            {"resnet50", "wide_resnet"},
+        )
         _validate_optional_bool(model, "pretrained", "model.pretrained")
+        if hrn_backbone == "wide_resnet":
+            if model.get("pretrained", True):
+                raise ValueError(
+                    "HRN model.backbone='wide_resnet' requires model.pretrained=false."
+                )
+            wide_depth = _positive_int(model.get("wide_depth", 28), "model.wide_depth")
+            if (wide_depth - 4) % 6 != 0:
+                raise ValueError("HRN WideResNet depth must satisfy (wide_depth - 4) % 6 == 0.")
+            _positive_int(model.get("wide_widen_factor", 8), "model.wide_widen_factor")
+            wide_drop = _finite_float(model.get("wide_drop_rate", 0.0), "model.wide_drop_rate")
+            if wide_drop < 0.0 or wide_drop >= 1.0:
+                raise ValueError("HRN `model.wide_drop_rate` must be in [0, 1).")
         _require_enum(
             model.get("loss", "native"),
             "model.loss",
@@ -738,15 +762,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                 projection.get("enabled", False),
                 "model.projection.enabled",
             )
-            rho_enabled = _require_bool(
-                projection.get("rho_enabled", False),
-                "model.projection.rho_enabled",
-            )
-            if rho_enabled and not hiercos_projection_enabled:
-                raise ValueError(
-                    "Hier-COS `model.projection.rho_enabled=true` requires "
-                    "`model.projection.enabled=true`."
-                )
             advantage_enabled = _require_bool(
                 projection.get("advantage_enabled", False),
                 "model.projection.advantage_enabled",
@@ -795,8 +810,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         hcc_enabled = _require_bool(hcc.get("enabled", False), "hcc.enabled")
         _validate_optional_bool(hcc, "final_test_only", "hcc.final_test_only")
         if hcc_enabled:
-            if _finite_float(hcc.get("temperature", 0.0), "hcc.temperature") <= 0.0:
-                raise ValueError("Enabled HCC requires hcc.temperature > 0.")
             if _finite_float(hcc.get("eps", 0.0), "hcc.eps") <= 0.0:
                 raise ValueError("Enabled HCC requires hcc.eps > 0.")
             if model_name == "hrn" and model.get("loss", "native") != "level_marginal":
@@ -817,13 +830,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                         "model.projection.enabled=true (Hier-COS's own LH-DNN-style "
                         "projection); disable one of the two."
                     )
-        _require_enum(
-            hcc.get("alpha_schedule", "exp"),
-            "hcc.alpha_schedule",
-            {"exp", "tanh", "linear", "step"},
-        )
-        _positive_int(hcc.get("alpha_start_epoch", 0), "hcc.alpha_start_epoch", minimum=0)
-        _positive_int(hcc.get("alpha_ramp_epochs", 0), "hcc.alpha_ramp_epochs", minimum=0)
 
     plugin = payload.get("orthonormal_plugin")
     plugin_enabled = False
@@ -928,7 +934,7 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         _require_enum(
             lex.get("projection_mode", "coarse_first"),
             "train.lexicographic.projection_mode",
-            {"coarse_first", "fine_first", "pairwise_orthogonal"},
+            {"coarse_first", "fine_first"},
         )
         _require_enum(
             lex.get("projection_rule", "orthogonalize_all"),

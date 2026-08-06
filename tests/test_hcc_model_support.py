@@ -13,11 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # pass on top of each model's plain baseline config.
 HCC_CFG = {
     "enabled": True,
-    "temperature": 10,
     "eps": 1e-12,
-    "alpha_schedule": "step",
-    "alpha_start_epoch": 0,
-    "alpha_ramp_epochs": 0,
 }
 
 

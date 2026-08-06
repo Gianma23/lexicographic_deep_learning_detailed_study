@@ -41,6 +41,10 @@ class FidelityPresetTests(unittest.TestCase):
 
     def test_hrn_presets(self):
         cifar = self._load("configs/hrn/hrn_cifar100.yaml")
+        self.assertEqual(cifar["model"]["backbone"], "wide_resnet")
+        self.assertFalse(cifar["model"]["pretrained"])
+        self.assertEqual(cifar["model"]["wide_depth"], 28)
+        self.assertEqual(cifar["model"]["wide_widen_factor"], 8)
         self.assertEqual(cifar["dataset"]["image_size"], 32)
         self.assertEqual(cifar["dataset"]["mean"], [0.5071, 0.4867, 0.4408])
         self.assertEqual(cifar["dataset"]["transforms"]["eval"]["resize_mode"], "none")

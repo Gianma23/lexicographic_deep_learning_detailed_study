@@ -19,6 +19,7 @@ the document reads as one system. See :func:`use_paper_style` and
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 from pathlib import Path
@@ -26,6 +27,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+from matplotlib.colors import to_rgb
+from matplotlib.legend_handler import HandlerTuple
 from matplotlib.lines import Line2D
 from matplotlib.patches import Ellipse, Patch
 from matplotlib.text import Text
@@ -39,21 +42,91 @@ OFF_SCALE_GUTTER = 0.22
 OFF_SCALE_GROUP_SEP = 0.095
 OFF_SCALE_SEED_SEP = 0.030
 
-DEFAULT_PALETTE = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#6A3D9A")
-DEFAULT_MARKERS = ("o", "^", "s", "D", "v", "P", "X")
-DEFAULT_HATCHES = ("", "//", "\\\\", "xx", "..", "++", "oo")
+# --------------------------------------------------------------------------- #
+# Visual encoding
+# --------------------------------------------------------------------------- #
+#
+# Colour is globally semantic: it encodes the *mechanism*, the intervention a run
+# applies, and it means the same thing in every model's figure — HCC step@0 is
+# the same green whether you are reading hcast, hrn or ht_capsnet. Shape is
+# locally semantic: each notebook declares what it separates (the variant within
+# a mechanism for the single-family notebooks, the loss family for Hier-COS) and
+# the legend spells it out. That split is what lets Hier-COS carry more variables
+# than the others without breaking the cross-notebook colour contract.
+
+MECHANISM_COLORS = {
+    "baseline": "#0072B2",        # native objective, no intervention
+    "lex": "#D55E00",             # lexicographic gradient projection
+    "hcc": "#009E73",             # HCC output-space constraint cascade
+    "projection": "#E69F00",      # LH-DNN branch-point projection, sample-dependent A[b]
+}
+
+# Kept short on purpose: these are legend entries at 7 pt inside a 6.3 in page,
+# and the surrounding markdown carries the full description.
+MECHANISM_LABELS = {
+    "baseline": "Baseline",
+    "lex": "Lexicographic",
+    "hcc": "HCC constraint",
+    "projection": "LH-DNN projection",
+}
+
+# Cross-model references are context, not subject: they give up the colour
+# dimension entirely so the focal family owns it, and keep their identity in the
+# marker shape instead.
+REFERENCE_GREY = "#595959"
+REFERENCE_TEXT = "#333333"
+RING_COLOR = "#333333"
+RING_AREA_SCALE = 2.6
+
+# Ordered by robustness at print size. The first five are mutually unambiguous at
+# the ~6 pt nominal size of a mean marker; positions 6-8 add the two
+# rotation-ambiguous pairs (^/v, P/X) and the low-ink star, so an encoding with
+# five or fewer values never pays for them. Deliberately excluded: h, H, p and 8
+# (read as circles below ~8 pt), d (thin diamond, disappears), < and > (a third
+# and fourth triangle orientation).
+SHAPE_ALPHABET = ("o", "^", "s", "D", "P", "v", "X", "*")
+
+# ``scatter(s=...)`` is nominal size squared, not ink area, so a triangle and a
+# square at the same ``s`` differ by roughly 2x in ink. These factors partially
+# equalise the ink and are meant to be tuned by eye at print size.
+SHAPE_AREA_SCALE = {"o": 1.00, "^": 1.20, "s": 0.95, "D": 1.20,
+                    "P": 1.25, "v": 1.20, "X": 1.25, "*": 1.50}
+
+# Bars cannot carry a marker, so shape maps to hatch there.
+SHAPE_HATCHES = {"o": "", "^": "//", "s": "\\\\", "D": "xx",
+                 "P": "++", "v": "--", "X": "||", "*": "**"}
+
+# Variant vocabulary for the single-family notebooks, so that "HCC step@0 is a
+# green square" holds across hcast, hrn and ht_capsnet.
+VARIANT_MARKERS = {
+    "native": "o",
+    "coarse_first": "^",
+    "immediate": "s",       # HCC activated at epoch 0
+    "delayed": "D",         # HCC activated late (step@80 / step@160)
+    "no_global_kl": "v",
+    "fine_first": "X",
+}
+
+VARIANT_LABELS = {
+    "native": "Native objective",
+    "coarse_first": "Coarse-first priority",
+    "immediate": "Activated at epoch 0",
+    "delayed": "Activated late",
+    "no_global_kl": "No global KL",
+    "fine_first": "Fine-first priority",
+}
 
 MODEL_REFERENCE_SPECS = (
-    {"key": "hcast", "label": "H-CAST", "run_name": "hcast_{dataset}", "color": "#6A3D9A"},
-    {"key": "hrn", "label": "HRN", "run_name": "hrn_{dataset}", "color": "#33A02C"},
+    {"key": "hcast", "label": "H-CAST", "run_name": "hcast_{dataset}", "marker": "o"},
+    {"key": "hrn", "label": "HRN", "run_name": "hrn_{dataset}", "marker": "s"},
     {
         "key": "hiercos",
         "label": "Hier-COS",
         "run_name": "hiercos_{dataset}_global_softmax_ce_reg_baseline_kl_leaf",
-        "color": "#E6AB02",
+        "marker": "D",
     },
-    {"key": "lhdnn", "label": "LH-DNN", "run_name": "lhdnn_{dataset}", "color": "#E7298A"},
-    {"key": "ht_capsnet", "label": "HT-CapsNet", "run_name": "capsnet_{dataset}", "color": "#8C564B"},
+    {"key": "lhdnn", "label": "LH-DNN", "run_name": "lhdnn_{dataset}", "marker": "P"},
+    {"key": "ht_capsnet", "label": "HT-CapsNet", "run_name": "capsnet_{dataset}", "marker": "*"},
 )
 
 
@@ -88,8 +161,9 @@ BAR_LABEL_FONTSIZE = 5.8
 SUPLABEL_FONTSIZE = 8.5
 SEED_MARKER_SIZE = 11
 MEAN_MARKER_SIZE = 38
-EMPHASIS_MARKER_SIZE = 56
 REFERENCE_MARKER_SIZE = 58
+# Printed length of the off-scale direction arrow, in points.
+OFF_SCALE_ARROW_PT = 9.0
 
 
 def use_paper_style():
@@ -113,12 +187,9 @@ def save_figure(fig, figure_dir, stem, save_figures=True, formats=("pdf", "png")
     plt.show()
 
 
-def _legend_height_in(handle_count, ncol):
+def _legend_height_in(nrow):
     """Vertical inches a bottom legend needs, so the panels can be sized around it."""
-    if handle_count <= 0:
-        return 0.0
-    rows = math.ceil(handle_count / max(1, ncol))
-    return 0.22 + 0.155 * rows
+    return 0.0 if nrow <= 0 else 0.22 + 0.155 * nrow
 
 
 # --------------------------------------------------------------------------- #
@@ -222,12 +293,21 @@ def _run_name(spec, dataset_key):
     return run_name(dataset_key) if callable(run_name) else run_name.format(dataset=dataset_key)
 
 
+def mechanism_of(spec):
+    """The intervention a spec applies, which is what colour encodes.
+
+    ``family`` is the older name for the same idea and is still accepted, so a
+    notebook that has not been migrated keeps working.
+    """
+    return spec.get("mechanism") or spec.get("family")
+
+
 def discover_rows(outputs_root, datasets, run_specs, pareto=True):
     """Aggregate the independently selected test metrics of every completed seed.
 
     Returns ``(rows, missing)``. A spec may restrict itself to a subset of
     datasets through ``datasets`` and opts into HCC activation diagnostics
-    through ``family='hcc'``.
+    through ``mechanism='hcc'``.
     """
     outputs_root = Path(outputs_root)
     rows = []
@@ -252,7 +332,7 @@ def discover_rows(outputs_root, datasets, run_specs, pareto=True):
                     "best_epoch": float(selected.get("best_epoch", np.nan)),
                     **independent_values(metrics),
                 }
-                if spec.get("family") == "hcc":
+                if mechanism_of(spec) == "hcc":
                     values["selected_hcc_alpha"] = float(metrics.get("proj_constraint_alpha", np.nan))
                     values["first_active_hcc_epoch"] = _first_active_hcc_epoch(seed_dir)
                 seed_values[seed] = values
@@ -266,9 +346,12 @@ def discover_rows(outputs_root, datasets, run_specs, pareto=True):
                 "seed_values": seed_values,
                 "single_selection": single_selection,
                 "point_label": spec.get("point_label") or spec.get("plot_label") or spec["label"],
+                # Accept either name on input, guarantee both on output.
+                "mechanism": mechanism_of(spec),
+                "family": spec.get("family") or spec.get("mechanism"),
             }
             stat_keys = list(VALUE_KEYS)
-            if spec.get("family") == "hcc":
+            if mechanism_of(spec) == "hcc":
                 stat_keys.extend(("selected_hcc_alpha", "first_active_hcc_epoch"))
             for key in stat_keys:
                 mean, std = sample_stats(values.get(key, np.nan) for values in seed_values.values())
@@ -299,26 +382,200 @@ def mark_pareto(rows, datasets, label_key="label"):
     return rows
 
 
-def assign_default_styles(rows, palette=DEFAULT_PALETTE, markers=DEFAULT_MARKERS, hatches=DEFAULT_HATCHES):
-    """Fill in ``color``/``marker``/``hatch`` for specs that do not declare them.
+def _marker_area(marker, base):
+    """Scatter area that renders roughly the same ink for any glyph."""
+    return base * SHAPE_AREA_SCALE.get(marker, 1.0)
 
-    Styles are assigned per run key so that a run keeps the same appearance in
-    every dataset panel.
+
+def _legend_markersize(marker, base):
+    """Line2D ``markersize`` matching a scatter drawn at ``base`` area.
+
+    A legend is a key, so its glyph must be the size of the thing it keys.
     """
-    keys = list(dict.fromkeys(row["key"] for row in rows))
+    return math.sqrt(_marker_area(marker, base))
+
+
+def _channel_values(rows, prop):
+    """Observed values of a channel property, in a stable order."""
+    getter = prop if callable(prop) else (lambda row: row.get(prop))
+    values = {getter(row) for row in rows}
+    return getter, sorted(values, key=lambda value: (value is None, str(value)))
+
+
+def _resolve_channel(rows, channel, spec, alphabet):
+    """Turn a ``(property, mapping)`` channel spec into a value -> style map.
+
+    ``mapping`` may be a dict or ``'auto'``. Auto-assignment walks the observed
+    values in sorted order rather than row order, so a style survives adding,
+    removing or reordering runs.
+    """
+    prop, mapping = spec
+    getter, values = _channel_values(rows, prop)
+    if mapping == "auto":
+        if len(values) > len(alphabet):
+            raise ValueError(
+                f"channel {channel!r} has {len(values)} values but only "
+                f"{len(alphabet)} styles are available: {values}"
+            )
+        mapping = dict(zip(values, alphabet))
+    else:
+        unmapped = [value for value in values if value not in mapping]
+        if unmapped:
+            raise ValueError(f"channel {channel!r} has no style for {unmapped}")
+    return getter, mapping
+
+
+def encode_rows(rows, hue=None, shape=None, fill=None, ring=None,
+                point_label=None, bar_label=None):
+    """Resolve visual channels from row properties and return the encoding.
+
+    Each channel is a ``(property, mapping)`` pair, where ``property`` is a row
+    key or a callable and ``mapping`` is a dict or the string ``'auto'``:
+
+        encode_rows(rows,
+                    hue=('mechanism', MECHANISM_COLORS),
+                    shape=('loss_label', LOSS_MARKERS),
+                    fill=('frame', {'identity': 'hollow'}),
+                    ring=('weight', {'kl_leaf': True}))
+
+    ``fill`` maps to hollow when its value is truthy and not the literal
+    ``'filled'``; ``ring`` maps to a charcoal halo on the same test. Writes
+    ``color``, ``marker``, ``hollow``, ``ring`` and the matching ``bar_*`` keys
+    onto every row, and returns the channel description the legend engine needs.
+    """
+    rows = list(rows)
+    encoding = {"channels": {}, "hue": None, "shape": None, "fill": None, "ring": None}
+    if not rows:
+        return encoding
+
+    if hue is not None:
+        getter, mapping = _resolve_channel(rows, "hue", hue, tuple(MECHANISM_COLORS.values()))
+        encoding["hue"] = {"prop": hue[0], "mapping": mapping}
+        for row in rows:
+            row["color"] = mapping[getter(row)]
+    if shape is not None:
+        getter, mapping = _resolve_channel(rows, "shape", shape, SHAPE_ALPHABET)
+        encoding["shape"] = {"prop": shape[0], "mapping": mapping}
+        for row in rows:
+            row["marker"] = mapping[getter(row)]
+    if fill is not None:
+        getter, mapping = _resolve_channel(rows, "fill", fill, ("filled", "hollow"))
+        encoding["fill"] = {"prop": fill[0], "mapping": mapping}
+        for row in rows:
+            value = mapping[getter(row)]
+            row["hollow"] = bool(value) and value != "filled"
+    if ring is not None:
+        getter, mapping = _resolve_channel(rows, "ring", ring, (None, "solid"))
+        encoding["ring"] = {"prop": ring[0], "mapping": mapping}
+        for row in rows:
+            row["ring"] = bool(mapping[getter(row)])
+
+    markers = {row.get("marker") for row in rows} - {None}
+    unknown = markers - set(SHAPE_ALPHABET)
+    if unknown:
+        raise ValueError(f"markers outside SHAPE_ALPHABET: {sorted(unknown)}")
+    # A hollow star at 6 pt is mush, so refuse the combination outright rather
+    # than shipping an unreadable panel.
+    if "*" in markers and any(row.get("hollow") for row in rows):
+        raise ValueError("marker '*' cannot be combined with a hollow fill channel")
+
     for row in rows:
-        index = keys.index(row["key"])
-        row.setdefault("color", palette[index % len(palette)])
-        row.setdefault("marker", markers[index % len(markers)])
-        row.setdefault("hatch", hatches[index % len(hatches)])
-    return rows
+        row.setdefault("color", MECHANISM_COLORS["baseline"])
+        row.setdefault("marker", SHAPE_ALPHABET[0])
+        row.setdefault("hollow", False)
+        row.setdefault("ring", False)
+        row["hatch"] = row["bar_hatch"] = SHAPE_HATCHES.get(row["marker"], "")
+        row["bar_color"] = row["color"]
+        if point_label is not None:
+            row["point_label"] = point_label(row)
+        if bar_label is not None:
+            row["bar_label"] = bar_label(row)
+        else:
+            row.setdefault("bar_label", row["label"])
+    return encoding
+
+
+def style_tuple(row):
+    """The visual identity of a row: what the legend must separate."""
+    return (row.get("color"), row.get("marker"), bool(row.get("hollow")), bool(row.get("ring")))
+
+
+def _srgb_to_lab(color):
+    """CIE L*a*b* of a matplotlib colour, D65, for a perceptual distance check."""
+    rgb = np.asarray(to_rgb(color), dtype=float)
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    matrix = np.array([[0.4124, 0.3576, 0.1805],
+                       [0.2126, 0.7152, 0.0722],
+                       [0.0193, 0.1192, 0.9505]])
+    xyz = (matrix @ linear) / np.array([0.95047, 1.0, 1.08883])
+    f = np.where(xyz > 0.008856, np.cbrt(xyz), 7.787 * xyz + 16.0 / 116.0)
+    return np.array([116.0 * f[1] - 16.0, 500.0 * (f[0] - f[1]), 200.0 * (f[1] - f[2])])
+
+
+def color_distance(first, second):
+    """CIE76 delta-E. Roughly: below 20 two colours are confusable in print."""
+    return float(np.linalg.norm(_srgb_to_lab(first) - _srgb_to_lab(second)))
+
+
+def check_encoding(rows, reference_rows=(), datasets=None, min_delta_e=20.0, verbose=True):
+    """Report encoding faults that would make a panel unreadable.
+
+    The important one is style collision *within a dataset panel*: two runs that
+    resolve to the same colour, marker, fill and ring cannot be told apart, and
+    no legend can rescue them.
+    """
+    findings = []
+    panels = sorted({row["dataset"] for row in rows}) if datasets is None else list(datasets.values())
+
+    for row in rows:
+        mechanism = row.get("mechanism") or row.get("family")
+        if mechanism not in MECHANISM_COLORS:
+            findings.append(f"unknown mechanism {mechanism!r} on run {row['label']!r}")
+
+    for dataset in panels:
+        subset = [row for row in rows if row["dataset"] == dataset]
+        seen = {}
+        for row in subset:
+            seen.setdefault(style_tuple(row), []).append(row["label"])
+        for style, labels in seen.items():
+            if len(labels) > 1:
+                findings.append(
+                    f"{dataset}: {len(labels)} runs share one style {style}: {', '.join(labels)}"
+                )
+        colors = {row["color"] for row in subset}
+        colors |= {REFERENCE_GREY} if any(r["dataset"] == dataset for r in reference_rows) else set()
+        for first, second in itertools.combinations(sorted(colors), 2):
+            delta = color_distance(first, second)
+            if delta < min_delta_e:
+                findings.append(f"{dataset}: colours {first} and {second} differ by only dE {delta:.1f}")
+
+    focal_markers = {row.get("marker") for row in rows}
+    reused = focal_markers & {row.get("marker") for row in reference_rows}
+    notes = []
+    if reused:
+        # Expected by design: charcoal-vs-hue is the primary group separator and
+        # shape only has to be unique *within* a group.
+        notes.append(f"shape reused across focal and reference groups: {sorted(reused)} (by design)")
+
+    if verbose:
+        for finding in findings:
+            print(f"  ENCODING: {finding}")
+        for note in notes:
+            print(f"  encoding note: {note}")
+        if not findings:
+            print(f"  encoding OK ({len(rows)} rows, {len(panels)} panels)")
+    return findings
 
 
 def model_reference_specs(exclude=()):
-    """Return consistently styled cross-model references, excluding the focal model."""
+    """Return consistently styled cross-model references, excluding the focal model.
+
+    References give up colour so the focal family owns it, and keep their
+    identity in the marker shape.
+    """
     excluded = set(exclude)
     return [
-        {**spec, "family": "reference", "marker": "s"}
+        {**spec, "family": "reference", "mechanism": "reference", "color": REFERENCE_GREY}
         for spec in MODEL_REFERENCE_SPECS
         if spec["key"] not in excluded
     ]
@@ -479,7 +736,7 @@ def _offset_bbox(px, py, dx, dy, width, height, pad):
     return Bbox.from_extents(x0 - pad, y0 - pad, x0 + width + pad, y0 + height + pad)
 
 
-def place_point_labels(ax, label_specs, fontsize=POINT_LABEL_FONTSIZE):
+def place_point_labels(ax, label_specs, fontsize=POINT_LABEL_FONTSIZE, obstacles=()):
     """Greedily place direct labels in display space and draw leader lines.
 
     Placement is scored per candidate offset: overlapping another label, a data
@@ -492,6 +749,10 @@ def place_point_labels(ax, label_specs, fontsize=POINT_LABEL_FONTSIZE):
     points out of the axes, which is forbidden, so without a hint they drift
     diagonally into the middle of the panel instead of running along the gutter
     they are pinned to.
+
+    ``obstacles`` are extra display-space boxes to route around -- the off-scale
+    direction arrows, which are drawn outside this function but must not be
+    covered by the very label that explains them.
     """
     if not label_specs:
         return
@@ -509,6 +770,7 @@ def place_point_labels(ax, label_specs, fontsize=POINT_LABEL_FONTSIZE):
         Bbox.from_extents(x - marker_halfsize, y - marker_halfsize, x + marker_halfsize, y + marker_halfsize)
         for x, y in point_pixels
     ]
+    point_boxes.extend(obstacles)
     directions = _outward_directions(point_pixels)
     for index, spec in enumerate(label_specs):
         preferred = spec.get("preferred")
@@ -723,11 +985,13 @@ def off_scale_layout(reference_subset, inner_xlim, inner_ylim):
                 (entry["x"] if sx else point["tice"], entry["y"] if sy else point["fpa"])
                 for point in seed_points
             ]
-        entry["marker"] = (
-            "s" if (sx == 0 and sy == 0)
-            else (3, 0, float(np.degrees(np.arctan2(sy, sx)) - 90.0))
-        )
+        # Identity lives in the shape now, so a pinned reference keeps its own
+        # marker; direction is carried by a separate arrow glyph drawn beside it.
+        entry["marker"] = entry["row"]["marker"]
         entry["off_scale"] = bool(sx or sy)
+        entry["arrow_angle"] = (
+            float(np.degrees(np.arctan2(sy, sx))) if entry["off_scale"] else None
+        )
 
     return {
         "entries": entries,
@@ -755,12 +1019,31 @@ def draw_off_scale_gutters(ax, inner_xlim, inner_ylim, layout):
         ax.axhline(inner_ylim[1], **boundary)
 
 
+def _marker_handle(label, color=RING_COLOR, marker="o", hollow=False, ring=False,
+                   base=MEAN_MARKER_SIZE):
+    """One legend glyph, drawn the same way the plotted mean is drawn."""
+    size = _legend_markersize(marker, base)
+    handle = Line2D(
+        [], [], color=color, marker=marker, linestyle="None", markersize=size,
+        markerfacecolor="none" if hollow else color,
+        markeredgecolor=color if hollow else "white",
+        markeredgewidth=1.1 if hollow else 0.5, label=label,
+    )
+    if not ring:
+        return handle
+    halo = Line2D(
+        [], [], color=RING_COLOR, marker=marker, linestyle="None",
+        markersize=size * math.sqrt(RING_AREA_SCALE), markerfacecolor="none",
+        markeredgecolor=RING_COLOR, markeredgewidth=0.7, label=label,
+    )
+    return (halo, handle)
+
+
 def reference_legend_handles(reference_rows, reference_specs, off_scale=True):
+    """Cross-model references: grey, told apart by shape."""
     handles = [
-        Line2D(
-            [], [], color=spec["color"], marker="s", linestyle="None",
-            markersize=5, label=spec["label"],
-        )
+        _marker_handle(spec["label"], color=REFERENCE_GREY, marker=spec["marker"],
+                       base=REFERENCE_MARKER_SIZE)
         for spec in reference_specs
         if any(row["key"] == spec["key"] for row in reference_rows)
     ]
@@ -768,8 +1051,8 @@ def reference_legend_handles(reference_rows, reference_specs, off_scale=True):
         handles.extend(
             [
                 Line2D(
-                    [], [], color="#555555", marker=(3, 0, -90), linestyle="None",
-                    markersize=6, label="Off-scale: tip → true value",
+                    [], [], color=RING_COLOR, marker=(3, 0, -90), linestyle="None",
+                    markersize=5, label="Off-scale: arrow → true value",
                 ),
                 Patch(
                     facecolor="#000000", alpha=0.05, edgecolor="#777777", linestyle="--",
@@ -781,15 +1064,47 @@ def reference_legend_handles(reference_rows, reference_specs, off_scale=True):
 
 
 def default_point_legend_handles(rows, label_key="label"):
+    """One entry per run: the legend is a complete key."""
     unique = {row["key"]: row for row in rows}
     return [
-        Line2D(
-            [], [], color=row["color"], marker=row["marker"], linestyle="None",
-            markersize=5, markerfacecolor="none" if row.get("hollow") else row["color"],
-            markeredgewidth=1.1 if row.get("hollow") else 0.5, label=row[label_key],
-        )
+        _marker_handle(row[label_key], color=row["color"], marker=row["marker"],
+                       hollow=bool(row.get("hollow")), ring=bool(row.get("ring")))
         for row in unique.values()
     ]
+
+
+def encoding_legend_blocks(rows, encoding, label_key="label"):
+    """Factored legend: one block per channel, for matrices too wide to enumerate."""
+    blocks = []
+    if encoding.get("hue"):
+        mapping = encoding["hue"]["mapping"]
+        blocks.append([
+            _marker_handle(MECHANISM_LABELS.get(value, str(value)), color=color, marker="o")
+            for value, color in mapping.items()
+            if any(row["color"] == color for row in rows)
+        ])
+    if encoding.get("shape"):
+        mapping = encoding["shape"]["mapping"]
+        blocks.append([
+            _marker_handle(str(value), color=RING_COLOR, marker=marker)
+            for value, marker in mapping.items()
+            if any(row["marker"] == marker for row in rows)
+        ])
+    modifiers = []
+    if encoding.get("fill"):
+        hollow_values = [str(v) for v, s in encoding["fill"]["mapping"].items()
+                         if s and s != "filled"]
+        if hollow_values and any(row.get("hollow") for row in rows):
+            modifiers.append(_marker_handle(
+                f"Hollow: {', '.join(hollow_values)}", marker="o", hollow=True))
+    if encoding.get("ring"):
+        ring_values = [str(v) for v, s in encoding["ring"]["mapping"].items() if s]
+        if ring_values and any(row.get("ring") for row in rows):
+            modifiers.append(_marker_handle(
+                f"Ring: {', '.join(ring_values)}", marker="o", ring=True))
+    if modifiers:
+        blocks.append(modifiers)
+    return [block for block in blocks if block]
 
 
 def spread_legend_handles():
@@ -799,6 +1114,113 @@ def spread_legend_handles():
         Ellipse((0, 0), 1.0, 0.5, facecolor="#777777", edgecolor="#777777",
                 alpha=0.15, label="1-SD covariance ellipse"),
     ]
+
+
+def _blank_handle():
+    return Line2D([], [], marker="None", linestyle="None", label=" ")
+
+
+def handle_label(handle):
+    """Label of a handle, including the composite tuples used for ringed runs.
+
+    ``fig.legend`` reads labels off the handles itself, which a tuple handle
+    cannot answer, so the labels are collected here and passed alongside.
+    """
+    return (handle[-1] if isinstance(handle, tuple) else handle).get_label()
+
+
+def _pack_blocks(blocks, nrow):
+    """Flatten legend blocks column-major so each block starts a fresh column.
+
+    ``Legend._init_legend_box`` splits handles with ``np.array_split(h, ncols)``,
+    i.e. column-major, and gives the first ``n % ncols`` columns an extra row.
+    Padding every block to a whole number of columns makes ``n`` an exact
+    multiple of ``ncols``, so no ragged column steals the next block's first row.
+    """
+    handles = []
+    for block in blocks:
+        columns = max(1, math.ceil(len(block) / nrow))
+        handles.extend(block)
+        handles.extend(_blank_handle() for _ in range(columns * nrow - len(block)))
+    return handles, (len(handles) // nrow if nrow else 0)
+
+
+def _block_width_in(block):
+    """Rough printed width of one legend column holding ``block``."""
+    longest = max((len(handle_label(handle)) for handle in block), default=1)
+    return 0.34 + 0.052 * longest
+
+
+def _blocked_layout(blocks, width_in=TEXT_WIDTH_IN, max_rows=8):
+    """Smallest row count whose block-aligned columns still fit the text width.
+
+    Returns ``None`` when no row count fits. Keeping each block in its own
+    column is a nicety; fitting the page is not, so the caller falls back to a
+    flat legend rather than letting the blocked layout run off the edge.
+    """
+    if not blocks:
+        return 0
+    for nrow in range(1, max_rows + 1):
+        total = sum(math.ceil(len(block) / nrow) * _block_width_in(block) for block in blocks)
+        if total <= width_in - 0.2:
+            return nrow
+    return None
+
+
+def _flat_layout(blocks, width_in=TEXT_WIDTH_IN):
+    """One flat handle list, sized so the widest label still fits a column."""
+    handles = [handle for block in blocks for handle in block]
+    column_width = max(_block_width_in(block) for block in blocks)
+    ncol = max(1, min(len(handles), int((width_in - 0.2) // column_width)))
+    return handles, ncol, math.ceil(len(handles) / ncol)
+
+
+def legend_plan(rows, encoding=None, reference_rows=(), reference_specs=(),
+                off_scale=False, label_key="label", legend_ncol=None,
+                max_per_run_keys=7):
+    """Decide legend mode and layout, and report whether it is a complete key.
+
+    Per-run mode is used when the resolved styles are injective over run keys and
+    there are few enough of them; then the legend identifies every point on its
+    own and direct labels are redundant. The test is injectivity, not a guess
+    about which notebook is running, so a matrix that grows into a collision
+    starts labelling its points again instead of silently becoming unreadable.
+    """
+    encoding = encoding or {}
+    unique = {row["key"]: row for row in rows}
+    styles = [style_tuple(row) for row in unique.values()]
+    complete_key = bool(unique) and len(set(styles)) == len(styles) and len(unique) <= max_per_run_keys
+
+    if not rows:
+        blocks = []
+    elif complete_key:
+        blocks = [default_point_legend_handles(rows, label_key)]
+    else:
+        blocks = encoding_legend_blocks(rows, encoding, label_key)
+        if not blocks:
+            blocks = [default_point_legend_handles(rows, label_key)]
+
+    blocks.append(spread_legend_handles())
+    reference_block = reference_legend_handles(reference_rows, reference_specs, off_scale)
+    if reference_block:
+        blocks.append(reference_block)
+
+    if legend_ncol is not None:
+        nrow = max(1, math.ceil(sum(len(block) for block in blocks) / legend_ncol))
+        handles, ncol = _pack_blocks(blocks, nrow)
+    else:
+        nrow = _blocked_layout(blocks)
+        if nrow is None:
+            handles, ncol, nrow = _flat_layout(blocks)
+        else:
+            handles, ncol = _pack_blocks(blocks, nrow)
+    return {
+        "handles": handles, "labels": [handle_label(handle) for handle in handles],
+        "ncol": max(1, ncol), "nrow": nrow,
+        "complete_key": complete_key, "blocks": blocks,
+        # ndivide=1 overlays the ring and the marker; ndivide=None would tile them.
+        "handler_map": {tuple: HandlerTuple(ndivide=1, pad=0)},
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -812,30 +1234,42 @@ def spread_legend_handles():
 # omitted on purpose — they belong in the LaTeX caption.
 
 
+def _draw_ring(ax, x, y, marker, base_area, zorder=2.5):
+    """Charcoal halo around a mean marker: one boolean channel, print-robust."""
+    ax.scatter(
+        x, y, marker=marker, s=_marker_area(marker, base_area) * RING_AREA_SCALE,
+        facecolor="none", edgecolor=RING_COLOR, linewidth=0.7, zorder=zorder,
+    )
+
+
 def _draw_run_points(ax, subset, label_key):
     """Draw focal-family seeds, means, and ellipses; return their label specs."""
     labels = []
     for row in subset:
         color = row["color"]
+        marker = row["marker"]
         hollow = bool(row.get("hollow"))
         seed_points = list(row["seed_values"].values())
         ax.scatter(
             [point["tice"] for point in seed_points],
             [point["fpa"] for point in seed_points],
-            marker=row["marker"], s=SEED_MARKER_SIZE,
+            marker=marker, s=_marker_area(marker, SEED_MARKER_SIZE),
             facecolor="none" if hollow else color,
             edgecolor=color if hollow else "none",
             linewidth=0.5 if hollow else 0, alpha=0.35, zorder=2,
         )
         add_covariance_ellipse(ax, row, color)
+        if row.get("ring"):
+            _draw_ring(ax, row["tice"], row["fpa"], marker, MEAN_MARKER_SIZE)
         ax.scatter(
-            row["tice"], row["fpa"], marker=row["marker"],
-            s=EMPHASIS_MARKER_SIZE if row.get("emphasis") else MEAN_MARKER_SIZE,
+            row["tice"], row["fpa"], marker=marker,
+            s=_marker_area(marker, MEAN_MARKER_SIZE),
             facecolor="none" if hollow else color,
             edgecolor=color if hollow else "white",
             linewidth=1.1 if hollow else 0.6, zorder=3,
         )
-        labels.append({"x": row["tice"], "y": row["fpa"], "text": row[label_key], "color": color})
+        labels.append({"x": row["tice"], "y": row["fpa"], "text": row[label_key],
+                       "color": color, "kind": "focal"})
     return labels
 
 
@@ -843,21 +1277,107 @@ def _draw_reference_points(ax, reference_subset):
     """Draw references on the shared scale, without the off-scale machinery."""
     labels = []
     for row in reference_subset:
+        marker = row["marker"]
         seed_points = list(row["seed_values"].values())
         ax.scatter(
             [point["tice"] for point in seed_points],
             [point["fpa"] for point in seed_points],
-            marker="s", s=SEED_MARKER_SIZE, facecolor="none", edgecolor=row["color"],
+            marker=marker, s=_marker_area(marker, SEED_MARKER_SIZE),
+            facecolor="none", edgecolor=row["color"],
             linewidth=0.5, alpha=0.55, zorder=3,
         )
         ax.scatter(
-            row["tice"], row["fpa"], marker="s", s=REFERENCE_MARKER_SIZE,
+            row["tice"], row["fpa"], marker=marker,
+            s=_marker_area(marker, REFERENCE_MARKER_SIZE),
             facecolor=row["color"], edgecolor="white", linewidth=0.6, zorder=4,
         )
         labels.append(
-            {"x": row["tice"], "y": row["fpa"], "text": reference_point_label(row), "color": row["color"]}
+            {"x": row["tice"], "y": row["fpa"], "text": reference_point_label(row),
+             "color": REFERENCE_TEXT, "kind": "reference"}
         )
     return labels
+
+
+def _draw_off_scale_arrow(ax, x, y, angle, renderer):
+    """Point out of the panel toward a pinned reference's true value.
+
+    Deliberately unlike the label leader line (colour-matched, thin, no head):
+    this one is solid charcoal with an arrowhead, and points the opposite way.
+    The offset is in points so the printed length does not follow the data range.
+    """
+    radians = math.radians(angle)
+    annotation = ax.annotate(
+        "", xy=(x, y), xycoords="data",
+        xytext=(OFF_SCALE_ARROW_PT * math.cos(radians), OFF_SCALE_ARROW_PT * math.sin(radians)),
+        textcoords="offset points",
+        arrowprops={"arrowstyle": "<|-", "color": RING_COLOR, "linewidth": 0.8,
+                    "shrinkA": 0, "shrinkB": 4, "mutation_scale": 6},
+        annotation_clip=False, zorder=5,
+    )
+    to_pixels = ax.figure.dpi / 72.0
+    px, py = ax.transData.transform((x, y))
+    dx, dy = OFF_SCALE_ARROW_PT * math.cos(radians) * to_pixels, OFF_SCALE_ARROW_PT * math.sin(radians) * to_pixels
+    return annotation, Bbox.from_extents(
+        min(px, px + dx) - 2, min(py, py + dy) - 2, max(px, px + dx) + 2, max(py, py + dy) + 2
+    )
+
+
+def _draw_baseline_crosshair(ax, baseline, inner_xlim, inner_ylim):
+    """Thin guides at the canonical baseline, clipped to the truthful range.
+
+    Clipping matters: marks pinned in a gutter sit at deliberately false
+    positions, so extending the crosshair into one would invite reading
+    "left of the baseline" off a coordinate that is not a coordinate.
+    """
+    if baseline is None:
+        return
+    style = {"color": baseline["color"], "alpha": 0.30, "linewidth": 0.7,
+             "linestyle": "-", "zorder": 1.5}
+    # The guides are annotation, not data: let them span the range without
+    # feeding back into it, or autoscale grows the panel around them.
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    ax.plot(inner_xlim, [baseline["fpa"]] * 2, **style)
+    ax.plot([baseline["tice"]] * 2, inner_ylim, **style)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+
+
+def default_baseline_selector(row, subset):
+    """The run other runs are compared against: the explicit canonical one if any.
+
+    Falling back to "first baseline in row order" makes the choice depend on
+    ``RUN_SPECS`` ordering, which is why a spec can flag itself ``canonical``.
+    """
+    canonical = next((other for other in subset if other.get("canonical")), None)
+    if canonical is not None:
+        return canonical
+    return next((other for other in subset if mechanism_of(other) == "baseline"), None)
+
+
+POINT_LABEL_MODES = ("auto", "all", "off_scale", "none")
+
+
+def _label_kinds(point_labels, complete_key, frozen):
+    """Which label populations survive, for one panel.
+
+    The three populations carry different information. A focal label repeats what
+    the legend already says whenever the legend is a complete key. An in-range
+    reference label repeats a truthful position. A gutter-pinned reference label
+    is the *only* record of a value whose drawn position is deliberately false,
+    so it survives everything except an explicit ``'none'``.
+    """
+    if point_labels == "all":
+        return {"focal", "reference", "reference_off_scale"}
+    if point_labels == "off_scale":
+        return {"reference_off_scale"}
+    if point_labels == "none":
+        return set()
+    kinds = {"reference_off_scale"}
+    if not complete_key:
+        kinds.add("focal")
+    if not frozen:
+        kinds.add("reference")
+    return kinds
 
 
 def plot_tradeoff(
@@ -869,8 +1389,12 @@ def plot_tradeoff(
     reference_specs=(),
     freeze_on_focal="auto",
     label_key="point_label",
+    encoding=None,
+    point_labels="off_scale",
+    baseline_selector=default_baseline_selector,
+    baseline_marker="crosshair",
     legend_handles=None,
-    legend_ncol=3,
+    legend_ncol=None,
     panel_height=2.55,
     stem="fpa_tice_tradeoff",
 ):
@@ -882,23 +1406,55 @@ def plot_tradeoff(
     is the readable choice when the focal family has a single arm. The default
     ``'auto'`` decides per panel: freeze once the panel holds at least two focal
     runs, since a single point carries no range to freeze on.
+
+    ``point_labels`` selects which direct labels are drawn -- see
+    :func:`_label_kinds`. The default keeps only the labels that carry
+    information no legend can: the gutter-pinned references, whose drawn position
+    is deliberately false. Note that a panel which never freezes has no pinned
+    references, so under the default it carries no labels at all and relies
+    entirely on the legend and the axes.
     """
-    handles = list(legend_handles) if legend_handles is not None else default_point_legend_handles(rows)
-    handles.extend(spread_legend_handles())
-    # Reserve legend space up front so the panels keep their authored height.
-    estimated = len(handles) + len({row["key"] for row in reference_rows}) + 2
-    figure_height = len(datasets) * panel_height + _legend_height_in(estimated, legend_ncol)
+    if point_labels not in POINT_LABEL_MODES:
+        raise ValueError(f"point_labels must be one of {POINT_LABEL_MODES}, got {point_labels!r}")
+
+    # A gutter is possible whenever some panel could freeze; the exact per-panel
+    # answer is only known while drawing, but the legend has to be sized first.
+    may_freeze = any(
+        (len([r for r in rows if r["dataset"] == dataset]) >= 2)
+        if freeze_on_focal == "auto" else bool(freeze_on_focal)
+        for dataset in datasets.values()
+    )
+    plan = legend_plan(
+        rows, encoding, reference_rows, reference_specs, off_scale=may_freeze,
+        label_key=label_key, legend_ncol=legend_ncol,
+    )
+    if legend_handles is None:
+        handles, ncol, nrow = plan["handles"], legend_ncol or plan["ncol"], plan["nrow"]
+    else:
+        # Escape hatch: the caller supplies the focal block, we still own the
+        # reference and spread blocks and the height that all of them need.
+        handles = list(legend_handles) + spread_legend_handles() + reference_legend_handles(
+            reference_rows, reference_specs, off_scale=may_freeze
+        )
+        ncol = legend_ncol or 3
+        nrow = math.ceil(len(handles) / max(1, ncol))
+    figure_height = len(datasets) * panel_height + _legend_height_in(nrow)
 
     fig, axes = plt.subplots(len(datasets), 1, figsize=(TEXT_WIDTH_IN, figure_height))
     axes = np.atleast_1d(axes)
     labels_by_axis = []
+    obstacles_by_axis = []
+    frozen_by_axis = []
     plotted_references = []
     used_gutters = False
+    pinned_total = 0
     for ax, dataset in zip(axes, datasets.values()):
         subset = [row for row in rows if row["dataset"] == dataset]
         reference_subset = [row for row in reference_rows if row["dataset"] == dataset]
         labels = _draw_run_points(ax, subset, label_key)
+        obstacles = []
         freeze = len(subset) >= 2 if freeze_on_focal == "auto" else bool(freeze_on_focal)
+        baseline = baseline_selector(None, subset) if baseline_marker == "crosshair" else None
 
         if subset and freeze:
             # Freeze the view on the focal family before adding other models.
@@ -909,19 +1465,29 @@ def plot_tradeoff(
             ax.set_xlim(layout["outer_xlim"])
             ax.set_ylim(layout["outer_ylim"])
             draw_off_scale_gutters(ax, inner_xlim, inner_ylim, layout)
+            _draw_baseline_crosshair(ax, baseline, inner_xlim, inner_ylim)
             used_gutters = used_gutters or any(layout["used_sides"].values())
             for entry in layout["entries"]:
                 row = entry["row"]
+                marker = entry["marker"]
                 seed_xy = np.asarray(entry["seed_xy"], dtype=float)
                 if seed_xy.size:
                     ax.scatter(
-                        seed_xy[:, 0], seed_xy[:, 1], marker=entry["marker"], s=SEED_MARKER_SIZE,
+                        seed_xy[:, 0], seed_xy[:, 1], marker=marker,
+                        s=_marker_area(marker, SEED_MARKER_SIZE),
                         facecolor="none", edgecolor=row["color"], linewidth=0.5, alpha=0.55, zorder=3,
                     )
                 ax.scatter(
-                    entry["x"], entry["y"], marker=entry["marker"], s=REFERENCE_MARKER_SIZE,
+                    entry["x"], entry["y"], marker=marker,
+                    s=_marker_area(marker, REFERENCE_MARKER_SIZE),
                     facecolor=row["color"], edgecolor="white", linewidth=0.6, zorder=4,
                 )
+                if entry["off_scale"]:
+                    pinned_total += 1
+                    _, box = _draw_off_scale_arrow(
+                        ax, entry["x"], entry["y"], entry["arrow_angle"], None
+                    )
+                    obstacles.append(box)
                 # Run the label back along the gutter it is pinned to, so it
                 # hugs that edge instead of cutting across the panel. Panels are
                 # much wider than they are tall, so a corner pin follows the
@@ -931,7 +1497,8 @@ def plot_tradeoff(
                 labels.append(
                     {
                         "x": entry["x"], "y": entry["y"], "text": reference_point_label(row),
-                        "color": row["color"], "preferred": preferred,
+                        "color": REFERENCE_TEXT, "preferred": preferred,
+                        "kind": "reference_off_scale" if entry["off_scale"] else "reference",
                         # Once placed, push it back out to the axes edge so the
                         # strip beyond the pinned marker is not left empty.
                         "slide": (sx, 0.0) if sx else ((0.0, sy) if sy else None),
@@ -942,12 +1509,20 @@ def plot_tradeoff(
             labels.extend(_draw_reference_points(ax, reference_subset))
             plotted_references.extend(reference_subset)
             ax.margins(x=0.14, y=0.22)
+            ax.autoscale_view()
+            _draw_baseline_crosshair(ax, baseline, ax.get_xlim(), ax.get_ylim())
 
         ax.set_title(dataset)
         ax.xaxis.set_major_locator(MaxNLocator(nbins=8))
         ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
         ax.grid(True, alpha=0.25)
         labels_by_axis.append(labels)
+        obstacles_by_axis.append(obstacles)
+        frozen_by_axis.append(bool(subset and freeze))
+
+    if point_labels == "none" and pinned_total:
+        print(f"  NOTE: point_labels='none' hides {pinned_total} off-scale value(s) whose "
+              f"drawn position is not their true value; the caption must carry them.")
 
     # The x label goes on the bottom panel rather than through fig.supxlabel:
     # constrained_layout puts a supxlabel in the same outside-bottom slot as the
@@ -955,17 +1530,56 @@ def plot_tradeoff(
     axes[-1].set_xlabel("TICE, independent decoding (%) — lower is better")
     fig.supylabel("FPA, independent decoding (%) — higher is better", fontsize=SUPLABEL_FONTSIZE)
 
-    handles.extend(reference_legend_handles(plotted_references, reference_specs, off_scale=used_gutters))
     if handles:
-        fig.legend(handles=handles, loc="outside lower center", ncol=legend_ncol, frameon=True)
+        fig.legend(handles=handles, labels=[handle_label(handle) for handle in handles],
+                   loc="outside lower center", ncol=ncol,
+                   frameon=True, handler_map=plan["handler_map"])
 
     # Resolve the constrained layout, then freeze it: the label placement below
     # measures in display space and must not be invalidated by a later relayout.
     fig.canvas.draw()
     fig.set_layout_engine("none")
-    for ax, labels in zip(axes, labels_by_axis):
-        place_point_labels(ax, labels)
+    for ax, labels, obstacles, frozen in zip(axes, labels_by_axis, obstacles_by_axis, frozen_by_axis):
+        keep = _label_kinds(point_labels, plan["complete_key"], frozen)
+        place_point_labels(ax, [spec for spec in labels if spec["kind"] in keep],
+                           obstacles=obstacles)
     save_figure(fig, figure_dir, stem, save_figures)
+
+
+def _series_label(row, label_key):
+    """Bars carry fewer channels than points, so they get the fuller label."""
+    return row.get("bar_label") or row[label_key]
+
+
+def _bar_series(row, label_key):
+    """Translate a row's point encoding into the bar channels.
+
+    Shape has no bar equivalent, so it becomes hatch; the fill and ring channels
+    become outline treatments rather than a tint, which would be unreadable at
+    this size.
+    """
+    marker = row.get("marker", "o")
+    return {
+        "key": row["key"],
+        "label": _series_label(row, label_key),
+        "color": row.get("bar_color") or row["color"],
+        "hatch": row.get("bar_hatch", SHAPE_HATCHES.get(marker, "")),
+        "hollow": bool(row.get("hollow")),
+        "ring": bool(row.get("ring")),
+    }
+
+
+def _bar_kwargs(spec):
+    """Bar/legend-patch styling, kept in one place so the two always agree."""
+    hollow = spec["hollow"]
+    return {
+        # A hollow bar takes its hatch colour from the edge, which is the
+        # intended read: it makes filled and hollow obviously different classes.
+        "facecolor": "none" if hollow else spec["color"],
+        "edgecolor": spec["color"] if hollow else ("#111111" if spec["ring"] else "#333333"),
+        "hatch": spec["hatch"],
+        "linewidth": 0.9 if hollow else (1.1 if spec["ring"] else 0.35),
+    }
 
 
 def plot_level_accuracy(
@@ -973,31 +1587,25 @@ def plot_level_accuracy(
     datasets,
     figure_dir,
     save_figures=False,
-    reference_rows=(),
     label_key="label",
     legend_ncol=3,
     panel_height=1.55,
     stem="level_accuracy",
 ):
-    """Draw absolute coarse/middle/fine accuracy per run, with optional references.
+    """Draw absolute coarse/middle/fine accuracy per run of the focal family.
 
     This is the view that stays informative when a model family has a single arm,
     where the delta figure below has nothing to compare against.
+
+    Cross-model references are deliberately not drawn. They were trained with
+    their own recipes and epoch budgets, so a side-by-side bar invites a
+    controlled reading the data does not support; the trade-off figure already
+    places them, and the summary tables carry their numbers. Leaving them out
+    also keeps the bars wide enough to stay readable as the run matrix grows.
     """
     x = np.arange(3)
-    # Prefer the bar-specific style: point colour may encode a shared property
-    # (Hier-COS uses it for the softmax family) and would leave bars ambiguous.
-    series = [
-        {"key": row["key"], "label": row[label_key],
-         "color": row.get("bar_color") or row["color"],
-         "hatch": row.get("bar_hatch", row.get("hatch", "")), "reference": False}
-        for row in {row["key"]: row for row in rows}.values()
-    ]
-    series += [
-        {"key": row["key"], "label": row["label"] + " (reference)", "color": row["color"],
-         "hatch": "..", "reference": True}
-        for row in {row["key"]: row for row in reference_rows}.values()
-    ]
+    series = [_bar_series(row, label_key)
+              for row in {row["key"]: row for row in rows}.values()]
     if not series:
         print("No runs available for the level-accuracy figure.")
         return
@@ -1005,24 +1613,22 @@ def plot_level_accuracy(
     # Per-bar value labels stop being readable once the bars get thin.
     annotate = len(series) <= 6
 
-    figure_height = len(datasets) * panel_height + _legend_height_in(len(series), legend_ncol)
+    nrow = math.ceil(len(series) / max(1, legend_ncol))
+    figure_height = len(datasets) * panel_height + _legend_height_in(nrow)
     fig, axes = plt.subplots(
         len(datasets), 1, figsize=(TEXT_WIDTH_IN, figure_height), sharex=True, sharey=True
     )
     axes = np.atleast_1d(axes)
     for ax, dataset in zip(axes, datasets.values()):
         for index, spec in enumerate(series):
-            pool = reference_rows if spec["reference"] else rows
-            row = next((r for r in pool if r["dataset"] == dataset and r["key"] == spec["key"]), None)
+            row = next((r for r in rows if r["dataset"] == dataset and r["key"] == spec["key"]), None)
             if row is None:
                 continue
             means = [row[f"acc_level_{level}"] for level in range(3)]
             stds = [row[f"acc_level_{level}_std"] for level in range(3)]
             positions = x + (index - (len(series) - 1) / 2) * width
             bars = ax.bar(
-                positions, means, width=width, color=spec["color"], hatch=spec["hatch"],
-                edgecolor="#333333", linewidth=0.35, zorder=2,
-                alpha=0.75 if spec["reference"] else 1.0,
+                positions, means, width=width, zorder=2, **_bar_kwargs(spec),
                 yerr=stds if np.all(np.isfinite(stds)) else None, capsize=1.6,
                 error_kw={"linewidth": 0.6},
             )
@@ -1034,20 +1640,10 @@ def plot_level_accuracy(
         ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
         ax.grid(True, axis="y", alpha=0.25)
     fig.supylabel("Independent accuracy (%)", fontsize=SUPLABEL_FONTSIZE)
-    handles = [
-        plt.Rectangle(
-            (0, 0), 1, 1, facecolor=spec["color"], hatch=spec["hatch"],
-            edgecolor="#333333", linewidth=0.35,
-            alpha=0.75 if spec["reference"] else 1.0, label=spec["label"],
-        )
-        for spec in series
-    ]
+    handles = [plt.Rectangle((0, 0), 1, 1, label=spec["label"], **_bar_kwargs(spec))
+               for spec in series]
     fig.legend(handles=handles, loc="outside lower center", ncol=legend_ncol, frameon=True)
     save_figure(fig, figure_dir, stem, save_figures)
-
-
-def default_baseline_selector(row, subset):
-    return next((other for other in subset if other.get("family") == "baseline"), None)
 
 
 def plot_level_accuracy_deltas(
@@ -1088,21 +1684,15 @@ def plot_level_accuracy_deltas(
         return
 
     comparison_keys = list(dict.fromkeys(pair["run"]["key"] for pair in pairs))
-    comparison_specs = []
-    for index, key in enumerate(comparison_keys):
-        run = next(pair["run"] for pair in pairs if pair["run"]["key"] == key)
-        comparison_specs.append(
-            {
-                "key": key,
-                "label": run.get("bar_label") or run[label_key],
-                "color": run.get("bar_color") or run["color"],
-                "hatch": run.get("bar_hatch", run.get("hatch", DEFAULT_HATCHES[index % len(DEFAULT_HATCHES)])),
-            }
-        )
+    comparison_specs = [
+        _bar_series(next(pair["run"] for pair in pairs if pair["run"]["key"] == key), label_key)
+        for key in comparison_keys
+    ]
     width = min(0.20, 0.8 / len(comparison_specs))
     annotate = len(comparison_specs) <= 6
 
-    figure_height = len(datasets) * panel_height + _legend_height_in(len(comparison_specs), legend_ncol)
+    nrow = math.ceil(len(comparison_specs) / max(1, legend_ncol))
+    figure_height = len(datasets) * panel_height + _legend_height_in(nrow)
     fig, axes = plt.subplots(
         len(datasets), 1, figsize=(TEXT_WIDTH_IN, figure_height), sharex=True, sharey=share_y
     )
@@ -1132,8 +1722,7 @@ def plot_level_accuracy_deltas(
             stds = samples.std(axis=0, ddof=1) if len(common_seeds) > 1 else np.full(3, np.nan)
             positions = x + (index - (len(comparison_specs) - 1) / 2) * width
             bars = ax.bar(
-                positions, means, width=width, color=spec["color"], hatch=spec["hatch"],
-                edgecolor="#333333", linewidth=0.35, zorder=2,
+                positions, means, width=width, zorder=2, **_bar_kwargs(spec),
                 yerr=stds if np.all(np.isfinite(stds)) else None,
                 capsize=1.6, error_kw={"linewidth": 0.6},
             )
@@ -1147,20 +1736,15 @@ def plot_level_accuracy_deltas(
     fig.supylabel(
         f"Independent accuracy change from {baseline_name} (pp)", fontsize=SUPLABEL_FONTSIZE
     )
-    handles = [
-        plt.Rectangle(
-            (0, 0), 1, 1, facecolor=spec["color"], hatch=spec["hatch"],
-            edgecolor="#333333", linewidth=0.35, label=spec["label"],
-        )
-        for spec in comparison_specs
-    ]
+    handles = [plt.Rectangle((0, 0), 1, 1, label=spec["label"], **_bar_kwargs(spec))
+               for spec in comparison_specs]
     fig.legend(handles=handles, loc="outside lower center", ncol=legend_ncol, frameon=True)
     save_figure(fig, figure_dir, stem, save_figures)
 
 
 def print_summary(rows, datasets, label_key="label", label_width=24):
     """Print per-dataset run tables with Pareto status and HCC diagnostics."""
-    show_hcc = any(row.get("family") == "hcc" for row in rows)
+    show_hcc = any(mechanism_of(row) == "hcc" for row in rows)
     header = (
         f"  {'run':<{label_width}} {'n':>2}  {'epoch':<15} {'FPA':<17} "
         f"{'TICE':<17} {'AHD':<17} {'weighted AP':<17} "
@@ -1193,7 +1777,7 @@ def print_summary(rows, datasets, label_key="label", label_width=24):
                 f"{format_percent(row['weighted_ap'], row['weighted_ap_std']):<17} "
             )
             if show_hcc:
-                if row.get("family") == "hcc":
+                if mechanism_of(row) == "hcc":
                     alpha, first = row["selected_hcc_alpha"], row["first_active_hcc_epoch"]
                     diagnostics = (
                         f"selected α={alpha:.2f}; first active={first:.0f}"

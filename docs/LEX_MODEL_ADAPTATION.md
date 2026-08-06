@@ -53,7 +53,7 @@ Validation runs in two places, both of which must pass:
 | Model must be `hcast`, `hiercos`, `ht_capsnet`, `hrn`, or plugin-wrapped | `config.py:134-139` |
 | `model.name: lhdnn` is rejected unconditionally | `config.py:132-133` |
 | Hier-COS `model.projection.enabled: true` is mutually exclusive with lex | `config_validation.py:903-907` |
-| `projection_mode` in `coarse_first`, `fine_first`, `pairwise_orthogonal` | `config.py:9` |
+| `projection_mode` in `coarse_first`, `fine_first` | `config.py:9` |
 | `projection_rule` in `orthogonalize_all`, `conflict_only` | `config.py:10` |
 | `eps > 0` | `config_validation.py:925` |
 

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs H-CAST + HCC variants on all supported HCC datasets:
+# Runs the H-CAST + HCC arm on all supported HCC datasets:
 # - hcast_hcc_<dataset>_step_0epoch
-# - hcast_hcc_<dataset>_step_80epoch
 # for: cifar100, cub200, aircraft.
+#
+# HCC is a binary on/off switch; there is no onset/alpha/temperature ablation.
+# The `_step_0epoch` suffix is legacy naming kept so existing run directories
+# and analysis notebooks stay valid.
 #
 # Starts from the plain H-CAST baseline config for each dataset and adds the
 # whole HCC block as CLI overrides, so `configs/hcast/` keeps only base presets.
@@ -67,12 +70,7 @@ config_for_dataset() {
 # HCC block applied on top of the baseline config; identical for every dataset.
 hcc_overrides=(
   "hcc.enabled=true"
-  "hcc.temperature=10"
   "hcc.eps=1e-12"
-  "hcc.alpha_schedule=step"
-  "hcc.alpha_ramp_epochs=0"
-  "hcc.alpha_tanh_beta=3.0"
-  "hcc.alpha_tanh_center=0.5"
   "train.lexicographic.enabled=false"
 )
 
@@ -136,16 +134,12 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local epoch_tag="$2"
-  case "$ds:$epoch_tag" in
-    cifar100:e0) echo "$OUTPUTS_ROOT/hcast_hcc_cifar100_step_0epoch" ;;
-    cifar100:e80) echo "$OUTPUTS_ROOT/hcast_hcc_cifar100_step_80epoch" ;;
-    cub200:e0) echo "$OUTPUTS_ROOT/hcast_hcc_cub200_step_0epoch" ;;
-    cub200:e80) echo "$OUTPUTS_ROOT/hcast_hcc_cub200_step_80epoch" ;;
-    aircraft:e0) echo "$OUTPUTS_ROOT/hcast_hcc_aircraft_step_0epoch_nokl" ;;
-    aircraft:e80) echo "$OUTPUTS_ROOT/hcast_hcc_aircraft_step_80epoch_nokl" ;;
+  case "$ds" in
+    cifar100) echo "$OUTPUTS_ROOT/hcast_hcc_cifar100_step_0epoch" ;;
+    cub200) echo "$OUTPUTS_ROOT/hcast_hcc_cub200_step_0epoch" ;;
+    aircraft) echo "$OUTPUTS_ROOT/hcast_hcc_aircraft_step_0epoch_nokl" ;;
     *)
-      echo "Unknown HCC run tuple: $ds $epoch_tag" >&2
+      echo "Unknown HCC dataset: $ds" >&2
       exit 1
       ;;
   esac
@@ -155,7 +149,6 @@ printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lexicographic mode: disabled\n'
 printf 'HCC: enabled\n'
-printf 'HCC alpha schedule: step\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -165,12 +158,9 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   globalkl="$(globalkl_for_dataset "$ds")"
 
-  for alpha_start_epoch in 0 80; do
-    run_seeded_train "$cfg" "$(run_output_dir "$ds" "e${alpha_start_epoch}")" \
-      "${hcc_overrides[@]}" \
-      "model.loss.globalkl=$globalkl" \
-      "hcc.alpha_start_epoch=$alpha_start_epoch"
-  done
+  run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
+    "${hcc_overrides[@]}" \
+    "model.loss.globalkl=$globalkl"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

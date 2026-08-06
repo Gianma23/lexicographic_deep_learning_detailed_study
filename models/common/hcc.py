@@ -3,15 +3,14 @@
 `HierarchicalAffineProjector` performs the linear affine hierarchy correction
 (least-squares projection onto "children sum to parent" via a fixed 0/1
 taxonomy map, staged coarse->fine with detached anchors). `HccController`
-wraps it with the epoch-dependent temperature/alpha schedule, raw/projected
-blending, and diagnostics originally written inline in H-CAST's model class,
-so every hierarchical model in this repo can reuse the same schedule instead
-of reimplementing it. `select_effective_logits` is the shared "prefer
-HCC-corrected per-level tensors over raw ones" helper used by each model's
-`losses.py`.
+wraps it with the enable/disable logic and diagnostics originally written
+inline in H-CAST's model class, so every hierarchical model in this repo can
+reuse the same behavior instead of reimplementing it. HCC is a binary switch:
+when enabled, the projection is fully applied from the first batch onwards.
+`select_effective_logits` is the shared "prefer HCC-corrected per-level
+tensors over raw ones" helper used by each model's `losses.py`.
 """
 
-import math
 from contextlib import nullcontext
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -233,60 +232,15 @@ class HierarchicalAffineProjector(nn.Module):
 def build_hcc_config(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     cfg = cfg or {}
     enabled = bool(cfg.get("enabled", False))
-    if enabled and "temperature" not in cfg:
-        raise ValueError(
-            "hcc.temperature is required when hcc.enabled=true."
-        )
-
-    raw_temperature = cfg.get("temperature", 1.0)
-    try:
-        temperature = float(raw_temperature)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("hcc.temperature must be a valid float.") from exc
-    if enabled and temperature <= 0.0:
-        raise ValueError(
-            "hcc.temperature must be > 0 when hcc.enabled=true."
-        )
 
     eps = float(cfg.get("eps", 1e-12))
     if eps <= 0.0:
         eps = 1e-12
-    alpha_schedule = cfg.get("alpha_schedule", "exp")
-    if not isinstance(alpha_schedule, str):
-        raise ValueError("hcc.alpha_schedule must be a string.")
-    if alpha_schedule not in {"exp", "tanh", "linear", "step"}:
-        raise ValueError(
-            "hcc.alpha_schedule must be one of ['exp', 'tanh', 'linear', 'step']."
-        )
-    try:
-        alpha_start_epoch = int(cfg.get("alpha_start_epoch", 0))
-    except (TypeError, ValueError):
-        alpha_start_epoch = 0
-    if alpha_start_epoch < 0:
-        alpha_start_epoch = 0
-    try:
-        alpha_ramp_epochs = int(cfg.get("alpha_ramp_epochs", 0))
-    except (TypeError, ValueError):
-        alpha_ramp_epochs = 0
-    if alpha_ramp_epochs <= 0:
-        alpha_ramp_epochs = 0
-    alpha_tanh_beta = float(cfg.get("alpha_tanh_beta", 3.0))
-    if alpha_tanh_beta <= 0.0:
-        alpha_tanh_beta = 3.0
-    alpha_tanh_center = float(cfg.get("alpha_tanh_center", 0.5))
-    if alpha_tanh_center <= 0.0 or alpha_tanh_center >= 1.0:
-        alpha_tanh_center = 0.5
     final_test_only = bool(cfg.get("final_test_only", False))
 
     return {
         "enabled": enabled,
-        "temperature": temperature,
         "eps": eps,
-        "alpha_schedule": alpha_schedule,
-        "alpha_start_epoch": alpha_start_epoch,
-        "alpha_ramp_epochs": alpha_ramp_epochs,
-        "alpha_tanh_beta": alpha_tanh_beta,
-        "alpha_tanh_center": alpha_tanh_center,
         "final_test_only": final_test_only,
     }
 
@@ -320,12 +274,12 @@ def resolve_hcc_cfg_from_top_level(cfg: Any) -> Dict[str, Any]:
 
 
 class HccController(nn.Module):
-    """Owns an optional `HierarchicalAffineProjector` plus its schedule/blend/diagnostics state.
+    """Owns an optional `HierarchicalAffineProjector` plus its on/off state and diagnostics.
 
     Each hierarchical model composes one of these (`self.hcc = HccController(...)`)
-    instead of reimplementing the epoch-dependent temperature/alpha ramp, blending,
-    and diagnostics inline. Registering it as a submodule keeps the projector's
-    buffers moving correctly with `.to(device)`/`.cuda()`.
+    instead of reimplementing the projection wiring and diagnostics inline.
+    Registering it as a submodule keeps the projector's buffers moving correctly
+    with `.to(device)`/`.cuda()`.
     """
 
     def __init__(
@@ -333,16 +287,9 @@ class HccController(nn.Module):
         num_classes_per_level: List[int],
         taxonomy: Optional[Dict[str, Any]],
         hcc_cfg: Optional[Dict[str, Any]],
-        train_epochs: int = 1,
     ):
         super().__init__()
         self.cfg = build_hcc_config(hcc_cfg)
-        self._current_epoch = 0
-        try:
-            parsed_train_epochs = int(train_epochs)
-        except (TypeError, ValueError):
-            parsed_train_epochs = 1
-        self._train_epochs = max(parsed_train_epochs, 1)
         self._final_test_active = False
 
         self.projector: Optional[HierarchicalAffineProjector] = None
@@ -363,13 +310,6 @@ class HccController(nn.Module):
                 eps=float(self.cfg["eps"]),
             )
 
-    def set_epoch(self, epoch: int) -> None:
-        try:
-            epoch_value = int(epoch)
-        except (TypeError, ValueError):
-            epoch_value = 0
-        self._current_epoch = max(epoch_value, 0)
-
     def set_final_test_active(self, active: bool) -> None:
         self._final_test_active = bool(active)
 
@@ -382,94 +322,14 @@ class HccController(nn.Module):
             return False
         return True
 
-    def temperature_and_alpha(self) -> Tuple[float, float]:
-        base_temperature = float(self.cfg["temperature"])
-        eps = float(self.cfg["eps"])
-        alpha_schedule = self.cfg.get("alpha_schedule", "exp")
-        if not isinstance(alpha_schedule, str):
-            raise ValueError("hcc.alpha_schedule must be a string.")
-        alpha_start_epoch = int(self.cfg.get("alpha_start_epoch", 0))
-        if alpha_start_epoch < 0:
-            alpha_start_epoch = 0
-        raw_alpha_ramp_epochs = int(self.cfg.get("alpha_ramp_epochs", 0))
-        default_ramp_epochs = max(self._train_epochs - alpha_start_epoch, 1)
-        alpha_ramp_epochs = raw_alpha_ramp_epochs if raw_alpha_ramp_epochs > 0 else default_ramp_epochs
-        if alpha_ramp_epochs <= 0:
-            alpha_ramp_epochs = 1
-        alpha_tanh_beta = float(self.cfg.get("alpha_tanh_beta", 3.0))
-        if alpha_tanh_beta <= 0.0:
-            alpha_tanh_beta = 3.0
-        alpha_tanh_center = float(self.cfg.get("alpha_tanh_center", 0.5))
-
-        # For temperature <= 1, constraints are fully on from the start.
-        if base_temperature <= 1.0:
-            return 1.0, 1.0
-
-        if self._current_epoch < alpha_start_epoch:
-            return float(base_temperature), 0.0
-
-        if alpha_schedule == "step":
-            return 1.0, 1.0
-
-        if alpha_ramp_epochs <= 1:
-            progress = 1.0
-        else:
-            progress = float(self._current_epoch - alpha_start_epoch) / float(max(alpha_ramp_epochs - 1, 1))
-            progress = min(max(progress, 0.0), 1.0)
-
-        if alpha_schedule == "tanh":
-            # Centered tanh sigmoid on progress in [0, 1]:
-            # alpha(0)=0, alpha(center)=0.5, alpha(1)=1.
-            center = min(max(alpha_tanh_center, eps), 1.0 - eps)
-            if progress <= center:
-                shifted_progress = 0.5 * (progress / max(center, eps))
-            else:
-                shifted_progress = 0.5 + (0.5 * ((progress - center) / max(1.0 - center, eps)))
-            beta = max(alpha_tanh_beta, eps)
-            tanh_beta = math.tanh(beta)
-            denom = 2.0 * tanh_beta
-            if abs(denom) <= eps:
-                alpha = shifted_progress
-            else:
-                centered_progress = (2.0 * shifted_progress) - 1.0
-                alpha = (math.tanh(beta * centered_progress) + tanh_beta) / denom
-            temperature = base_temperature - (alpha * (base_temperature - 1.0))
-        elif alpha_schedule == "linear":
-            alpha = progress
-            temperature = base_temperature - (alpha * (base_temperature - 1.0))
-        else:
-            temperature = base_temperature ** (1.0 - progress)
-            alpha = (base_temperature - temperature) / max(base_temperature - 1.0, eps)
-
-        alpha = min(max(alpha, 0.0), 1.0)
-        return float(temperature), float(alpha)
-
-    @staticmethod
-    def blend(
-        logits_per_level: List[torch.Tensor],
-        projected_logits_per_level: List[torch.Tensor],
-        alpha: float,
-        eps: float,
-    ) -> List[torch.Tensor]:
-        if alpha <= eps:
-            # Start without any projection effect.
-            return logits_per_level
-        if alpha >= (1.0 - eps):
-            return projected_logits_per_level
-        return [
-            ((1.0 - alpha) * logits) + (alpha * projected)
-            for logits, projected in zip(logits_per_level, projected_logits_per_level)
-        ]
-
     @staticmethod
     def diagnostics(
-        temperature: float,
-        alpha: float,
         projector_output: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
+        # `proj_constraint_alpha` is kept as the canonical "HCC was active for
+        # this batch" flag. HCC is on/off, so it is always 1.0 when logged.
         diagnostics = {
-            "proj_temperature": float(temperature),
-            "proj_constraint_alpha": float(alpha),
+            "proj_constraint_alpha": 1.0,
         }
         if isinstance(projector_output, dict):
             residual_before = projector_output.get("residual_before")
@@ -488,39 +348,20 @@ class HccController(nn.Module):
         """Run one HCC step over coarse->fine per-level logits for the current batch.
 
         Returns `projected_logits_per_level`/`effective_logits_per_level`/
-        `hcc_diagnostics`, all `None` when HCC is disabled or hasn't activated
-        yet for this batch (pre-activation epochs stay identical to the
-        uncorrected baseline model).
+        `hcc_diagnostics`, all `None` when HCC is disabled for this batch, in
+        which case downstream loss/metrics fall back to the raw logits and stay
+        identical to the uncorrected baseline model.
         """
         projected_logits_per_level = None
         effective_logits_per_level = None
         hcc_diagnostics = None
         if self.enabled():
-            if self.cfg.get("final_test_only", False) and self._final_test_active:
-                temperature, alpha = 1.0, 1.0
-            else:
-                temperature, alpha = self.temperature_and_alpha()
-            eps = float(self.cfg["eps"])
-            projector_output = None
-
-            # Keep pre-activation batches identical to the uncorrected baseline.
-            # Downstream loss/metrics use raw logits whenever effective logits are absent.
-            if alpha > eps:
-                projector_output = self.projector(logits_per_level)
-                projected_logits_per_level = projector_output["projected_logits_per_level"]
-                effective_logits_per_level = self.blend(
-                    logits_per_level=logits_per_level,
-                    projected_logits_per_level=projected_logits_per_level,
-                    alpha=alpha,
-                    eps=eps,
-                )
+            projector_output = self.projector(logits_per_level)
+            projected_logits_per_level = projector_output["projected_logits_per_level"]
+            effective_logits_per_level = projected_logits_per_level
 
             with torch.no_grad():
-                hcc_diagnostics = self.diagnostics(
-                    temperature=temperature,
-                    alpha=alpha,
-                    projector_output=projector_output,
-                )
+                hcc_diagnostics = self.diagnostics(projector_output=projector_output)
 
         return {
             "projected_logits_per_level": projected_logits_per_level,

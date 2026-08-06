@@ -30,7 +30,6 @@ class HCASTModel(nn.Module):
         segments_cfg: Optional[Dict[str, Any]] = None,
         taxonomy: Optional[Dict[str, Any]] = None,
         hcc_cfg: Optional[Dict[str, Any]] = None,
-        train_epochs: int = 1,
     ):
         super().__init__()
         self.num_classes_per_level = list(num_classes_per_level)
@@ -65,7 +64,6 @@ class HCASTModel(nn.Module):
             num_classes_per_level=self.num_classes_per_level,
             taxonomy=taxonomy,
             hcc_cfg=hcc_cfg,
-            train_epochs=train_epochs,
         )
 
         if timm_create_model is None:
@@ -91,9 +89,6 @@ class HCASTModel(nn.Module):
             nb_classes=self.nb_classes_upstream,
             **timm_kwargs,
         )
-
-    def set_epoch(self, epoch: int) -> None:
-        self.hcc.set_epoch(epoch)
 
     def set_hcc_final_test_active(self, active: bool) -> None:
         self.hcc.set_final_test_active(active)

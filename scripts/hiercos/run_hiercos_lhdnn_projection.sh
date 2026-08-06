@@ -4,10 +4,8 @@ set -euo pipefail
 # Runs Hier-COS with an LH-style projection after the complete transform:
 # - the original PReLU activations are retained
 # - full transform mode retains both residual skips
-# - PROJECTION_RHO_ENABLED=false makes the heads read the transform output
-#   directly and uses the batch-shared A=[W_1; ...; W_(l-1)]
-# - PROJECTION_RHO_ENABLED=true inserts a shared PReLU and uses the LH-DNN form
-#   A[b]=[W_1; ...; W_(l-1)] * rho'(k[b])
+# - a shared terminal PReLU is always inserted and the projection uses the
+#   LH-DNN form A[b]=[W_1; ...; W_(l-1)] * rho'(k[b])
 # - each projected level uses a learnable FC head
 # - the three FC outputs remain independent under the identity fixed frame
 # - LH-DNN advantage baselines are selected by ADVANTAGE_ENABLED
@@ -15,7 +13,6 @@ set -euo pipefail
 # - model.projection.enabled=true
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.weight_beta=${WEIGHT_BETA} when cumulative_branching is selected
-# - model.projection.rho_enabled=${PROJECTION_RHO_ENABLED}
 # - model.projection.feature_dim=${FEATURE_DIM}
 # - model.projection.eps=${PROJECTION_EPS}
 # - model.transform_mode selected by TRANSFORM_MODES (full is left out of the
@@ -30,7 +27,6 @@ set -euo pipefail
 #   FIXED_FRAME_MODE=identity DATASETS=cub200 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   TRANSFORM_MODES=bn_linear DATASETS=cifar100 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   TRANSFORM_MODES="full bn_linear final_only" ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
-#   PROJECTION_RHO_ENABLED=true DATASETS=cifar100 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   WEIGHT_MODE=cumulative_branching WEIGHT_BETA=0.5 DATASETS="cub200 aircraft" \
 #     ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 
@@ -52,7 +48,6 @@ FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
 TRANSFORM_MODES="${TRANSFORM_MODES:-full}"
 FEATURE_DIM="${FEATURE_DIM:-512}"
 PROJECTION_EPS="${PROJECTION_EPS:-1.0e-6}"
-PROJECTION_RHO_ENABLED="${PROJECTION_RHO_ENABLED:-true}"
 ADVANTAGE_ENABLED="${ADVANTAGE_ENABLED:-false}"
 
 case "$WEIGHT_MODE" in
@@ -94,14 +89,11 @@ case "$ADVANTAGE_ENABLED" in
     ;;
 esac
 
-case "$PROJECTION_RHO_ENABLED" in
-  true|false) ;;
-  *)
-    echo "Unsupported PROJECTION_RHO_ENABLED: $PROJECTION_RHO_ENABLED" >&2
-    echo "Expected true or false." >&2
-    exit 1
-    ;;
-esac
+if [[ -n "${PROJECTION_RHO_ENABLED:-}" ]]; then
+  echo "PROJECTION_RHO_ENABLED is no longer supported." >&2
+  echo "The shared terminal PReLU and its rho' derivative are always applied." >&2
+  exit 1
+fi
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -201,7 +193,6 @@ run_output_dir() {
   local transform_suffix=""
   local frame_suffix=""
   local advantage_suffix=""
-  local rho_suffix=""
   local dimension_suffix=""
   if [[ "$FEATURE_DIM" != "0" ]]; then
     dimension_suffix="_d${FEATURE_DIM}"
@@ -222,10 +213,7 @@ run_output_dir() {
   if [[ "$ADVANTAGE_ENABLED" == "true" ]]; then
     advantage_suffix="_advantage"
   fi
-  if [[ "$PROJECTION_RHO_ENABLED" == "true" ]]; then
-    rho_suffix="_rho"
-  fi
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_level_softmax_ce_reg_projection${rho_suffix}${dimension_suffix}${weight_suffix}${transform_suffix}${frame_suffix}${advantage_suffix}"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_level_softmax_ce_reg_projection${dimension_suffix}${weight_suffix}${transform_suffix}${frame_suffix}${advantage_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -239,7 +227,7 @@ fi
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
 printf 'LH-style stacked-weight projection: enabled\n'
 printf 'Projected transform: original PReLU activations and residual skips\n'
-printf 'Shared terminal PReLU/rho derivative: %s\n' "$PROJECTION_RHO_ENABLED"
+printf 'Shared terminal PReLU/rho derivative: always applied\n'
 printf 'LH-DNN advantage baselines: %s\n' "$ADVANTAGE_ENABLED"
 if [[ "$FEATURE_DIM" == "0" ]]; then
   printf 'Projection feature dimension: auto (sum of classes across levels)\n'
@@ -270,7 +258,6 @@ for ds in "${DATASETS[@]}"; do
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "model.fixed_frame_per_level=false" \
       "model.projection.enabled=true" \
-      "model.projection.rho_enabled=$PROJECTION_RHO_ENABLED" \
       "model.projection.advantage_enabled=$ADVANTAGE_ENABLED" \
       "model.projection.feature_dim=$FEATURE_DIM" \
       "model.projection.eps=$PROJECTION_EPS" \

@@ -1,7 +1,12 @@
 model:
   name: hrn
-  backbone: resnet50
-  pretrained: true
+  # CIFAR-specific HRN adaptation: use the same native-resolution WRN-28-8
+  # geometry as Hier-COS and preserve an 8x8 map for HRN's RFM branches.
+  backbone: wide_resnet
+  pretrained: false
+  wide_depth: 28
+  wide_widen_factor: 8
+  wide_drop_rate: 0.0
   branch_hidden_dim: 1024
   embedding_dim: 512
   dropout: 0.0
@@ -53,7 +58,7 @@ train:
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false
   resume: ""
-  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hrn_cifar100_parity
+  output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hrn_cifar100_wrn28_8
   smoothing: 0.0
 
 optim:

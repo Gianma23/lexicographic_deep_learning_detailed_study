@@ -6,7 +6,7 @@ from .types import LexicographicConfig
 from ..runtime.common import section_to_dict
 
 
-_LEX_PROJECTION_MODES = ("coarse_first", "fine_first", "pairwise_orthogonal")
+_LEX_PROJECTION_MODES = ("coarse_first", "fine_first")
 _LEX_PROJECTION_RULES = ("orthogonalize_all", "conflict_only")
 
 

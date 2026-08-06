@@ -1,4 +1,3 @@
-import math
 import warnings
 from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
@@ -7,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from models.common.hcc import HccController
+from models.common.cifar_wide_resnet import CifarWideResNetFeatures
 from models.orthonormal_plugin.config import parse_bool
 from models.orthonormal_plugin.head import FrozenBlockDiagonalClassifier, build_fixed_classifier
 from models.orthonormal_plugin.topology import build_topology, normalize_parent_of
@@ -40,94 +40,7 @@ def _build_resnet50_backbone(pretrained: bool):
                 return resnet50(pretrained=False)
 
 
-class _WideBasicBlock(nn.Module):
-    def __init__(
-        self,
-        in_planes: int,
-        out_planes: int,
-        stride: int,
-        drop_rate: float = 0.0,
-        activate_before_residual: bool = False,
-    ):
-        super().__init__()
-        self.bn1 = nn.BatchNorm2d(in_planes, momentum=0.001)
-        self.relu1 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
-        self.conv1 = nn.Conv2d(
-            in_planes,
-            out_planes,
-            kernel_size=3,
-            stride=stride,
-            padding=1,
-            bias=False,
-        )
-        self.bn2 = nn.BatchNorm2d(out_planes, momentum=0.001)
-        self.relu2 = nn.LeakyReLU(negative_slope=0.1, inplace=True)
-        self.conv2 = nn.Conv2d(
-            out_planes,
-            out_planes,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            bias=False,
-        )
-        self.drop_rate = float(drop_rate)
-        self.equal_in_out = bool(in_planes == out_planes)
-        self.conv_shortcut = None
-        if not self.equal_in_out:
-            self.conv_shortcut = nn.Conv2d(
-                in_planes,
-                out_planes,
-                kernel_size=1,
-                stride=stride,
-                padding=0,
-                bias=False,
-            )
-        self.activate_before_residual = bool(activate_before_residual)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if not self.equal_in_out and self.activate_before_residual:
-            x = self.relu1(self.bn1(x))
-            out = x
-        else:
-            out = self.relu1(self.bn1(x))
-
-        out = self.relu2(self.bn2(self.conv1(out if self.equal_in_out else x)))
-        if self.drop_rate > 0.0:
-            out = torch.nn.functional.dropout(out, p=self.drop_rate, training=self.training)
-        out = self.conv2(out)
-        shortcut = x if self.equal_in_out else self.conv_shortcut(x)
-        return shortcut + out
-
-
-class _WideNetworkBlock(nn.Module):
-    def __init__(
-        self,
-        num_layers: int,
-        in_planes: int,
-        out_planes: int,
-        stride: int,
-        drop_rate: float,
-        activate_before_residual: bool,
-    ):
-        super().__init__()
-        layers: List[nn.Module] = []
-        for idx in range(int(num_layers)):
-            layers.append(
-                _WideBasicBlock(
-                    in_planes=in_planes if idx == 0 else out_planes,
-                    out_planes=out_planes,
-                    stride=stride if idx == 0 else 1,
-                    drop_rate=drop_rate,
-                    activate_before_residual=activate_before_residual and idx == 0,
-                )
-            )
-        self.layer = nn.Sequential(*layers)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.layer(x)
-
-
-class _WideResNetNodeBackbone(nn.Module):
+class _WideResNetNodeBackbone(CifarWideResNetFeatures):
     def __init__(
         self,
         out_dim: int,
@@ -135,42 +48,14 @@ class _WideResNetNodeBackbone(nn.Module):
         widen_factor: int = 8,
         drop_rate: float = 0.0,
     ):
-        super().__init__()
-        if (depth - 4) % 6 != 0:
-            raise ValueError(f"Invalid WideResNet depth={depth}; expected (depth - 4) % 6 == 0.")
-
-        n_channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
-        n = int((depth - 4) / 6)
-
-        self.conv1 = nn.Conv2d(3, n_channels[0], kernel_size=3, stride=1, padding=1, bias=False)
-        self.block1 = _WideNetworkBlock(
-            num_layers=n,
-            in_planes=n_channels[0],
-            out_planes=n_channels[1],
-            stride=1,
+        super().__init__(
+            depth=depth,
+            widen_factor=widen_factor,
             drop_rate=drop_rate,
-            activate_before_residual=True,
+            initialize=False,
         )
-        self.block2 = _WideNetworkBlock(
-            num_layers=n,
-            in_planes=n_channels[1],
-            out_planes=n_channels[2],
-            stride=2,
-            drop_rate=drop_rate,
-            activate_before_residual=False,
-        )
-        self.block3 = _WideNetworkBlock(
-            num_layers=n,
-            in_planes=n_channels[2],
-            out_planes=n_channels[3],
-            stride=2,
-            drop_rate=drop_rate,
-            activate_before_residual=False,
-        )
-        self.bn = nn.BatchNorm2d(n_channels[3], momentum=0.001)
-        self.relu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
         self.downsample = nn.Conv2d(
-            n_channels[3],
+            self.out_channels,
             int(out_dim),
             kernel_size=1,
             stride=1,
@@ -179,21 +64,8 @@ class _WideResNetNodeBackbone(nn.Module):
         )
         self._init_weights()
 
-    def _init_weights(self) -> None:
-        for module in self.modules():
-            if isinstance(module, nn.Conv2d):
-                kernel_size = module.kernel_size[0] * module.kernel_size[1] * module.out_channels
-                module.weight.data.normal_(0, math.sqrt(2.0 / kernel_size))
-            elif isinstance(module, nn.BatchNorm2d):
-                module.weight.data.fill_(1)
-                module.bias.data.zero_()
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.conv1(x)
-        out = self.block1(out)
-        out = self.block2(out)
-        out = self.block3(out)
-        out = self.relu(self.bn(out))
+        out = super().forward(x)
         out = self.downsample(out)
         out = torch.nn.functional.avg_pool2d(out, 8)
         out = out.view(out.size(0), -1)
@@ -248,7 +120,6 @@ class HierCosModel(nn.Module):
         wide_widen_factor: int = 8,
         wide_drop_rate: float = 0.0,
         hcc_cfg: Optional[Dict[str, Any]] = None,
-        train_epochs: int = 1,
     ):
         super().__init__()
         if taxonomy is None:
@@ -268,19 +139,10 @@ class HierCosModel(nn.Module):
 
         projection_cfg = dict(projection_cfg or {})
         self.projection_enabled = parse_bool(projection_cfg.get("enabled", False), default=False)
-        self.projection_rho_enabled = parse_bool(
-            projection_cfg.get("rho_enabled", False),
-            default=False,
-        )
         self.advantage_enabled = parse_bool(
             projection_cfg.get("advantage_enabled", False),
             default=False,
         )
-        if self.projection_rho_enabled and not self.projection_enabled:
-            raise ValueError(
-                "Hier-COS `model.projection.rho_enabled=true` requires "
-                "`model.projection.enabled=true`."
-            )
         if self.advantage_enabled and not self.projection_enabled:
             raise ValueError(
                 "Hier-COS `model.projection.advantage_enabled=true` requires "
@@ -399,9 +261,12 @@ class HierCosModel(nn.Module):
             if self.projection_enabled
             else []
         )
+        # The shared terminal PReLU is part of the LH projection itself: its
+        # derivative makes the protected subspace sample-dependent, which is what
+        # the LH-DNN guarantee is stated for. It is not optional.
         self.projection_rho = (
             nn.PReLU(num_parameters=self.feature_dim)
-            if self.projection_rho_enabled
+            if self.projection_enabled
             else nn.Identity()
         )
         self.parent_index_buffer_names: List[Optional[str]] = [None] * self.depth
@@ -432,11 +297,7 @@ class HierCosModel(nn.Module):
             num_classes_per_level=self.num_classes_per_level,
             taxonomy=taxonomy,
             hcc_cfg=hcc_cfg,
-            train_epochs=train_epochs,
         )
-
-    def set_epoch(self, epoch: int) -> None:
-        self.hcc.set_epoch(epoch)
 
     def set_hcc_final_test_active(self, active: bool) -> None:
         self.hcc.set_final_test_active(active)
@@ -511,24 +372,10 @@ class HierCosModel(nn.Module):
         z: torch.Tensor,
         prev_weights: torch.Tensor,
         eps: float,
-        rho_prime: Optional[torch.Tensor] = None,
+        rho_prime: torch.Tensor,
     ) -> torch.Tensor:
-        if rho_prime is None:
-            # A^(l) is the shared row-wise stack [W_1; ...; W_(l-1)].
-            az = torch.matmul(z, prev_weights.transpose(0, 1).contiguous())
-            gram = torch.matmul(prev_weights, prev_weights.transpose(0, 1).contiguous())
-            eye = torch.eye(gram.size(-1), dtype=gram.dtype, device=gram.device)
-            coefficients = torch.linalg.solve(
-                gram + float(eps) * eye,
-                az.transpose(0, 1).contiguous(),
-            )
-            return torch.matmul(
-                coefficients.transpose(0, 1).contiguous(),
-                prev_weights,
-            )
-
-        # LH-DNN rho variant: A[b] = W_previous * rho_prime[b]. The PReLU
-        # derivative makes the protected subspace sample-dependent.
+        # LH-DNN form: A[b] = W_previous * rho_prime[b]. The PReLU derivative
+        # makes the protected subspace sample-dependent.
         if rho_prime.shape != z.shape:
             raise ValueError(
                 "Hier-COS projection rho derivative must have the same shape as "
@@ -547,7 +394,7 @@ class HierCosModel(nn.Module):
     def _projected_branch_logits_per_level(
         self,
         z: torch.Tensor,
-        rho_prime: Optional[torch.Tensor] = None,
+        rho_prime: torch.Tensor,
     ) -> List[torch.Tensor]:
         if len(self.projection_heads) != self.depth:
             raise RuntimeError(
@@ -562,11 +409,7 @@ class HierCosModel(nn.Module):
         logits_per_level: List[torch.Tensor] = []
         with autocast_off:
             z_work = z.to(dtype=compute_dtype)
-            rho_work = (
-                None
-                if rho_prime is None
-                else rho_prime.detach().to(dtype=compute_dtype)
-            )
+            rho_work = rho_prime.detach().to(dtype=compute_dtype)
 
             for level, head in enumerate(self.projection_heads):
                 if level == 0:
@@ -608,19 +451,16 @@ class HierCosModel(nn.Module):
         z = self.backbone(x)
         if self.projection_enabled:
             transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
-            rho_prime = None
-            projected_features = transformed
-            if self.projection_rho_enabled:
-                projected_features = self.projection_rho(transformed)
-                negative_slope = self.projection_rho.weight.detach().to(
-                    device=transformed.device,
-                    dtype=transformed.dtype,
-                ).unsqueeze(0)
-                rho_prime = torch.where(
-                    transformed > 0,
-                    torch.ones_like(transformed),
-                    negative_slope,
-                )
+            projected_features = self.projection_rho(transformed)
+            negative_slope = self.projection_rho.weight.detach().to(
+                device=transformed.device,
+                dtype=transformed.dtype,
+            ).unsqueeze(0)
+            rho_prime = torch.where(
+                transformed > 0,
+                torch.ones_like(transformed),
+                negative_slope,
+            )
             branch_logits_per_level = self._projected_branch_logits_per_level(
                 z=projected_features,
                 rho_prime=rho_prime,

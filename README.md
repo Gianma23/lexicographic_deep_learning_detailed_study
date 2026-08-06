@@ -163,8 +163,9 @@ The HCC and lexicographic variants are not separate configs. Their launchers
 start from these base presets and add the whole variant block as CLI overrides:
 
 - HCC: `scripts/hcast/run_hcast_hcc_grid.sh` adds the `hcc.*` block
-  (`enabled`, `temperature`, `eps`, `alpha_schedule`, `alpha_ramp_epochs`,
-  `alpha_tanh_beta`, `alpha_tanh_center`) plus `hcc.alpha_start_epoch` per arm.
+  (`enabled`, `eps`). HCC is a binary switch: when `hcc.enabled: true` the
+  projection is fully applied from the first batch onwards, with no onset,
+  alpha-schedule, or temperature knobs.
 - Lexicographic: `scripts/hcast/run_hcast_lex.sh` adds the
   `train.lexicographic.*` block and the required `model.loss.globalkl=false`.
 
@@ -218,10 +219,12 @@ unit-weight mode; the paper-baseline configs retain their dynamic weighting.
 HRN supports exactly three levels. CUB and Aircraft preserve the upstream
 ResNet-50/RFM architecture, 448 px preprocessing, tree loss, leaf CE, and
 trunk LR scaling. The unified protocol deliberately evaluates every sample and
-selects checkpoints on validation data. CIFAR-100 is a dataset-native 32 px
-extrapolation for comparability with the other CIFAR presets; it is not an HRN
-paper setting. All HRN presets are full-label only, and requested ImageNet
-initialization never falls back to random weights.
+selects checkpoints on validation data. CIFAR-100 is an explicit HRN-WRN-28-8
+adaptation: it trains from scratch on native 32 px inputs and uses the same
+CIFAR-style backbone geometry as Hier-COS, preserving an 8 x 8 feature map for
+HRN's RFM branches. It is not an HRN paper setting. All HRN presets are
+full-label only, and requested ResNet-50 ImageNet initialization never falls
+back to random weights.
 When omitted, `model.loss` defaults to the paper-aligned `native` objective
 (leaf-observed joint tree marginal plus leaf CE). The local
 `model.loss: level_marginal` mode exposes coarse, middle, and fine tree-marginal
@@ -257,14 +260,13 @@ outputs and applies an identity or per-level block-diagonal frozen Hier-COS
 frame to the combined vector; a dense global frame is rejected because it
 would mix the independent LH-DNN branches.
 The projection retains the complete transformation, including its PReLU
-activations and both residual skips in `full` mode. By default, the level
-branches read the transform output directly and the projection matrix stacks
-the preceding detached head weights, making `A` shared by the whole batch.
-Set `model.projection.rho_enabled: true` to insert a shared channel-wise PReLU
-before the level heads and use the LH-DNN form
-`A[b] = W_previous * rho_prime(k[b])`; this makes the projection matrix
-sample-dependent. The launcher names this variant `projection_rho` and uses
-plain `projection` for the direct-head form.
+activations and both residual skips in `full` mode. It then inserts a shared
+channel-wise PReLU before the level heads and builds the projection matrix in
+the LH-DNN form `A[b] = W_previous * rho_prime(k[b])`, so the protected
+subspace is sample-dependent. The PReLU derivative is part of the LH method and
+is always applied; there is no config switch for it, and the earlier
+batch-shared `A` variant has been removed. The launcher names these runs
+`projection`.
 Set `model.projection.advantage_enabled: true` to additionally propagate
 detached parent-class logits as LH-DNN advantage baselines. This path requires
 `model.loss: level_softmax_ce_reg`.

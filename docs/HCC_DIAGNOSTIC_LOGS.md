@@ -26,20 +26,16 @@ Notes:
 
 ## Metric-by-metric explanation
 
-### 1) HCC schedule state
+### 1) HCC activation state
 
 - `proj_constraint_alpha`
-  - Meaning: blend coefficient between raw logits and projected logits for logit-space HCC.
-  - Typical range: `[0, 1]`.
-  - Interpretation:
-    - `0`: no projection effect.
-    - `1`: full hard projection effect.
-
-- `proj_temperature`
-  - Meaning: current temperature from the HCC schedule.
-  - Interpretation:
-    - Higher values: softer regime.
-    - Lower values (near 1 in this implementation): harder regime.
+  - Meaning: activation flag for logit-space HCC. HCC is a binary on/off switch,
+    so the projection is always fully applied when it runs.
+  - Values: `1` whenever the key is logged; the key is absent entirely for
+    batches where HCC did not run (disabled, or `final_test_only` outside the
+    final test).
+  - Interpretation: use it as the authoritative "HCC was active" evidence for a
+    run, never a directory name.
 
 ### 2) Projector constraint residuals
 
@@ -154,7 +150,7 @@ Reading tip:
 ## Practical reading patterns
 
 - Healthy hard-switch behavior:
-  - `proj_constraint_alpha` rises to `1`, `proj_temperature` drops to hard regime.
+  - `proj_constraint_alpha` is `1` on every logged epoch of an HCC run.
   - `proj_logit_residual_after_l1` stays clearly below `proj_logit_residual_before_l1`.
   - Fine metrics do not collapse (limited `flip_rate`, stable conditional accuracies).
 

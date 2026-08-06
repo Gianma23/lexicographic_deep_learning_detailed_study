@@ -78,7 +78,6 @@ def pretty_metrics(metrics: Dict[str, float], level_names: Optional[List[str]] =
 
     hcc_diag_keys = [
         "proj_constraint_alpha",
-        "proj_temperature",
         "proj_logit_residual_before_l1",
         "proj_logit_residual_after_l1",
         "proj_logit_residual_reduction",

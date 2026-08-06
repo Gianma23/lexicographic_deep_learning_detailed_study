@@ -6,10 +6,35 @@ import torch
 
 from models.hrn.losses import _build_state_space, compute_loss
 from models.hrn.model import HRNModel, _build_resnet50_backbone
+from models.common.cifar_wide_resnet import CifarWideResNetFeatures
 from train.runtime.optimization import HierCosCosineScheduler
 
 
 class HRNFidelityTests(unittest.TestCase):
+    def test_cifar_wide_resnet_preserves_spatial_features_for_hrn(self):
+        features = CifarWideResNetFeatures(depth=10, widen_factor=1)
+        features.eval()
+        with torch.no_grad():
+            output = features(torch.randn(2, 3, 32, 32))
+        self.assertEqual(tuple(output.shape), (2, 64, 8, 8))
+
+        model = HRNModel(
+            [2, 3, 4],
+            backbone="wide_resnet",
+            pretrained=False,
+            wide_depth=10,
+            wide_widen_factor=1,
+            branch_hidden_dim=16,
+            embedding_dim=8,
+        )
+        model.eval()
+        with torch.no_grad():
+            result = model(torch.randn(2, 3, 32, 32))
+        self.assertEqual(
+            [tuple(value.shape) for value in result["logits_per_level"]],
+            [(2, 2), (2, 3), (2, 4)],
+        )
+
     def test_requested_imagenet_weights_never_fall_back(self):
         with patch("torchvision.models.resnet50", side_effect=OSError("weights unavailable")):
             with self.assertRaisesRegex(RuntimeError, "requires ImageNet-pretrained"):

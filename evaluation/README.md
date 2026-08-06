@@ -82,10 +82,10 @@ substantive content of the identity-frame assumption.
   labels, so it does not arise for CIFAR-100, CUB, or Aircraft.)
 - **`hcc_subspace_norm` moves both decoders for every model**, since the norms
   mix levels.
-- **`hcc_` cells always project at `alpha=1`** and do not replicate a run's
-  activation schedule. For a run trained with HCC, compare against
-  `model_hcc_diagnostics.proj_constraint_alpha`, which records the alpha the
-  model's own forward pass applied at test time.
+- **`hcc_` cells always project**, whether or not the run itself trained with
+  HCC. `model_hcc_diagnostics.proj_constraint_alpha` records whether the model's
+  own forward pass applied HCC at test time (`1.0` when it did, absent
+  otherwise).
 - **HRN's native level-2 score is its auxiliary leaf CE head**, not the sigmoid
   tree branch that HCC corrects during training. The `hcc_` cells project what
   the readout consumes, so on HRN they are not a reconstruction of its

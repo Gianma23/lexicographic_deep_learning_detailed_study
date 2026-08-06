@@ -6,7 +6,7 @@ from .types import GradTuple, LevelGradMap, LexicographicUpdateState, TrunkGradS
 
 _GRAD_EPS = 1e-12
 _GRAD_LEVEL_NAMES = ("coarse", "mid", "fine")
-_LEX_PROJECTION_MODES = ("coarse_first", "fine_first", "pairwise_orthogonal")
+_LEX_PROJECTION_MODES = ("coarse_first", "fine_first")
 _LEX_PROJECTION_RULES = ("orthogonalize_all", "conflict_only")
 
 # Internal projection-flag key -> logged metric name. Flags are produced as
@@ -18,8 +18,6 @@ _PROJECTION_FLAG_METRICS = {
     "mid_off_fine_t1": "post_projection_applied_t1_mid_fine",
     "coarse_off_mid_t2": "post_projection_applied_t2_coarse_mid",
     "coarse_off_higher_t1": "post_projection_applied_t1_coarse_higher",
-    "fine_off_coarse_t1": "post_projection_applied_t1_fine_coarse",
-    "fine_off_mid_t1": "post_projection_applied_t1_fine_mid_proj",
 }
 
 
@@ -587,7 +585,7 @@ def _build_lexicographic_grads(
         projection_flags["mid_off_coarse_t2"] = mid_applied_t2
         projection_flags["mid_off_coarse_t1"] = mid_applied_t1
         projection_flags["fine_off_higher_t1"] = fine_applied_higher
-    elif projection_mode == "fine_first":
+    else:
         mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
             target_grads=mid_grads,
             reference_grads=fine_grads,
@@ -634,49 +632,6 @@ def _build_lexicographic_grads(
         projection_flags["mid_off_fine_t1"] = mid_applied_t1
         projection_flags["coarse_off_mid_t2"] = coarse_applied_t2
         projection_flags["coarse_off_higher_t1"] = coarse_applied_t1
-    else:
-        mid_projected_t2, _mid_coeff_t2, mid_applied_t2 = _project_onto_reference(
-            target_grads=mid_grads,
-            reference_grads=coarse_grads,
-            include_mask=t2_mask,
-            eps=eps,
-            projection_rule=projection_rule,
-        )
-        mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
-            target_grads=mid_grads,
-            reference_grads=coarse_grads,
-            include_mask=t1_mask,
-            eps=eps,
-            projection_rule=projection_rule,
-        )
-        mid_projected = _compose_mid_projected_grads(
-            mid_grads=mid_grads,
-            mid_projected_t2=mid_projected_t2,
-            mid_projected_t1=mid_projected_t1,
-            t2_mask=t2_mask,
-            t1_mask=t1_mask,
-        )
-
-        fine_projected_coarse_t1, _fine_coeff_coarse, fine_applied_coarse = _project_onto_reference(
-            target_grads=fine_grads,
-            reference_grads=coarse_grads,
-            include_mask=t1_mask,
-            eps=eps,
-            projection_rule=projection_rule,
-        )
-        fine_projected, _fine_coeff_mid, fine_applied_mid = _project_onto_reference(
-            target_grads=fine_projected_coarse_t1,
-            reference_grads=mid_projected_t1,
-            include_mask=t1_mask,
-            eps=eps,
-            projection_rule=projection_rule,
-        )
-        coarse_projected = tuple(coarse_grads)
-
-        projection_flags["mid_off_coarse_t2"] = mid_applied_t2
-        projection_flags["mid_off_coarse_t1"] = mid_applied_t1
-        projection_flags["fine_off_coarse_t1"] = fine_applied_coarse
-        projection_flags["fine_off_mid_t1"] = fine_applied_mid
 
     total_grads = _sum_grad_tuples(coarse_projected, mid_projected, fine_projected)
     grad_pack: Dict[str, GradTuple] = {
@@ -698,7 +653,6 @@ def _build_lexicographic_grads(
     metrics: Dict[str, float] = {
         "lex_projection_mode_coarse_first": 1.0 if projection_mode == "coarse_first" else 0.0,
         "lex_projection_mode_fine_first": 1.0 if projection_mode == "fine_first" else 0.0,
-        "lex_projection_mode_pairwise_orthogonal": 1.0 if projection_mode == "pairwise_orthogonal" else 0.0,
     }
     # Modes that never attempt a projection report 0.0 directly; the rest ride
     # along in the single batched device-to-host transfer below.

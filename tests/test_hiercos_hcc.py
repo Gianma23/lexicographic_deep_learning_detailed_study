@@ -49,7 +49,6 @@ class HierCosHccTests(unittest.TestCase):
             wide_widen_factor=1,
             wide_drop_rate=0.0,
             hcc_cfg=hcc_cfg,
-            train_epochs=10,
         )
         model.eval()
         return model
@@ -58,7 +57,7 @@ class HierCosHccTests(unittest.TestCase):
     def _images() -> torch.Tensor:
         return torch.linspace(-1.0, 1.0, steps=2 * 3 * 32 * 32).reshape(2, 3, 32, 32)
 
-    def test_no_hcc_disabled_and_preactivation_paths_are_bitwise_identical(self):
+    def test_no_hcc_and_disabled_hcc_paths_are_bitwise_identical(self):
         for fixed_frame_per_level in (False, True):
             with self.subTest(fixed_frame_per_level=fixed_frame_per_level):
                 baseline = self._build_model(fixed_frame_per_level=fixed_frame_per_level)
@@ -66,27 +65,14 @@ class HierCosHccTests(unittest.TestCase):
                     {"enabled": False},
                     fixed_frame_per_level=fixed_frame_per_level,
                 )
-                preactivation = self._build_model(
-                    {
-                        "enabled": True,
-                        "temperature": 10.0,
-                        "eps": 1e-12,
-                        "alpha_schedule": "step",
-                        "alpha_start_epoch": 5,
-                    },
-                    fixed_frame_per_level=fixed_frame_per_level,
-                )
-                preactivation.set_epoch(0)
 
                 self.assertEqual(list(baseline.state_dict()), list(disabled.state_dict()))
-                self.assertEqual(list(baseline.state_dict()), list(preactivation.state_dict()))
                 for key, value in baseline.state_dict().items():
                     self.assertTrue(torch.equal(value, disabled.state_dict()[key]), key)
-                    self.assertTrue(torch.equal(value, preactivation.state_dict()[key]), key)
 
                 images = self._images()
                 with torch.no_grad():
-                    outputs = [model(images) for model in (baseline, disabled, preactivation)]
+                    outputs = [model(images) for model in (baseline, disabled)]
 
                 reference = outputs[0]
                 for candidate in outputs[1:]:
@@ -113,15 +99,7 @@ class HierCosHccTests(unittest.TestCase):
                         self.assertEqual(reference_metrics, candidate_metrics)
 
     def test_active_hcc_drives_loss_scores_evaluation_and_gradients(self):
-        model = self._build_model(
-            {
-                "enabled": True,
-                "temperature": 1.0,
-                "eps": 1e-12,
-                "alpha_schedule": "step",
-                "alpha_start_epoch": 0,
-            }
-        )
+        model = self._build_model({"enabled": True, "eps": 1e-12})
         output = model(self._images())
 
         effective_nodes = output["effective_node_logits_per_level"]

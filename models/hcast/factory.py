@@ -35,5 +35,4 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         },
         taxonomy=taxonomy,
         hcc_cfg=hcc_cfg,
-        train_epochs=int(cfg.train.get("epochs", 1)),
     )

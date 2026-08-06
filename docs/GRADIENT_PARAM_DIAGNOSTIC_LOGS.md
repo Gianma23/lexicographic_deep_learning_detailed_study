@@ -86,14 +86,11 @@ Post-projection applied flags (`post_` prefix):
 - `post_projection_applied_t1_mid_fine`
 - `post_projection_applied_t2_coarse_mid`
 - `post_projection_applied_t1_coarse_higher`
-- `post_projection_applied_t1_fine_coarse`
-- `post_projection_applied_t1_fine_mid_proj`
 
 Lex projection mode indicators:
 
 - `lex_projection_mode_coarse_first`
 - `lex_projection_mode_fine_first`
-- `lex_projection_mode_pairwise_orthogonal`
 
 Lex cosine diagnostics (post naming):
 

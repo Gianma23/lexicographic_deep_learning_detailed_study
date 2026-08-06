@@ -92,5 +92,4 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         attn_postprocess=cfg.model.get("attn_postprocess", "layernorm"),
         input_size=input_size,
         hcc_cfg=resolve_hcc_cfg_from_top_level(cfg),
-        train_epochs=int(cfg.train.get("epochs", 1)),
     )

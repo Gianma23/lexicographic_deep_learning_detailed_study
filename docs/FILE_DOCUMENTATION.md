@@ -79,8 +79,8 @@ fatal errors.
 - `models/hcast/model.py` — unified H-CAST wrapper and HCC integration.
 - `models/hcast/losses.py` — per-level loss and optional global KL.
 - `models/hcast/segments.py` — grid/SEEDS segmentation.
-- `models/hcast/hard_hierarchy.py` — HCC affine hierarchy projection and
-  schedule.
+- `models/common/hcc.py` — HCC affine hierarchy projection and the shared
+  on/off controller used by every HCC-capable model.
 - `models/hcast/internal/` — vendored CAST/H-CAST backbone implementation.
 
 ### LH-DNN
@@ -241,10 +241,47 @@ notebook per model family:
   explicit-lexicographic, and HCC comparison, with the margin-collapse check
   that must precede any reading of the numbers.
 - `analysis/current_runs/current_run_plot_utils.py` — shared aggregation,
-  reference-model discovery, off-scale gutter layout, collision-aware labels,
-  HCC-activation verification, trade-off plotting, absolute and delta
-  level-accuracy plotting, and Pareto-summary helpers for all current-run
-  notebooks.
+  reference-model discovery, the visual-encoding layer, off-scale gutter layout,
+  collision-aware labels, HCC-activation verification, trade-off plotting,
+  absolute and delta level-accuracy plotting, and Pareto-summary helpers for all
+  current-run notebooks.
+- `tests/test_current_run_encoding.py` — unit tests for the encoding layer:
+  channel resolution, collision detection, palette separation, legend mode, and
+  the point-label policy.
+
+### Visual encoding
+
+`encode_rows()` resolves visual channels from row properties; a notebook declares
+which property drives which channel, and the legend is generated to match:
+
+```python
+ENCODING = encode_rows(rows, hue=('mechanism', MECHANISM_COLORS),
+                             shape=('variant', VARIANT_MARKERS))
+```
+
+**Colour is globally semantic**: it encodes the `mechanism` — the intervention a
+run applies (`baseline`, `lex`, `hcc`, `projection`) — and
+means the same thing in every model's figure, so HCC `step@0` is the same green
+everywhere. **Shape is locally semantic**: each notebook declares what it
+separates (the variant within a mechanism for the single-family notebooks, the
+loss family for Hier-COS) and the legend spells it out. `fill` (hollow) and
+`ring` (a charcoal halo) carry one boolean each; anything left over goes to the
+direct labels. Cross-model references give up colour entirely and are drawn in
+neutral grey, told apart by marker shape, so the focal family owns the colour
+dimension. Bars reuse the same encoding with hatch standing in for marker shape.
+
+`check_encoding()` reports runs that resolve to one glyph within a dataset panel;
+those pairs are separated only by their direct labels, which is why Hier-COS runs
+with `point_labels='all'` while the others use the default.
+
+`plot_tradeoff(point_labels=...)` selects which direct labels are drawn:
+`'off_scale'` (the default) keeps only the gutter-pinned references, whose drawn
+position is deliberately false and whose label is therefore the only record of
+the true value; `'all'` keeps everything; `'none'` keeps nothing and warns;
+`'auto'` labels focal runs only when the legend is not a complete key and
+in-range references only on an unfrozen panel. A panel that never freezes has no
+pinned references, so under the default it carries no direct labels at all and
+relies on the legend and the axes.
 
 Every current-run notebook reads the independently selected checkpoint and the
 independent metric family. Top-down decoding is intentionally not offered there:

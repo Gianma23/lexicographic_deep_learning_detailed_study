@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..common.hcc import HccController
+from ..common.cifar_wide_resnet import CifarWideResNetFeatures
 
 
 class BasicConv(nn.Module):
@@ -64,20 +65,22 @@ def _build_resnet50_backbone(pretrained: bool):
 
 
 class HRNModel(nn.Module):
-    """Paper-faithful 3-level HRN with explicit OHier/OCE channels."""
+    """Three-level HRN with explicit OHier/OCE channels."""
 
     def __init__(
         self,
         num_classes_per_level: List[int],
         backbone: str = "resnet50",
         pretrained: bool = True,
+        wide_depth: int = 28,
+        wide_widen_factor: int = 8,
+        wide_drop_rate: float = 0.0,
         branch_hidden_dim: int = 1024,
         embedding_dim: int = 512,
         dropout: float = 0.0,
         trunk_lr_scale: float = 0.1,
         taxonomy: Optional[Dict[str, Any]] = None,
         hcc_cfg: Optional[Dict[str, Any]] = None,
-        train_epochs: int = 1,
     ):
         super().__init__()
         self.num_classes_per_level = [int(n) for n in num_classes_per_level]
@@ -87,14 +90,28 @@ class HRNModel(nn.Module):
         backbone_name = backbone
         if not isinstance(backbone_name, str):
             raise ValueError("HRN model.backbone must be a string.")
-        if backbone_name != "resnet50":
-            raise ValueError(f"Unsupported HRN backbone '{backbone}'. Only 'resnet50' is supported.")
+        if backbone_name == "resnet50":
+            trunk = _build_resnet50_backbone(pretrained=bool(pretrained))
+            self.features = nn.Sequential(*list(trunk.children())[:-2])
+            self.num_ftrs = int(trunk.fc.in_features)
+        elif backbone_name == "wide_resnet":
+            if pretrained:
+                raise ValueError(
+                    "HRN backbone='wide_resnet' has no pretrained weights; set model.pretrained=false."
+                )
+            self.features = CifarWideResNetFeatures(
+                depth=int(wide_depth),
+                widen_factor=int(wide_widen_factor),
+                drop_rate=float(wide_drop_rate),
+            )
+            self.num_ftrs = int(self.features.out_channels)
+        else:
+            raise ValueError(
+                f"Unsupported HRN backbone '{backbone}'. Expected one of ['resnet50', 'wide_resnet']."
+            )
 
-        trunk = _build_resnet50_backbone(pretrained=bool(pretrained))
-        self.features = nn.Sequential(*list(trunk.children())[:-2])
         self.pooling = nn.AdaptiveAvgPool2d(1)
         self.relu = nn.ReLU()
-        self.num_ftrs = int(trunk.fc.in_features)
         self.trunk_lr_scale = float(trunk_lr_scale)
 
         self.conv_block1 = nn.Sequential(
@@ -123,11 +140,7 @@ class HRNModel(nn.Module):
             num_classes_per_level=self.num_classes_per_level,
             taxonomy=taxonomy,
             hcc_cfg=hcc_cfg,
-            train_epochs=train_epochs,
         )
-
-    def set_epoch(self, epoch: int) -> None:
-        self.hcc.set_epoch(epoch)
 
     def set_hcc_final_test_active(self, active: bool) -> None:
         self.hcc.set_final_test_active(active)

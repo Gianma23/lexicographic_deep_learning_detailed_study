@@ -3,8 +3,11 @@
 model:
   name: hrn                         # Model registry id. Must be exactly: hrn
   loss: native                      # native | level_marginal; HRN lex requires level_marginal
-  backbone: resnet50                # Supported: resnet50
-  pretrained: true                  # If true, ImageNet weights are mandatory (no random fallback)
+  backbone: resnet50                # resnet50 | wide_resnet (CIFAR-native adaptation)
+  pretrained: true                  # ResNet-50 only; wide_resnet requires false
+  wide_depth: 28                    # WideResNet only; must satisfy (depth - 4) % 6 == 0
+  wide_widen_factor: 8              # WideResNet channel multiplier
+  wide_drop_rate: 0.0               # WideResNet residual-block dropout
   branch_hidden_dim: 1024           # Hidden width inside each HRN branch conv/fc stack
   embedding_dim: 512                # Output embedding width used by per-level classifiers
   dropout: 0.0                      # Optional dropout in branch FC blocks

@@ -129,7 +129,7 @@ trap handle_exit EXIT
 
 parse_choice_list DATASETS "cub200 aircraft" DATASETS cifar100 cub200 aircraft
 parse_choice_list LEX_PROJECTION_MODES "coarse_first" LEX_PROJECTION_MODES \
-  coarse_first fine_first pairwise_orthogonal
+  coarse_first fine_first
 
 config_for_dataset() {
   case "$1" in

@@ -534,9 +534,10 @@ def main() -> None:
                 "because all of them are computed from argmax decoding."
             ),
             "hcc_alpha": (
-                "`hcc_` cells always project at alpha=1 and do not replicate a "
-                "run's activation schedule; compare against "
-                "`model_hcc_diagnostics.proj_constraint_alpha`."
+                "`hcc_` cells always project, whether or not the run itself "
+                "trained with HCC; check "
+                "`model_hcc_diagnostics.proj_constraint_alpha` to see whether "
+                "the model's own forward pass applied HCC at test time."
             ),
             "hcc_node_score_invariance": (
                 "The projection subtracts one constant per parent from that "
