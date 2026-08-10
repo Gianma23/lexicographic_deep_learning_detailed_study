@@ -72,7 +72,6 @@ samples, or choose models on test data.
   and diagnostics. It is absent from upstream H-CAST.
 - `train.lexicographic.enabled` is an explicit gradient-space projection path.
   HCC alone is not an explicit lexicographic optimizer.
-- The orthonormal plugin is an additional local taxonomy-frame study.
 
 ## LH-DNN
 
@@ -121,7 +120,9 @@ samples, or choose models on test data.
   not the image. An earlier revision of this document described the port as
   per-image standardization and called that source-aligned; that was incorrect.
   CIFAR reaches the upstream `image_type='array'` branch, which standardizes the
-  whole split array once, and remains per-image locally — a known open gap.
+  whole split array once. The CIFAR preset now uses
+  `dataset.transforms.normalization_scope: dataset`, computing one scalar
+  mean/std over each concrete train/validation/test split before batching.
 - CUB/Aircraft downsample without antialiasing
   (`dataset.transforms.fixed_resize_antialias: false`), matching
   `tf.image.resize`'s default: a fixed 2x2 source kernel regardless of the
@@ -139,12 +140,20 @@ samples, or choose models on test data.
   model in this repository removes it — Hier-COS explicitly, HRN and H-CAST via
   their evaluation centre crops. Leaving it in would have made HT-CapsNet the
   only Aircraft row trained and evaluated on a constant artifact. LH-DNN also
-  uses the fixed-resize path on Aircraft and does not yet crop. (`16` heads with independent
-  `key_dim=value_dim=32`) through PyTorch scaled-dot-product attention; Q/K/V
+  uses the fixed-resize path on Aircraft and does not yet crop.
+- Cross-capsule attention uses `16` heads with independent
+  `key_dim=value_dim=32` through PyTorch scaled-dot-product attention; Q/K/V
   width is therefore 512 at every level rather than being divided from the
-  capsule dimension.
+  capsule dimension. Its projections use the Keras rank-three `EinsumDense`
+  Glorot fan calculation; ordinary Xavier initialization on flattened PyTorch
+  `Linear` shapes is not equivalent.
 - Primary features are flattened in NHWC order and `tf_efficientnet_b7`
-  supplies the final spatial `forward_features` map. The Keras
+  supplies the final spatial `forward_features` map. The explicit
+  `tf_efficientnet_b7.aa_in1k` tag is used rather than timm's version-dependent
+  untagged alias; its stem convolution matches the Keras
+  `efficientnetb7_notop.h5` tensor exactly. PyTorch BatchNorm momentum is `0.01`
+  (the equivalent of Keras `0.99`) and progressive drop path reaches `0.2`,
+  matching the Keras application. The Keras
   `EfficientNetB7` stem is reproduced in full: `Rescaling(1/255)` followed by
   the `Normalization` layer, whose ImageNet checkpoint state is
   `mean = [0.485, 0.456, 0.406]` and `variance = [0.229, 0.224, 0.225]`
@@ -160,8 +169,13 @@ samples, or choose models on test data.
   therefore keeps epoch-to-date accuracy accumulators that reset on each
   `set_epoch` call, rather than using the current batch's accuracy.
 - MixUp samples one beta coefficient per example with random pairing. The
-  epoch-indexed source schedule holds `0.001` through epoch index 10 and uses
-  `0.00095` at index 11.
+  epoch-indexed paper-reported schedule holds `0.001` through epoch index 10
+  and uses `0.00095` at index 11 (the released parser instead defaults to a
+  `0.9` decay factor). `keras_adam` implements the Keras 2.8 epsilon-hat
+  update instead of assuming that PyTorch Adam with `eps=1e-7` is identical.
+- During training, margin loss consumes raw capsule lengths. During validation
+  and test it consumes the softmax output produced by the source `LengthLayer`;
+  argmax predictions are unchanged.
 - The shipped horizon is 200 epochs, matching the upstream launcher rather
   than the shorter README example.
 
@@ -178,9 +192,9 @@ samples, or choose models on test data.
   construction, so it is a protocol adaptation rather than an exact paper run.
 - Requested ImageNet backbones are mandatory. Missing weights fail clearly and
   never silently produce a random-initialized paper-labeled run.
-- Corrected attention projection shapes and checkpointed loss-weight buffers
-  intentionally make older local HT-CapsNet checkpoints incompatible; fidelity
-  runs must start from fresh initialization.
+- Corrected attention initialization, backbone training semantics, and optimizer
+  state intentionally make older local HT-CapsNet training checkpoints
+  incompatible; fidelity runs must start from fresh initialization.
 
 ## HRN
 
@@ -245,8 +259,6 @@ samples, or choose models on test data.
   explicitly for these studies.
 - The repository uses three CIFAR levels instead of upstream’s five.
 - CUB is not an upstream Hier-COS experiment and is an extrapolation.
-- The shared orthonormal plugin generalizes the fixed-frame objective to other
-  host models; it is not part of upstream Hier-COS.
 
 ## Threats to validity
 

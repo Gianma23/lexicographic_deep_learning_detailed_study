@@ -12,13 +12,13 @@ import yaml
 
 from datasets import build_dataloader
 from models import build_model
-from models.orthonormal_plugin.config import section_to_dict
 from train.config_loader import load_resolved_run_config
 from train.evaluation import evaluate_batch
 from train.metric_formatting import pretty_metrics
 from train.metrics import merge_metric_batches
 from train.runtime.finetune import load_trusted_checkpoint
 from train.runtime.optimization import seed_everything
+from train.runtime.common import section_to_dict
 from train.runtime.selection import BEST_SELECTION_MODES
 
 from .posthoc_inference import (
@@ -206,15 +206,6 @@ def _set_model_epoch(model: torch.nn.Module, epoch: int) -> None:
     wrapped_model = getattr(model, "module", None)
     if wrapped_model is not None and hasattr(wrapped_model, "set_epoch"):
         wrapped_model.set_epoch(epoch)
-
-
-def _set_hcc_final_test_active(model: torch.nn.Module, active: bool) -> None:
-    if hasattr(model, "set_hcc_final_test_active"):
-        model.set_hcc_final_test_active(active)
-        return
-    wrapped_model = getattr(model, "module", None)
-    if wrapped_model is not None and hasattr(wrapped_model, "set_hcc_final_test_active"):
-        wrapped_model.set_hcc_final_test_active(active)
 
 
 def _outcome_metrics(metrics: Mapping[str, float]) -> Dict[str, float]:
@@ -446,53 +437,49 @@ def main() -> None:
     level_names = [str(name) for name in cfg.dataset.get("levels", [])]
 
     results: Dict[str, Any] = {}
-    _set_hcc_final_test_active(model, True)
-    try:
-        for checkpoint_mode, checkpoint_path in checkpoint_paths.items():
-            checkpoint = load_trusted_checkpoint(checkpoint_path, map_location="cpu")
-            model.load_state_dict(checkpoint["model_state"])
-            checkpoint_epoch = int(checkpoint.get("epoch", int(cfg.train.epochs) - 1))
-            _set_model_epoch(model, checkpoint_epoch)
+    for checkpoint_mode, checkpoint_path in checkpoint_paths.items():
+        checkpoint = load_trusted_checkpoint(checkpoint_path, map_location="cpu")
+        model.load_state_dict(checkpoint["model_state"])
+        checkpoint_epoch = int(checkpoint.get("epoch", int(cfg.train.epochs) - 1))
+        _set_model_epoch(model, checkpoint_epoch)
 
+        print(
+            f"[checkpoint:{checkpoint_mode}] {checkpoint_path} "
+            f"(epoch {checkpoint_epoch + 1})"
+        )
+        metrics_by_inference, model_hcc_diagnostics = _evaluate_inference_modes(
+            model=model,
+            loader=test_loader,
+            device=device,
+            cfg=cfg,
+            taxonomy=taxonomy,
+            inference_modes=inference_modes,
+            inference_rules=inference_rules,
+        )
+        for inference_mode, metrics in metrics_by_inference.items():
+            native_tag = " (native)" if inference_mode == native_mode else ""
             print(
-                f"[checkpoint:{checkpoint_mode}] {checkpoint_path} "
-                f"(epoch {checkpoint_epoch + 1})"
+                f"[test:{checkpoint_mode}:{inference_mode}]{native_tag} "
+                f"{pretty_metrics(metrics, level_names=level_names)}"
             )
-            metrics_by_inference, model_hcc_diagnostics = _evaluate_inference_modes(
-                model=model,
-                loader=test_loader,
-                device=device,
-                cfg=cfg,
-                taxonomy=taxonomy,
-                inference_modes=inference_modes,
-                inference_rules=inference_rules,
-            )
-            for inference_mode, metrics in metrics_by_inference.items():
-                native_tag = " (native)" if inference_mode == native_mode else ""
-                print(
-                    f"[test:{checkpoint_mode}:{inference_mode}]{native_tag} "
-                    f"{pretty_metrics(metrics, level_names=level_names)}"
-                )
 
-            checkpoint_result: Dict[str, Any] = {
-                "checkpoint": str(checkpoint_path),
-                "checkpoint_epoch": checkpoint_epoch + 1,
-                "inference": metrics_by_inference,
-            }
-            if model_hcc_diagnostics:
-                checkpoint_result["model_hcc_diagnostics"] = model_hcc_diagnostics
-            for alternative_mode in inference_modes:
-                if alternative_mode == reference_mode:
-                    continue
-                checkpoint_result[
-                    f"{alternative_mode}_minus_{reference_mode}"
-                ] = _metric_deltas(
-                    metrics_by_inference[reference_mode],
-                    metrics_by_inference[alternative_mode],
-                )
-            results[checkpoint_mode] = checkpoint_result
-    finally:
-        _set_hcc_final_test_active(model, False)
+        checkpoint_result: Dict[str, Any] = {
+            "checkpoint": str(checkpoint_path),
+            "checkpoint_epoch": checkpoint_epoch + 1,
+            "inference": metrics_by_inference,
+        }
+        if model_hcc_diagnostics:
+            checkpoint_result["model_hcc_diagnostics"] = model_hcc_diagnostics
+        for alternative_mode in inference_modes:
+            if alternative_mode == reference_mode:
+                continue
+            checkpoint_result[
+                f"{alternative_mode}_minus_{reference_mode}"
+            ] = _metric_deltas(
+                metrics_by_inference[reference_mode],
+                metrics_by_inference[alternative_mode],
+            )
+        results[checkpoint_mode] = checkpoint_result
 
     payload = {
         "run_dir": str(run_dir),

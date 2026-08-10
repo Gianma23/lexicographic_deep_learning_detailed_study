@@ -25,8 +25,19 @@ train:
     eps: 1.0e-12                    # Numerical epsilon for projection denominators
     log_metrics: true               # Emit projection diagnostics in train metrics
 
+  # Optional capability-based direct supervision of taxonomy-subspace profiles.
+  # When enabled, this replaces the model's native loss. The model output must
+  # expose subspace_scores_per_level and subspace_target_profiles_by_level.
+  # It is incompatible with mixup/cutmix, HCC, lexicographic training, and the
+  # Hier-COS LH projection.
+  subspace_supervision:
+    enabled: false
+    target_mode: sqrt_path_weights
+    loss: normalized_mse
+    eps: 1.0e-12
+
 optim:
-  name: adamw                       # adam | adamw | sgd
+  name: adamw                       # adam | keras_adam (Keras 2.8 epsilon-hat) | adamw | sgd
   lr: 0.0005                        # Base LR (or scaled base LR if train.scale_lr=true)
   weight_decay: 0.05
   momentum: 0.9                     # Used by sgd

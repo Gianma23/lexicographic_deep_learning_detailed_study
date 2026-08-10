@@ -46,7 +46,7 @@ WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 WEIGHT_BETA="${WEIGHT_BETA:-0.5}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
 TRANSFORM_MODES="${TRANSFORM_MODES:-full}"
-FEATURE_DIM="${FEATURE_DIM:-512}"
+FEATURE_DIM="${FEATURE_DIM:-0}"
 PROJECTION_EPS="${PROJECTION_EPS:-1.0e-6}"
 ADVANTAGE_ENABLED="${ADVANTAGE_ENABLED:-false}"
 
@@ -119,7 +119,7 @@ trap handle_exit EXIT
 
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cub200" DATASETS \
+parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
   cifar100 cub200 aircraft
 parse_choice_list TRANSFORM_MODES "full" TRANSFORM_MODES \
   full bn_linear final_only

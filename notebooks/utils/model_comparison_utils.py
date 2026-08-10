@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from train.runtime.selection import SelectionKey, selection_key
 
 try:
-    from notebooks.multiseed_utils import (
+    from notebooks.utils.multiseed_utils import (
         aggregate_parsed_seed_runs,
         discover_seed_dirs,
         has_seed_runs,
@@ -136,8 +136,7 @@ _DATASET_RUN_NAME_TOKENS = {
 
 def resolve_project_root() -> Path:
     cwd = Path.cwd().resolve()
-    candidates = [cwd, cwd.parent]
-    for candidate in candidates:
+    for candidate in [cwd, *cwd.parents]:
         if (candidate / "configs").exists():
             return candidate
     return cwd

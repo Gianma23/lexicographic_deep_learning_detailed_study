@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 import torch
 
 from models.common.hcc import HierarchicalAffineProjector
-from models.orthonormal_plugin.config import INPUT_KEY
-from models.orthonormal_plugin.topology import build_topology
+from models.common.subspace_supervision import subspace_norms
+from models.hiercos.topology import build_topology
 
 
 NODE_SCORE = "node_score"
@@ -100,26 +100,6 @@ def _validate_level_scores(
     return validated
 
 
-def _level_subspace_norms(
-    node_coordinates: torch.Tensor,
-    level_subspace_masks: Sequence[torch.Tensor],
-) -> List[torch.Tensor]:
-    """Return per-level L2 projection norms onto each taxonomy subspace."""
-    squared = node_coordinates.pow(2)
-    scores_per_level: List[torch.Tensor] = []
-    for mask in level_subspace_masks:
-        device_mask = mask.to(
-            device=node_coordinates.device,
-            dtype=node_coordinates.dtype,
-        )
-        score_sq = torch.matmul(
-            squared,
-            device_mask.transpose(0, 1).contiguous(),
-        )
-        scores_per_level.append(torch.sqrt(score_sq.clamp_min(0.0)))
-    return scores_per_level
-
-
 class PosthocInferenceRule:
     """One cell of the readout x transform grid, evaluated without training.
 
@@ -196,10 +176,10 @@ class PosthocInferenceRule:
             )
 
         return _validate_level_scores(
-            output.get(INPUT_KEY, output.get("logits_per_level")),
+            output.get("logits_per_level"),
             self.num_classes_per_level,
             owner=self.owner,
-            source_key=f"{INPUT_KEY}` or `logits_per_level",
+            source_key="logits_per_level",
         )
 
     def scores_from_output(self, output: Mapping[str, Any]) -> List[torch.Tensor]:
@@ -214,7 +194,7 @@ class PosthocInferenceRule:
             return [coordinate.abs() for coordinate in coordinates]
 
         assert self.level_subspace_masks is not None
-        return _level_subspace_norms(
+        return subspace_norms(
             torch.cat(coordinates, dim=1),
             self.level_subspace_masks,
         )

@@ -32,6 +32,10 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "filter_increment",
         "backbone_net",
         "backbone_net_weights",
+        "backbone_variant",
+        "backbone_preprocessing",
+        "backbone_bn_momentum",
+        "backbone_drop_path",
         "taxonomy_temperature",
         "mask_threshold_high",
         "mask_threshold_low",
@@ -41,6 +45,7 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "attn_key_dim",
         "attn_dropout",
         "attn_postprocess",
+        "attn_initializer",
         "loss",
     },
     "hrn": {
@@ -87,7 +92,6 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "scheduler",
         "runtime",
         "hcc",
-        "orthonormal_plugin",
     },
     "dataset": {
         "name",
@@ -175,6 +179,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "scale_lr",
         "scale_lr_reference_batch_size",
         "lexicographic",
+        "subspace_supervision",
     },
     "train.lexicographic": {
         "enabled",
@@ -182,6 +187,12 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "projection_rule",
         "eps",
         "log_metrics",
+    },
+    "train.subspace_supervision": {
+        "enabled",
+        "target_mode",
+        "loss",
+        "eps",
     },
     "optim": {
         "name",
@@ -212,18 +223,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
     "runtime": {"deterministic", "protocol"},
     "hcc": {
         "enabled",
-        "final_test_only",
         "eps",
-    },
-    "orthonormal_plugin": {
-        "enabled",
-        "loss",
-        "weight_mode",
-        "alpha",
-        "transform_mode",
-        "fixed_frame_mode",
-        "fixed_frame_per_level",
-        "transform_lr_scale",
     },
     "model.segments": {
         "mode",
@@ -265,20 +265,6 @@ _REQUIRED_ROOT_SECTIONS = {
 }
 
 
-# Keys that used to be configurable and now have a single fixed behavior.
-# Kept here so stale configs and launcher overrides fail with a migration hint
-# instead of a bare unknown-key error.
-_RETIRED_KEYS: Dict[str, Dict[str, str]] = {
-    "model.projection": {
-        "rho_enabled": (
-            "The LH projection always applies the shared terminal PReLU and its "
-            "derivative rho'; it is the standard method, not an ablation. "
-            "Remove the key."
-        ),
-    },
-}
-
-
 def _plain_config(cfg: Any) -> Dict[str, Any]:
     if OmegaConf.is_config(cfg):
         payload = OmegaConf.to_container(cfg, resolve=True)
@@ -298,9 +284,6 @@ def _validate_unknown_keys(
 ) -> None:
     if not isinstance(value, Mapping):
         return
-    for key, reason in _RETIRED_KEYS.get(path, {}).items():
-        if key in value:
-            raise ValueError(f"`{path}.{key}` is no longer configurable. {reason}")
     if path == "model":
         allowed = _MODEL_KEYS.get(model_name or "", set().union(*_MODEL_KEYS.values()))
     else:
@@ -482,14 +465,20 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
     _require_enum(
         transforms.get("normalization_scope", "image"),
         "dataset.transforms.normalization_scope",
-        {"image", "batch"},
+        {"image", "batch", "dataset"},
     )
-    if transforms.get("normalization_scope", "image") == "batch" and transforms.get(
+    normalization_scope_value = transforms.get("normalization_scope", "image")
+    if normalization_scope_value in {"batch", "dataset"} and transforms.get(
         "normalization"
     ) not in {"standardscaler", "minmax"}:
         raise ValueError(
-            "`dataset.transforms.normalization_scope: batch` requires "
+            f"`dataset.transforms.normalization_scope: {normalization_scope_value}` requires "
             "`dataset.transforms.normalization` to be standardscaler or minmax."
+        )
+    if normalization_scope_value == "dataset" and dataset.get("name") != "cifar-100":
+        raise ValueError(
+            "`dataset.transforms.normalization_scope: dataset` is currently supported "
+            "only for the array-backed CIFAR-100 adapter."
         )
     for key in ("mixup", "cutmix"):
         if _finite_float(transforms.get(key, 0.0), f"dataset.transforms.{key}") < 0.0:
@@ -547,7 +536,11 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
     if not isinstance(train.get("output_dir"), (str, Path)):
         raise ValueError("`train.output_dir` must be a path string.")
 
-    _require_enum(optim.get("name"), "optim.name", {"sgd", "adam", "adamw"})
+    _require_enum(
+        optim.get("name"),
+        "optim.name",
+        {"sgd", "adam", "adamw", "keras_adam"},
+    )
     _validate_optional_bool(optim, "nesterov", "optim.nesterov")
     if _finite_float(optim.get("lr"), "optim.lr") <= 0.0:
         raise ValueError("`optim.lr` must be > 0.")
@@ -578,6 +571,35 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
     model_name = _require_enum(model.get("name"), "model.name", SUPPORTED_MODELS)
     depth = int(dataset["hierarchy_depth"])
     hiercos_projection_enabled = False
+    hcc_enabled = False
+
+    subspace_supervision = train.get("subspace_supervision")
+    subspace_supervision_enabled = False
+    if subspace_supervision is not None and not isinstance(
+        subspace_supervision,
+        Mapping,
+    ):
+        raise ValueError("`train.subspace_supervision` must be a mapping.")
+    if isinstance(subspace_supervision, Mapping):
+        subspace_supervision_enabled = _require_bool(
+            subspace_supervision.get("enabled", False),
+            "train.subspace_supervision.enabled",
+        )
+        _require_enum(
+            subspace_supervision.get("target_mode", "sqrt_path_weights"),
+            "train.subspace_supervision.target_mode",
+            {"sqrt_path_weights"},
+        )
+        _require_enum(
+            subspace_supervision.get("loss", "normalized_mse"),
+            "train.subspace_supervision.loss",
+            {"normalized_mse"},
+        )
+        if _finite_float(
+            subspace_supervision.get("eps", 1e-12),
+            "train.subspace_supervision.eps",
+        ) <= 0.0:
+            raise ValueError("`train.subspace_supervision.eps` must be > 0.")
 
     if model_name in {"hcast", "hrn"} and depth != 3:
         raise ValueError(f"{model_name} requires exactly three hierarchy levels.")
@@ -625,9 +647,40 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                 {"imagenet", "none"},
             )
         _require_enum(
+            model.get("backbone_variant", "tf_efficientnet_b7.aa_in1k"),
+            "model.backbone_variant",
+            {
+                "tf_efficientnet_b7.aa_in1k",
+                "tf_efficientnet_b7.ns_jft_in1k",
+                "tf_efficientnet_b7",
+            },
+        )
+        _require_enum(
+            model.get("backbone_preprocessing", "keras"),
+            "model.backbone_preprocessing",
+            {"keras", "timm"},
+        )
+        bn_momentum = _finite_float(
+            model.get("backbone_bn_momentum", 0.01),
+            "model.backbone_bn_momentum",
+        )
+        if not 0.0 < bn_momentum <= 1.0:
+            raise ValueError("HT-CapsNet backbone_bn_momentum must be in (0, 1].")
+        drop_path = _finite_float(
+            model.get("backbone_drop_path", 0.2),
+            "model.backbone_drop_path",
+        )
+        if not 0.0 <= drop_path < 1.0:
+            raise ValueError("HT-CapsNet backbone_drop_path must be in [0, 1).")
+        _require_enum(
             model.get("attn_postprocess", "layernorm"),
             "model.attn_postprocess",
             {"layernorm", "squash"},
+        )
+        _require_enum(
+            model.get("attn_initializer", "keras_glorot"),
+            "model.attn_initializer",
+            {"keras_glorot", "pytorch_xavier"},
         )
         if _finite_float(model.get("taxonomy_temperature", 0.5), "model.taxonomy_temperature") <= 0:
             raise ValueError("HT-CapsNet taxonomy_temperature must be > 0.")
@@ -808,7 +861,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         if depth != 3:
             raise ValueError("HCC requires exactly three hierarchy levels.")
         hcc_enabled = _require_bool(hcc.get("enabled", False), "hcc.enabled")
-        _validate_optional_bool(hcc, "final_test_only", "hcc.final_test_only")
         if hcc_enabled:
             if _finite_float(hcc.get("eps", 0.0), "hcc.eps") <= 0.0:
                 raise ValueError("Enabled HCC requires hcc.eps > 0.")
@@ -831,67 +883,15 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                         "projection); disable one of the two."
                     )
 
-    plugin = payload.get("orthonormal_plugin")
-    plugin_enabled = False
-    if plugin is not None and not isinstance(plugin, Mapping):
-        raise ValueError("Top-level `orthonormal_plugin` must be a mapping.")
-    if isinstance(plugin, Mapping):
-        plugin_enabled = _require_bool(
-            plugin.get("enabled", False),
-            "orthonormal_plugin.enabled",
-        )
-    if plugin_enabled:
-        transforms = dataset["transforms"]
-        if float(transforms.get("mixup", 0.0) or 0.0) != 0.0:
-            raise ValueError("Enabled orthonormal plugin requires mixup=0.")
-        if float(transforms.get("cutmix", 0.0) or 0.0) != 0.0:
-            raise ValueError("Enabled orthonormal plugin requires cutmix=0.")
-        _require_enum(
-            plugin.get("loss", "global_softmax_ce_reg"),
-            "orthonormal_plugin.loss",
-            {"kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg"},
-        )
-        _require_enum(
-            plugin.get("weight_mode", "equal"),
-            "orthonormal_plugin.weight_mode",
-            {"equal", "kl_leaf", "kl_coarse"},
-        )
-        _require_enum(
-            plugin.get("transform_mode", "full"),
-            "orthonormal_plugin.transform_mode",
-            {"full", "bn_linear", "final_only"},
-        )
-        _require_enum(
-            plugin.get("fixed_frame_mode", "orthonormal_random"),
-            "orthonormal_plugin.fixed_frame_mode",
-            {"orthonormal_random", "orthonormal_block_random", "identity"},
-        )
-        if not isinstance(plugin.get("fixed_frame_per_level", False), bool):
-            raise ValueError("`orthonormal_plugin.fixed_frame_per_level` must be boolean.")
-        if _finite_float(plugin.get("alpha", 0.05), "orthonormal_plugin.alpha") < 0.0:
-            raise ValueError("`orthonormal_plugin.alpha` must be >= 0.")
-
     if hiercos_projection_enabled:
-        effective_loss = (
-            plugin.get("loss", "global_softmax_ce_reg")
-            if plugin_enabled
-            else model.get("loss", "kl_reg")
-        )
+        effective_loss = model.get("loss", "kl_reg")
         if effective_loss != "level_softmax_ce_reg":
             raise ValueError(
                 "Enabled Hier-COS LH-style projection requires `level_softmax_ce_reg` "
                 "so each level loss uses its projected branch."
             )
-        effective_frame_mode = (
-            plugin.get("fixed_frame_mode", "orthonormal_random")
-            if plugin_enabled
-            else model.get("fixed_frame_mode", "orthonormal_random")
-        )
-        effective_frame_per_level = (
-            plugin.get("fixed_frame_per_level", False)
-            if plugin_enabled
-            else model.get("fixed_frame_per_level", False)
-        )
+        effective_frame_mode = model.get("fixed_frame_mode", "orthonormal_random")
+        effective_frame_per_level = model.get("fixed_frame_per_level", False)
         if (
             effective_frame_mode != "identity"
             and effective_frame_mode != "orthonormal_block_random"
@@ -916,6 +916,42 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             "log_metrics",
             "train.lexicographic.log_metrics",
         )
+    if subspace_supervision_enabled:
+        transforms = dataset.get("transforms", {})
+        if _finite_float(train.get("smoothing", 0.0), "train.smoothing") > 0.0:
+            raise ValueError(
+                "Direct subspace supervision does not support soft targets or label "
+                "smoothing; set `train.smoothing: 0.0`."
+            )
+        if _finite_float(transforms.get("mixup", 0.0), "dataset.transforms.mixup") > 0.0:
+            raise ValueError(
+                "Direct subspace supervision does not support mixup; set "
+                "`dataset.transforms.mixup: 0.0`."
+            )
+        if _finite_float(transforms.get("cutmix", 0.0), "dataset.transforms.cutmix") > 0.0:
+            raise ValueError(
+                "Direct subspace supervision does not support cutmix; set "
+                "`dataset.transforms.cutmix: 0.0`."
+            )
+        if transforms.get("cutmix_minmax") is not None:
+            raise ValueError(
+                "Direct subspace supervision does not support cutmix_minmax; set "
+                "`dataset.transforms.cutmix_minmax: null`."
+            )
+        if hcc_enabled:
+            raise ValueError(
+                "Direct subspace supervision is mutually exclusive with `hcc.enabled=true`."
+            )
+        if lex_enabled:
+            raise ValueError(
+                "Direct subspace supervision is mutually exclusive with "
+                "`train.lexicographic.enabled=true`."
+            )
+        if hiercos_projection_enabled:
+            raise ValueError(
+                "Direct subspace supervision requires the Hier-COS LH projection to be off; "
+                "set `model.projection.enabled=false`."
+            )
     if lex_enabled:
         if model_name == "lhdnn":
             raise ValueError("Lexicographic training is not supported for LH-DNN.")
@@ -926,10 +962,9 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             )
         if depth != 3:
             raise ValueError("Lexicographic training requires exactly three hierarchy levels.")
-        if not plugin_enabled and model_name not in {"hcast", "hiercos", "ht_capsnet", "hrn"}:
+        if model_name not in {"hcast", "hiercos", "ht_capsnet", "hrn"}:
             raise ValueError(
-                "Lexicographic training requires H-CAST, Hier-COS, HT-CapsNet, HRN, "
-                "or the orthonormal plugin."
+                "Lexicographic training requires H-CAST, Hier-COS, HT-CapsNet, or HRN."
             )
         _require_enum(
             lex.get("projection_mode", "coarse_first"),
@@ -943,10 +978,7 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         )
         if _finite_float(lex.get("eps", 1e-12), "train.lexicographic.eps") <= 0.0:
             raise ValueError("Enabled lexicographic training requires a positive epsilon.")
-        if plugin_enabled:
-            if plugin.get("loss") not in {"global_softmax_ce_reg", "level_softmax_ce_reg"}:
-                raise ValueError("Lexicographic plugin training requires a decomposed CE loss.")
-        elif model_name == "hcast":
+        if model_name == "hcast":
             loss = model["loss"]
             if bool(loss.get("globalkl", False)):
                 raise ValueError("Lexicographic H-CAST requires model.loss.globalkl=false.")

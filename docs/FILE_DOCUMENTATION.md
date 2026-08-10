@@ -38,7 +38,6 @@ Commented schema fragments:
 - `configs/templates/ht_capsnet_template.yaml`
 - `configs/templates/hrn_template.yaml`
 - `configs/templates/hiercos_template.yaml`
-- `configs/templates/orthonormal_plugin_template.yaml`
 - `configs/templates/training_template.yaml`
 
 Templates are validated schema fragments, not standalone runnable configs.
@@ -81,6 +80,9 @@ fatal errors.
 - `models/hcast/segments.py` — grid/SEEDS segmentation.
 - `models/common/hcc.py` — HCC affine hierarchy projection and the shared
   on/off controller used by every HCC-capable model.
+- `models/common/subspace_supervision.py` — mixed-precision-safe taxonomy
+  subspace norms, dense square-root-path target construction, capability
+  validation, and the model-agnostic normalized profile loss override.
 - `models/hcast/internal/` — vendored CAST/H-CAST backbone implementation.
 
 ### LH-DNN
@@ -108,27 +110,24 @@ fatal errors.
 - `models/hrn/losses.py` — upstream-style tree-state loss plus leaf CE.
 - `models/hrn/factory.py` — exact three-level guard.
 
-### Hier-COS and the orthonormal plugin
+### Hier-COS
 
 - `models/hiercos/model.py` — fixed-frame node-space model with WideResNet or
   ResNet-50 backbone, optional LH-projected learnable level heads reading the
   transform output directly or through an LH-DNN-style shared PReLU/rho
-  derivative, detached advantage baselines, and an independent identity or
-  per-level block-diagonal fixed frame.
-- `models/hiercos/factory.py` — model/plugin config adapter.
-- `models/hiercos/losses.py` — compatibility export for shared fixed-frame
-  losses.
-- `models/orthonormal_plugin/topology.py` — taxonomy node ids, subspace masks,
+  derivative, detached advantage baselines, an independent identity or
+  per-level block-diagonal fixed frame, and non-persistent dense subspace target
+  lookup tables exposed through the shared supervision contract.
+- `models/hiercos/factory.py` — Hier-COS model config adapter.
+- `models/hiercos/losses.py` — `kl_reg`, `global_softmax_ce_reg`, and
+  `level_softmax_ce_reg` objectives.
+- `models/hiercos/topology.py` — taxonomy node ids, subspace masks,
   and path targets.
-- `models/orthonormal_plugin/head.py` — fixed identity/random orthonormal
+- `models/hiercos/fixed_frame.py` — fixed identity/random orthonormal
   classifiers.
-- `models/orthonormal_plugin/transforms.py` — full, BN-linear, and final-only
+- `models/hiercos/transforms.py` — full, BN-linear, and final-only
   transformations.
-- `models/orthonormal_plugin/losses.py` — `kl_reg`,
-  `global_softmax_ce_reg`, and `level_softmax_ce_reg`.
-- `models/orthonormal_plugin/wrapper.py` — optional adapter for non-Hier-COS
-  host models.
-- `models/orthonormal_plugin/config.py` — shared plugin config helpers.
+- `models/hiercos/config.py` — small Hier-COS config parsing helpers.
 
 ## Training and evaluation
 
@@ -136,7 +135,7 @@ fatal errors.
 - `train/config_loader.py` — mandatory OmegaConf loading, environment
   interpolation, dotlist overrides, and validation call.
 - `train/config_validation.py` — strict allowed-key schema, numeric checks,
-  and model/dataset/HCC/plugin/lex compatibility.
+  and model/dataset/HCC/lex/direct-subspace compatibility.
 - `train/engine.py` — training/evaluation loops, AMP, diagnostics, and
   lexicographic switch.
 - `train/evaluation.py` — per-batch metric and HCC diagnostic assembly. Decodes
@@ -191,14 +190,15 @@ Runtime modules:
 - `scripts/run_seed_utils.sh` — seed matrix and nested output helpers.
 - `scripts/run_matrix_utils.sh` — whitespace-separated environment matrix
   parsing and allowed-value validation.
-- `scripts/hcast/` — base, HCC, lexicographic, and plugin studies.
+- `scripts/hcast/` — base, HCC, and lexicographic studies.
 - `scripts/lhdnn/` — paper-aligned CIFAR-100 baseline plus explicit
   CUB/Aircraft protocol extrapolations.
 - `scripts/capsnet/` — native HT-CapsNet baselines with dynamic level weights
   and lexicographic studies with unit level weights.
-- `scripts/hrn/` — base, native level-marginal lexicographic, and plugin studies.
+- `scripts/hrn/` — base and native level-marginal lexicographic studies.
 - `scripts/hiercos/` — decomposed-loss baselines, two lexicographic rules,
-  transform ablation, and the LH-projected learnable-head study.
+  transform ablation, the LH-projected learnable-head study, and the
+  direct-subspace supervision launcher.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
   nesting migration.
 
@@ -215,32 +215,50 @@ named `<model>_<dataset>[_<loss>]_lex_<rule>_<mode>[...]`.
 
 ## Analysis notebooks and helpers
 
-- `notebooks/hcast_analysis.ipynb`
-- `notebooks/hcc_internal_diagnostics.ipynb`
-- `notebooks/hiercos_analysis.ipynb`
-- `notebooks/lhdnn_analysis.ipynb`
-- `notebooks/hrn_analysis.ipynb`
-- `notebooks/model_comparison_all_datasets.ipynb`
-- `notebooks/posthoc_hiercos_inference_comparison.ipynb`
-- `notebooks/hcast_analysis_utils.py`
-- `notebooks/model_comparison_utils.py`
-- `notebooks/multiseed_utils.py`
+All notebooks and their shared helper modules live under `notebooks/`, split
+into three areas: cross-cutting notebooks directly under `notebooks/`,
+per-model finished-run analyses under `notebooks/model_analysis/`, live-run
+trade-off plots under `notebooks/tradeoff_analysis/`, and their shared Python
+helpers under `notebooks/utils/`.
 
-Current-run trade-off analyses live directly under `analysis/current_runs/`, one
+- `notebooks/datasets_analysis.ipynb` — dataset-level analysis and the figures
+  exported for the thesis dataset section.
+- `notebooks/model_comparison_all_datasets.ipynb` — cross-model, cross-dataset
+  comparison.
+- `notebooks/posthoc_hiercos_inference_comparison.ipynb` — post-hoc Hier-COS
+  inference comparison; drives the CLI documented in `evaluation/README.md`.
+
+`notebooks/model_analysis/` holds one notebook per model family for finished,
+selected-checkpoint analysis:
+
+- `notebooks/model_analysis/hcast_analysis.ipynb`
+- `notebooks/model_analysis/hcc_internal_diagnostics.ipynb`
+- `notebooks/model_analysis/hiercos_analysis.ipynb`
+- `notebooks/model_analysis/lhdnn_analysis.ipynb`
+- `notebooks/model_analysis/hrn_analysis.ipynb`
+
+`notebooks/utils/` holds the shared Python helpers imported by the notebooks
+above:
+
+- `notebooks/utils/hcast_analysis_utils.py`
+- `notebooks/utils/model_comparison_utils.py`
+- `notebooks/utils/multiseed_utils.py`
+
+Current-run trade-off analyses live under `notebooks/tradeoff_analysis/`, one
 notebook per model family:
 
-- `analysis/current_runs/hiercos_current_plots.ipynb` — the full Hier-COS
+- `notebooks/tradeoff_analysis/hiercos_current_plots.ipynb` — the full Hier-COS
   baseline, lexicographic, projection, and ablation analysis.
-- `analysis/current_runs/hcast_current_plots.ipynb` — H-CAST baseline,
+- `notebooks/tradeoff_analysis/hcast_current_plots.ipynb` — H-CAST baseline,
   no-global-KL baseline, explicit-lexicographic, and HCC comparison.
-- `analysis/current_runs/hrn_current_plots.ipynb` — HRN baseline,
+- `notebooks/tradeoff_analysis/hrn_current_plots.ipynb` — HRN baseline,
   explicit-lexicographic, and HCC comparison.
-- `analysis/current_runs/lhdnn_current_plots.ipynb` — the single LH-DNN baseline
-  arm placed among the other model families on a shared scale.
-- `analysis/current_runs/htcapsnet_current_plots.ipynb` — HT-CapsNet baseline,
-  explicit-lexicographic, and HCC comparison, with the margin-collapse check
-  that must precede any reading of the numbers.
-- `analysis/current_runs/current_run_plot_utils.py` — shared aggregation,
+- `notebooks/tradeoff_analysis/lhdnn_current_plots.ipynb` — the single LH-DNN
+  baseline arm placed among the other model families on a shared scale.
+- `notebooks/tradeoff_analysis/htcapsnet_current_plots.ipynb` — HT-CapsNet
+  baseline, explicit-lexicographic, and HCC comparison, with the
+  margin-collapse check that must precede any reading of the numbers.
+- `notebooks/utils/current_run_plot_utils.py` — shared aggregation,
   reference-model discovery, the visual-encoding layer, off-scale gutter layout,
   collision-aware labels, HCC-activation verification, trade-off plotting,
   absolute and delta level-accuracy plotting, and Pareto-summary helpers for all
@@ -288,11 +306,11 @@ independent metric family. Top-down decoding is intentionally not offered there:
 its predicted path is consistent by construction, so `tice_topdown` is
 identically zero and `fpa_topdown` collapses onto top-down fine accuracy, leaving
 a top-down trade-off view with nothing to show. Top-down results remain available
-from `test_metrics.yaml` and from the older `notebooks/` analyses.
+from `test_metrics.yaml` and from the `notebooks/model_analysis/` analyses.
 
 Figures are authored for the thesis, not for the screen. `use_paper_style()` in
 `current_run_plot_utils.py` applies the same rcParams as
-`analysis/datasets_analysis.ipynb` (DejaVu Serif, 9 pt base, 400 dpi raster,
+`notebooks/datasets_analysis.ipynb` (DejaVu Serif, 9 pt base, 400 dpi raster,
 `pdf.fonttype=42`, constrained layout), and `save_figure()` writes a PDF and a
 PNG at the authored size without `bbox_inches='tight'`. Every figure is 6.3 in
 wide — an A4 text block with 2.5 cm margins — and must be included at
@@ -326,7 +344,8 @@ Notebook files are not rewritten by repository audits.
 Tests use `python -m unittest discover -s tests -v`. They cover official
 hierarchies, fixed-frame loss equivalence, multiseed helpers, shared label
 spaces, strict configs, exact checkpoint selection/resume, metrics, model
-contracts, launchers, and documentation paths.
+contracts, direct subspace targets/losses/gradients, launchers, and
+documentation paths.
 
 ## Runtime artifacts
 

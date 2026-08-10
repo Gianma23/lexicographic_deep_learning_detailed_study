@@ -9,6 +9,10 @@ model:
   filter_increment: 2
   backbone_net: efficientnet_b7
   backbone_net_weights: imagenet
+  backbone_variant: tf_efficientnet_b7.aa_in1k
+  backbone_preprocessing: keras
+  backbone_bn_momentum: 0.01
+  backbone_drop_path: 0.2
 
   # Taxonomy-guided routing controls
   taxonomy_temperature: 0.5
@@ -22,6 +26,7 @@ model:
   attn_key_dim: 32
   attn_dropout: 0.0
   attn_postprocess: layernorm
+  attn_initializer: keras_glorot
   loss:
     margin_m_pos: 0.9
     margin_m_neg: 0.1
@@ -84,7 +89,7 @@ train:
   smoothing: 0.0
 
 optim:
-  name: adam
+  name: keras_adam
   lr: 0.001
   weight_decay: 0.0
   momentum: 0.9

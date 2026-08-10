@@ -22,8 +22,8 @@ Convention used below:
 | # | Axis | Config key | Values | Source |
 |---|---|---|---|---|
 | 1 | Fixed frame | `model.fixed_frame_mode`, `model.fixed_frame_per_level` | `identity`, `orthonormal_block_random` (= random + per-level), `orthonormal_random` (dense) | [model.py:373-393](models/hiercos/model.py#L373-L393) |
-| 2 | Loss / softmax scope | `model.loss` | `kl_reg`, `global_softmax_ce_reg`, `level_softmax_ce_reg` | [losses.py:11](models/orthonormal_plugin/losses.py#L11) |
-| 3 | Level weighting | `model.weight_mode` | `equal`, `kl_leaf`, `kl_coarse` | [losses.py:12](models/orthonormal_plugin/losses.py#L12) |
+| 2 | Loss / softmax scope | `model.loss` | `kl_reg`, `global_softmax_ce_reg`, `level_softmax_ce_reg` | [losses.py](models/hiercos/losses.py) |
+| 3 | Level weighting | `model.weight_mode` | `equal`, `kl_leaf`, `kl_coarse` | [losses.py](models/hiercos/losses.py) |
 | 4 | Learnable transform | `model.transform_mode` | `full`, `bn_linear`, `final_only` | [model.py:343-347](models/hiercos/model.py#L343-L347) |
 | 5 | Gradient-space lex | `train.lexicographic.enabled` | `false`, `true` | [config.py:106-123](train/lexicographic/config.py#L106-L123) |
 | 5a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first` | [config.py:9](train/lexicographic/config.py#L9) |
@@ -32,7 +32,6 @@ Convention used below:
 | 6b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:142-145](models/hiercos/model.py#L142-L145) |
 | 6c | Feature width | `.feature_dim` | `0` (= total nodes), `512`, … | [model.py:290-317](models/hiercos/model.py#L290-L317) |
 | 7 | Output-space HCC | `hcc.enabled` | `false`, `true` | [config_validation.py:763](train/config_validation.py#L763) |
-| 7a | Test-time only | `hcc.final_test_only` | `false`, `true` | [config_validation.py:764](train/config_validation.py#L764) |
 
 HCC has no onset, α-schedule, or temperature axis: it is a binary switch, fully applied
 from the first batch whenever `hcc.enabled: true`. The former `alpha_schedule` /
@@ -58,8 +57,7 @@ tractable, and several of them *are themselves findings* about how the mechanism
    [config.py:160-181](train/lexicographic/config.py#L160-L181)
 2. **LH-DNN admits no mechanism arms — it is a baseline only.** Lex is rejected
    ([config.py:132-133](train/lexicographic/config.py#L132-L133)) and HCC is rejected
-   ([config_validation.py:756-759](train/config_validation.py#L756-L759)); the plugin is
-   excluded by design. See C.0 for the argument.
+   ([config_validation.py:756-759](train/config_validation.py#L756-L759)). See C.0 for the argument.
 3. **Lex on HRN requires `model.loss: level_marginal`.** [config.py:171-175](train/lexicographic/config.py#L171-L175)
 4. **Lex on H-CAST requires `model.loss.globalkl: false`.** [config.py:152-158](train/lexicographic/config.py#L152-L158)
 5. **LH projection requires `level_softmax_ce_reg`** — the per-level softmax is what gives
@@ -71,9 +69,6 @@ tractable, and several of them *are themselves findings* about how the mechanism
    [model.py:310-317](models/hiercos/model.py#L310-L317)
 8. **HCC requires exactly three levels**; HRN + HCC requires `level_marginal`.
    [config_validation.py:759-775](train/config_validation.py#L759-L775)
-9. **The orthonormal plugin requires `mixup=0` and `cutmix=0`.**
-   [config_validation.py:806-810](train/config_validation.py#L806-L810)
-
 Constraint 5 is worth stating in the thesis as a design consequence rather than a config
 detail: *global* softmax couples all nodes into one normalizer, so there is no such thing
 as a separable per-level gradient to project. Constraints 1 and 5 are the same fact seen
@@ -103,7 +98,7 @@ The mechanistic reason it must be excluded: HCC's least-squares projection onto
 "children sum to parent" is a **joint** constraint across all three levels
 ([models/common/hcc.py](models/common/hcc.py#L4-L6)), and when HCC is on, the level losses
 are computed on the HCC-corrected effective logits, not the raw ones
-([losses.py:446-448](models/orthonormal_plugin/losses.py#L446-L448)). Each level's loss
+([losses.py](models/hiercos/losses.py)). Each level's loss
 therefore depends on *every* level's raw logits through the projection. Lex's entire premise
 is that there are three separable level objectives whose gradients can be ordered — under
 HCC there are not. The lexicographic ordering would be applied to gradients that HCC has
@@ -242,7 +237,7 @@ the optimizer with the normalizer.
 ## RQ3 — Does the level weighting drive the conclusions?
 
 `equal`, `kl_leaf` (leaf-heavy), `kl_coarse` (the flipped vector,
-[losses.py:408](models/orthonormal_plugin/losses.py#L408)). This is the axis the supervisor
+[losses.py](models/hiercos/losses.py)). This is the axis the supervisor
 objected to (`docs/hiercos_level_weights.md`), on the grounds that the weights are
 empirical rather than derived.
 
@@ -367,11 +362,11 @@ and the absence of combination arms is itself the result: hierarchy consistency 
 bought in output space *or* in gradient space, but the two are not composable, because HCC
 destroys the objective separability that gradient ordering requires.
 
-HCC is applied from initialization, with no onset ablation. `final_test_only` remains the
-one timing contrast: constraint applied *only* at test time, which cleanly separates "the
-constraint improved the learned representation" from "the constraint fixed up the
-predictions." That is the cheapest and most decisive HCC arm, and the whole HCC-on-Hier-COS
-family is currently unrun.
+HCC is applied from initialization, with no onset ablation or test-only configuration.
+Evaluation-only enforcement is performed by the post-hoc inference notebook, which cleanly
+separates "the constraint improved the learned representation" from "the constraint fixed
+up the predictions." That is the cheapest and most decisive HCC control, and the whole
+HCC-on-Hier-COS family is currently unrun.
 
 ## RQ8 — Backbone and pretraining as threats to validity
 
@@ -402,16 +397,16 @@ generalize, by three different routes.
 
 ## C.0 Model × mechanism applicability
 
-The governing rule first: **LH-DNN is a baseline only.** It carries no mechanism arms — not
-lex, not HCC, not the plugin. Everything else below is scoped to the other four models.
+The governing rule first: **LH-DNN is a baseline only.** It carries no lex or HCC
+mechanism arm. Everything else below is scoped to the other four models.
 
-| Model | Lex | HCC | Orthonormal plugin | Role in the thesis |
-|---|---|---|---|---|
-| H-CAST | yes (`globalkl: false`) | yes | yes | primary method model |
-| Hier-COS | yes ({global,level}`_softmax_ce_reg`) | yes | n/a (native frame) | primary method model |
-| HRN | yes (`level_marginal`) | yes (`level_marginal`) | yes | baseline + extension |
-| HT-CapsNet | yes | yes | yes | baseline + extension |
-| **LH-DNN** | **no — rejected** | **no — rejected** | **no — excluded by design** | **baseline only** |
+| Model | Lex | HCC | Role in the thesis |
+|---|---|---|---|
+| H-CAST | yes (`globalkl: false`) | yes | primary method model |
+| Hier-COS | yes ({global,level}`_softmax_ce_reg`) | yes | primary method model |
+| HRN | yes (`level_marginal`) | yes (`level_marginal`) | baseline + extension |
+| HT-CapsNet | yes | yes | baseline + extension |
+| **LH-DNN** | **no — rejected** | **no — rejected** | **baseline only** |
 
 Lex support: [config.py:132-139](train/lexicographic/config.py#L132-L139).
 HCC support: `hcc_supported_models = {"hcast", "hrn", "ht_capsnet", "hiercos"}`
@@ -429,19 +424,10 @@ into hierarchy consistency; LH-DNN's outputs are produced through its own branch
 projection. Imposing an output-space cascade on top would overwrite the structure LH-DNN
 exists to demonstrate.
 
-**Plugin × LH-DNN is technically possible but excluded by design.** The wrapper accepts any
-non-Hier-COS model ([models/__init__.py:33-43](models/__init__.py#L33-L43)), so it *would*
-load. But the plugin consumes the base model's per-level scores and re-classifies them
-through the fixed frame, replacing the classification pathway and blanking
-`effective_logits_per_level` ([wrapper.py:77-91](models/orthonormal_plugin/wrapper.py#L77-L91)).
-Applied to LH-DNN, the loss becomes the plugin's, and what remains of LH-DNN is essentially
-a backbone. A result from that arm could not be attributed to LH-DNN, so it would not
-answer any question worth asking.
-
 The unifying point: **LH-DNN's contribution *is* its head and projection mechanism.** Every
-mechanism in this thesis acts on exactly that part of the network, so any arm applied to
-LH-DNN either duplicates what it already does (lex — see below) or replaces it (HCC,
-plugin). It is therefore the right control precisely because it admits no arms: it holds the
+mechanism in this thesis acts on exactly that part of the network, so an arm applied to
+LH-DNN either duplicates what it already does (lex — see below) or replaces it (HCC).
+It is therefore the right control precisely because it admits no arms: it holds the
 "hierarchy handled natively by the architecture" position fixed while the other four models
 vary.
 
@@ -472,28 +458,7 @@ cross-architecture weight. Each new model arm should carry at minimum the RQ4 co
 | HRN | **not run** — needs `model.loss: level_marginal` |
 | HT-CapsNet | **not run** |
 
-## C.2 The orthonormal plugin — ports the fixed frame onto three other models
-
-`OrthonormalPluginWrapper` wraps a non-Hier-COS model
-([models/__init__.py:33-43](models/__init__.py#L33-L43)) and exposes its own `loss`,
-`weight_mode`, `transform_mode`, `fixed_frame_mode`, `fixed_frame_per_level`, and `alpha`
-([config_validation.py:800-834](train/config_validation.py#L800-L834)).
-
-This is the mechanism that makes **RQ1 and RQ2 model-independent**. The identity-vs-random
-ladder and the global-vs-level softmax question can be replicated on **H-CAST, HRN, and
-HT-CapsNet** — not LH-DNN, per C.0. If "identity ≈ random" replicates across three
-backbones plus Hier-COS, the claim stops being about Hier-COS and becomes a claim about
-fixed-frame hierarchical heads in general — a substantially stronger thesis contribution
-than a single-model ablation.
-
-One such run exists already:
-`hrn_cub200_orthonormal_plugin_level_softmax_ce_reg_final_only_identity`.
-
-Caveat: the plugin requires `mixup=0` and `cutmix=0`, so plugin arms are not directly
-comparable to baseline runs of models whose default recipe uses either. H-CAST in particular
-has `nomixup_nosmoothing` variants for this reason — use those as the matched baseline.
-
-## C.3 HCC — cross-model over the same four
+## C.2 HCC — cross-model over the same four
 
 HCC lives in `models/common/hcc.py` and is supported for exactly
 `{hcast, hrn, ht_capsnet, hiercos}` — the same four models as lex, and for the same reason:
@@ -524,14 +489,12 @@ Ranked by information gained per GPU-hour, not by convenience:
    `none` baseline. This is the thesis's central mechanistic claim: whether the in-graph
    differentiable formulation buys the same ordering as explicit projection. Requires
    `level_softmax_ce_reg` + identity frame on both arms, which the existing runs partly cover.
-3. **HCC on Hier-COS**, starting with `final_test_only` — cheapest decisive arm, and RQ7
-   currently has no Hier-COS data at all.
+3. **HCC on Hier-COS**, starting with the post-hoc inference notebook — cheapest decisive
+   control, and RQ7 currently has no Hier-COS data at all.
 4. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a
    cross-architecture claim.
-5. **Plugin frame ladder on one of H-CAST / HRN / HT-CapsNet** — tests whether RQ1
-   generalizes. Not LH-DNN (C.0).
-6. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.
-7. **`advantage_enabled`, `conflict_only` on remaining datasets** — completeness.
+5. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.
+6. **`advantage_enabled`, `conflict_only` on remaining datasets** — completeness.
 
 ## C.5 Reporting rules to hold across the whole matrix
 

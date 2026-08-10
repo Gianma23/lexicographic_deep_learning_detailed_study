@@ -214,6 +214,17 @@ def compute_loss(
     # If effective_logits_per_level is present, training uses HCC-corrected
     # logits; otherwise training uses raw logits.
     logits_per_level, score_source_per_level = select_effective_logits(output)
+    if score_source_per_level is logits_per_level:
+        margin_scores = output.get("margin_scores_per_level")
+        if margin_scores is not None:
+            if not isinstance(margin_scores, list) or len(margin_scores) != len(
+                logits_per_level
+            ):
+                raise ValueError(
+                    "output['margin_scores_per_level'] must be a list aligned "
+                    "with output['logits_per_level']."
+                )
+            score_source_per_level = margin_scores
 
     level_targets, _hard_targets = _resolve_level_targets(logits_per_level, targets)
     target_indices = _target_indices_for_accuracy(level_targets)

@@ -43,7 +43,7 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-parse_choice_list DATASETS "aircraft cub200 cifar100" DATASETS \
+parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -127,7 +127,6 @@ printf 'CIFAR-100 protocol: paper/source aligned\n'
 printf 'CUB protocol: unified-taxonomy extrapolation\n'
 printf 'Aircraft protocol: local extrapolation\n'
 printf 'Lexicographic mode: disabled\n'
-printf 'Orthonormal plugin: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -136,7 +135,6 @@ print_seed_run_settings
 for dataset in "${DATASETS[@]}"; do
   config="$(config_for_dataset "$dataset")"
   run_seeded_train "$config" "$(run_output_dir "$dataset")" \
-    "orthonormal_plugin.enabled=false" \
     "train.lexicographic.enabled=false"
 done
 

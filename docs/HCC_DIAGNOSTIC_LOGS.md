@@ -32,8 +32,7 @@ Notes:
   - Meaning: activation flag for logit-space HCC. HCC is a binary on/off switch,
     so the projection is always fully applied when it runs.
   - Values: `1` whenever the key is logged; the key is absent entirely for
-    batches where HCC did not run (disabled, or `final_test_only` outside the
-    final test).
+    batches where HCC is disabled.
   - Interpretation: use it as the authoritative "HCC was active" evidence for a
     run, never a directory name.
 

@@ -1,5 +1,6 @@
-﻿from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+﻿import math
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -66,6 +67,36 @@ class _TimmFeatureBackbone(nn.Module):
         return self.timm_model.forward_features(x)
 
 
+def _keras_glorot_uniform_limit(shape: Sequence[int]) -> float:
+    """Return the Glorot bound produced by Keras 2.8 for ``shape``.
+
+    Keras treats rank-three ``EinsumDense`` attention kernels like convolution
+    kernels when computing their fans. Flattening those kernels into a PyTorch
+    ``Linear`` before calling ``xavier_uniform_`` therefore changes the fan
+    calculation and substantially increases the initialization scale.
+    """
+    dimensions = tuple(int(value) for value in shape)
+    if any(value <= 0 for value in dimensions):
+        raise ValueError(f"Keras Glorot dimensions must be positive, got {dimensions}.")
+    if not dimensions:
+        fan_in = fan_out = 1.0
+    elif len(dimensions) == 1:
+        fan_in = fan_out = float(dimensions[0])
+    elif len(dimensions) == 2:
+        fan_in, fan_out = (float(dimensions[0]), float(dimensions[1]))
+    else:
+        receptive_field_size = float(math.prod(dimensions[:-2]))
+        fan_in = float(dimensions[-2]) * receptive_field_size
+        fan_out = float(dimensions[-1]) * receptive_field_size
+    return math.sqrt(6.0 / (fan_in + fan_out))
+
+
+@torch.no_grad()
+def _keras_glorot_uniform_(tensor: torch.Tensor, keras_shape: Sequence[int]) -> torch.Tensor:
+    limit = _keras_glorot_uniform_limit(keras_shape)
+    return tensor.uniform_(-limit, limit)
+
+
 class KerasMultiHeadAttention(nn.Module):
     """Keras MHA projection semantics backed by PyTorch's optimized SDPA."""
 
@@ -76,6 +107,7 @@ class KerasMultiHeadAttention(nn.Module):
         num_heads: int,
         key_dim: int,
         dropout: float = 0.0,
+        initializer: str = "keras_glorot",
     ):
         super().__init__()
         if not hasattr(F, "scaled_dot_product_attention"):
@@ -88,10 +120,15 @@ class KerasMultiHeadAttention(nn.Module):
         self.num_heads = int(num_heads)
         self.key_dim = int(key_dim)
         self.dropout = float(dropout)
+        self.initializer = str(initializer)
         if self.query_dim <= 0 or self.context_dim <= 0:
             raise ValueError("Attention query/context dimensions must be positive.")
         if self.num_heads <= 0 or self.key_dim <= 0:
             raise ValueError("Attention num_heads/key_dim must be positive.")
+        if self.initializer not in {"keras_glorot", "pytorch_xavier"}:
+            raise ValueError(
+                "HT-CapsNet attention initializer must be keras_glorot or pytorch_xavier."
+            )
 
         projection_dim = self.num_heads * self.key_dim
         self.query_projection = nn.Linear(self.query_dim, projection_dim)
@@ -101,13 +138,29 @@ class KerasMultiHeadAttention(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        for projection in (
-            self.query_projection,
-            self.key_projection,
-            self.value_projection,
-            self.output_projection,
-        ):
-            nn.init.xavier_uniform_(projection.weight)
+        projections = (
+            (
+                self.query_projection,
+                (self.query_dim, self.num_heads, self.key_dim),
+            ),
+            (
+                self.key_projection,
+                (self.context_dim, self.num_heads, self.key_dim),
+            ),
+            (
+                self.value_projection,
+                (self.context_dim, self.num_heads, self.key_dim),
+            ),
+            (
+                self.output_projection,
+                (self.num_heads, self.key_dim, self.query_dim),
+            ),
+        )
+        for projection, keras_shape in projections:
+            if self.initializer == "keras_glorot":
+                _keras_glorot_uniform_(projection.weight, keras_shape)
+            else:
+                nn.init.xavier_uniform_(projection.weight)
             if projection.bias is not None:
                 nn.init.zeros_(projection.bias)
 
@@ -201,6 +254,9 @@ def _build_backbone(
     num_blocks: int,
     initial_filters: int,
     filter_increment: int,
+    backbone_variant: str = "tf_efficientnet_b7.aa_in1k",
+    backbone_bn_momentum: float = 0.01,
+    backbone_drop_path: float = 0.2,
 ) -> nn.Module:
     normalized_name = _normalize_backbone_name(backbone_name)
     normalized_weights = _normalize_backbone_weights(backbone_weights)
@@ -214,19 +270,37 @@ def _build_backbone(
         )
 
     if normalized_name == "efficientnet_b7":
+        supported_variants = {
+            "tf_efficientnet_b7.aa_in1k",
+            "tf_efficientnet_b7.ns_jft_in1k",
+            "tf_efficientnet_b7",
+        }
+        if backbone_variant not in supported_variants:
+            raise ValueError(
+                f"Unsupported HT-CapsNet EfficientNet variant '{backbone_variant}'. "
+                f"Expected one of {sorted(supported_variants)}."
+            )
+        if not 0.0 < float(backbone_bn_momentum) <= 1.0:
+            raise ValueError("HT-CapsNet backbone_bn_momentum must be in (0, 1].")
+        if not 0.0 <= float(backbone_drop_path) < 1.0:
+            raise ValueError("HT-CapsNet backbone_drop_path must be in [0, 1).")
         try:
             import timm
 
             model = timm.create_model(
-                "tf_efficientnet_b7",
+                backbone_variant,
                 pretrained=normalized_weights == "imagenet",
                 num_classes=0,
                 global_pool="",
+                # Keras momentum=0.99 maps to PyTorch momentum=1-0.99.
+                bn_momentum=float(backbone_bn_momentum),
+                # Keras EfficientNet applies drop_connect_rate * block/blocks.
+                drop_path_rate=float(backbone_drop_path),
             )
         except Exception as exc:
             requested = "ImageNet-pretrained " if normalized_weights == "imagenet" else ""
             raise RuntimeError(
-                f"HT-CapsNet requires the timm {requested}tf_efficientnet_b7 backbone. "
+                f"HT-CapsNet requires the timm {requested}{backbone_variant} backbone. "
                 "Install a compatible timm/PyTorch build and cache/download requested weights; "
                 "the paper configuration never falls back to random initialization."
             ) from exc
@@ -250,6 +324,10 @@ class HTCapsNet(nn.Module):
         filter_increment: int = 2,
         backbone_name: str = "custom",
         backbone_weights: Optional[str] = None,
+        backbone_variant: str = "tf_efficientnet_b7.aa_in1k",
+        backbone_preprocessing: str = "keras",
+        backbone_bn_momentum: float = 0.01,
+        backbone_drop_path: float = 0.2,
         taxonomy_temperature: float = 0.5,
         mask_threshold_high: float = 0.9,
         mask_threshold_low: float = 0.1,
@@ -259,6 +337,7 @@ class HTCapsNet(nn.Module):
         attn_key_dim: int = 32,
         attn_dropout: float = 0.0,
         attn_postprocess: str = "layernorm",
+        attn_initializer: str = "keras_glorot",
         input_size: int = 224,
         hcc_cfg: Optional[Dict[str, Any]] = None,
     ):
@@ -268,7 +347,15 @@ class HTCapsNet(nn.Module):
         self.routing_iters = int(routing_iters)
         self.primary_dim = int(primary_dim)
         self.attn_postprocess = _normalize_attn_postprocess(attn_postprocess)
-        self._keras_efficientnet_rescale = _normalize_backbone_name(backbone_name) == "efficientnet_b7"
+        normalized_backbone_name = _normalize_backbone_name(backbone_name)
+        if not isinstance(backbone_preprocessing, str) or backbone_preprocessing not in {
+            "keras",
+            "timm",
+        }:
+            raise ValueError("HT-CapsNet backbone_preprocessing must be keras or timm.")
+        self.backbone_preprocessing = (
+            backbone_preprocessing if normalized_backbone_name == "efficientnet_b7" else "none"
+        )
         # Adapted state carried by the Keras `efficientnetb7_notop.h5` ImageNet
         # weights for the stem `Normalization` layer, which applies
         # `(x - mean) / sqrt(variance)`. Keras stores the ImageNet standard
@@ -280,6 +367,11 @@ class HTCapsNet(nn.Module):
         )
         self.register_buffer(
             "_keras_efficientnet_variance",
+            torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_timm_efficientnet_std",
             torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1),
             persistent=False,
         )
@@ -301,6 +393,9 @@ class HTCapsNet(nn.Module):
             num_blocks=num_blocks,
             initial_filters=initial_filters,
             filter_increment=filter_increment,
+            backbone_variant=backbone_variant,
+            backbone_bn_momentum=backbone_bn_momentum,
+            backbone_drop_path=backbone_drop_path,
         )
 
         # Infer the primary-capsule layout from the backbone feature shape.
@@ -351,6 +446,7 @@ class HTCapsNet(nn.Module):
                     num_heads=int(attn_heads),
                     key_dim=int(attn_key_dim),
                     dropout=attn_dropout,
+                    initializer=attn_initializer,
                 )
             )
 
@@ -394,9 +490,6 @@ class HTCapsNet(nn.Module):
         """Mirror the Keras epoch-boundary reset of the metrics the LW callback reads."""
         self.lw_running_correct.zero_()
         self.lw_running_count.zero_()
-
-    def set_hcc_final_test_active(self, active: bool) -> None:
-        self.hcc.set_final_test_active(active)
 
     @staticmethod
     def _normalize_parent_of(taxonomy: Optional[Dict[str, Any]]) -> Dict[int, Dict[int, int]]:
@@ -458,13 +551,17 @@ class HTCapsNet(nn.Module):
         if int(x.size(-2)) < 32 or int(x.size(-1)) < 32:
             x = F.interpolate(x, size=(32, 32), mode="bilinear", align_corners=False)
         # Keras EfficientNet embeds `Rescaling(1/255)` followed by a
-        # `Normalization` layer in its stem. The official HT-CapsNet pipeline
-        # applies per-image standardization before both.
-        if self._keras_efficientnet_rescale:
+        # `Normalization` layer in its stem. For CIFAR the official HT-CapsNet
+        # pipeline applies split-wide scalar standardization before both.
+        if self.backbone_preprocessing == "keras":
             x = x / 255.0
             mean = self._keras_efficientnet_mean.to(device=x.device, dtype=x.dtype)
             variance = self._keras_efficientnet_variance.to(device=x.device, dtype=x.dtype)
             x = (x - mean) / torch.sqrt(variance).clamp_min(torch.finfo(x.dtype).eps)
+        elif self.backbone_preprocessing == "timm":
+            mean = self._keras_efficientnet_mean.to(device=x.device, dtype=x.dtype)
+            std = self._timm_efficientnet_std.to(device=x.device, dtype=x.dtype)
+            x = (x - mean) / std.clamp_min(torch.finfo(x.dtype).eps)
         return x
 
     def _taxonomy_matrix(self, level: int, device: torch.device, dtype: torch.dtype) -> Optional[torch.Tensor]:
@@ -644,11 +741,18 @@ class HTCapsNet(nn.Module):
             routing_stats[f"level_{level}_caps_norm_mean"] = logits.mean().detach()
 
         hcc_output = self.hcc.apply(logits_per_level)
+        probabilities_per_level = [
+            torch.softmax(logits, dim=-1) for logits in logits_per_level
+        ]
 
         return {
             "logits_per_level": logits_per_level,
-            "effective_probs_per_level": [torch.softmax(logits, dim=-1) for logits in logits_per_level],
-            "orthonormal_plugin_scores_per_level": logits_per_level,
+            "effective_probs_per_level": probabilities_per_level,
+            # Upstream LengthLayer returns raw capsule lengths while training
+            # and softmax probabilities while evaluating the Keras model.
+            "margin_scores_per_level": (
+                logits_per_level if self.training else probabilities_per_level
+            ),
             "secondary_caps": secondary_caps,
             "routing_stats": routing_stats,
             "level_loss_weights": self.level_loss_weights.detach().clone(),

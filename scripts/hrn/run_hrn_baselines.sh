@@ -131,7 +131,6 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
     "${hard_target_overrides[@]}" \
-    "orthonormal_plugin.enabled=false" \
     "train.lexicographic.enabled=false"
 done
 

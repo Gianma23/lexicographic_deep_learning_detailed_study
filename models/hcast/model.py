@@ -90,9 +90,6 @@ class HCASTModel(nn.Module):
             **timm_kwargs,
         )
 
-    def set_hcc_final_test_active(self, active: bool) -> None:
-        self.hcc.set_final_test_active(active)
-
     @staticmethod
     def _build_grid_segments(images: torch.Tensor, patch_size: int = 8) -> torch.Tensor:
         """Generate deterministic patch-aligned segment ids for H-CAST."""
@@ -150,6 +147,5 @@ class HCASTModel(nn.Module):
 
         return {
             "logits_per_level": logits_per_level,
-            "orthonormal_plugin_scores_per_level": logits_per_level,
             **hcc_output,
         }

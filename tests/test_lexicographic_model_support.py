@@ -53,32 +53,17 @@ class LexicographicModelSupportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "model.loss=level_marginal"):
             validate_config(hrn)
 
-    def test_lhdnn_lex_is_rejected_with_or_without_plugin(self):
+    def test_lhdnn_lex_is_rejected(self):
         lhdnn = self._with_lex("configs/lhdnn/lhdnn_cifar100.yaml")
         with self.assertRaisesRegex(ValueError, "not supported for LH-DNN"):
             validate_config(lhdnn)
-
-        lhdnn_with_plugin = copy.deepcopy(lhdnn)
-        lhdnn_with_plugin["orthonormal_plugin"] = {
-            "enabled": True,
-            "loss": "level_softmax_ce_reg",
-            "weight_mode": "equal",
-            "alpha": 0.05,
-            "transform_mode": "final_only",
-            "fixed_frame_mode": "identity",
-            "fixed_frame_per_level": True,
-            "transform_lr_scale": 1.0,
-        }
-        with self.assertRaisesRegex(ValueError, "not supported for LH-DNN"):
-            validate_config(lhdnn_with_plugin)
 
     def test_runtime_validation_matches_static_model_policy(self):
         level_losses = [torch.ones((), requires_grad=True) for _ in range(3)]
 
         class Config:
-            def __init__(self, model, plugin=None):
+            def __init__(self, model):
                 self.model = model
-                self.orthonormal_plugin = plugin or {"enabled": False}
 
         validate_lexicographic_requirements(
             Config({"name": "ht_capsnet", "loss": {"weight_mode": "none"}}),
@@ -95,10 +80,7 @@ class LexicographicModelSupportTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "not supported for LH-DNN"):
             validate_lexicographic_requirements(
-                Config(
-                    {"name": "lhdnn"},
-                    {"enabled": True, "loss": "level_softmax_ce_reg"},
-                ),
+                Config({"name": "lhdnn"}),
                 level_losses,
             )
 

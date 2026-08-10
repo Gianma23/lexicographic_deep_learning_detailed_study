@@ -3,6 +3,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 from PIL import Image
 from torchvision.datasets import CIFAR100
 
@@ -197,6 +198,56 @@ class CIFAR100Dataset(BaseHierDataset):
             )
 
         return samples
+
+    def scalar_normalization_statistics(self, mode: str) -> Dict[str, float]:
+        """Compute the upstream scalar statistic over this concrete split.
+
+        The released HT-CapsNet CIFAR array pipeline normalizes the complete
+        split tensor before batching. ``ToTensor`` later represents pixels in
+        ``[0, 1]`` rather than ``[0, 255]``; scaling both the offset and spread
+        by 255 preserves the exact standardized values.
+        """
+        if self._cifar_images is None:
+            raise RuntimeError(
+                "Dataset-scoped CIFAR normalization requires torchvision's array-backed split."
+            )
+        indices = [sample["image"] for sample in self.samples]
+        if not indices or any(not isinstance(index, int) for index in indices):
+            raise RuntimeError(
+                "Dataset-scoped CIFAR normalization requires integer-backed samples."
+            )
+
+        total = 0.0
+        total_sq = 0.0
+        count = 0
+        minimum = float("inf")
+        maximum = float("-inf")
+        chunk_size = 512
+        for start in range(0, len(indices), chunk_size):
+            selected = np.asarray(indices[start : start + chunk_size], dtype=np.int64)
+            block = self._cifar_images[selected].astype(np.float64, copy=False)
+            total += float(block.sum(dtype=np.float64))
+            total_sq += float(np.square(block).sum(dtype=np.float64))
+            count += int(block.size)
+            minimum = min(minimum, float(block.min()))
+            maximum = max(maximum, float(block.max()))
+
+        if count <= 0:
+            raise RuntimeError("Cannot compute normalization statistics for an empty CIFAR split.")
+        if mode == "standardscaler":
+            mean = total / float(count)
+            variance = max(total_sq / float(count) - mean * mean, 0.0)
+            std = variance ** 0.5
+            if std <= 0.0:
+                raise RuntimeError("CIFAR split has zero standard deviation.")
+            return {"mean": mean / 255.0, "std": std / 255.0}
+        if mode == "minmax":
+            if maximum <= minimum:
+                raise RuntimeError("CIFAR split has a degenerate min/max range.")
+            return {"minimum": minimum / 255.0, "maximum": maximum / 255.0}
+        raise ValueError(
+            "Dataset-scoped CIFAR normalization supports standardscaler or minmax."
+        )
 
     def _load_image(self, image_ref: Optional[Path]):
         """Resolve int-backed CIFAR image references or defer to path-based loader."""

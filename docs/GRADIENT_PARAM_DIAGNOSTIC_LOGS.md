@@ -35,7 +35,7 @@ model requirements are:
   Both decomposed modes use weighted target CE plus the same unweighted level
   regularizer and differ only by global-taxonomy versus per-level softmax
   normalization.
-- LH-DNN is not supported, including through the orthonormal plugin.
+- LH-DNN is not supported.
 
 Logged `loss_level_*` values match the tensors used by lexicographic
 optimization.

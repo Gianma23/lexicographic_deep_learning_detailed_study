@@ -81,6 +81,13 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         filter_increment=int(cfg.model.get("filter_increment", 2)),
         backbone_name=cfg.model.get("backbone_net", "custom"),
         backbone_weights=cfg.model.get("backbone_net_weights", None),
+        backbone_variant=cfg.model.get(
+            "backbone_variant",
+            "tf_efficientnet_b7.aa_in1k",
+        ),
+        backbone_preprocessing=cfg.model.get("backbone_preprocessing", "keras"),
+        backbone_bn_momentum=float(cfg.model.get("backbone_bn_momentum", 0.01)),
+        backbone_drop_path=float(cfg.model.get("backbone_drop_path", 0.2)),
         taxonomy_temperature=float(cfg.model.get("taxonomy_temperature", 0.5)),
         mask_threshold_high=float(cfg.model.get("mask_threshold_high", 0.9)),
         mask_threshold_low=float(cfg.model.get("mask_threshold_low", 0.1)),
@@ -90,6 +97,7 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         attn_key_dim=int(cfg.model.get("attn_key_dim", 32)),
         attn_dropout=float(cfg.model.get("attn_dropout", 0.0)),
         attn_postprocess=cfg.model.get("attn_postprocess", "layernorm"),
+        attn_initializer=cfg.model.get("attn_initializer", "keras_glorot"),
         input_size=input_size,
         hcc_cfg=resolve_hcc_cfg_from_top_level(cfg),
     )

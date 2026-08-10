@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import torch
 
 from models.hiercos.model import HierCosModel
-from models.orthonormal_plugin.losses import compute_loss
+from models.hiercos.losses import compute_loss
 from train.evaluation import evaluate_batch
 
 
@@ -27,7 +27,6 @@ def _loss_cfg(loss_mode: str):
             "weight_mode": "kl_leaf",
             "alpha": 0.05,
         },
-        orthonormal_plugin={"enabled": False},
     )
 
 
@@ -121,9 +120,7 @@ class HierCosHccTests(unittest.TestCase):
         # same formula to the effective node tensor as an ordinary raw input.
         reference_output = copy.copy(output)
         reference_output["node_logits"] = effective_node_logits
-        reference_output["orthonormal_plugin_node_logits"] = effective_node_logits
         reference_output["node_logits_per_level"] = effective_nodes
-        reference_output["orthonormal_plugin_node_logits_per_level"] = effective_nodes
         reference_output["effective_node_logits_per_level"] = None
         for loss_mode in ("kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg"):
             actual_loss, actual_metrics = compute_loss(

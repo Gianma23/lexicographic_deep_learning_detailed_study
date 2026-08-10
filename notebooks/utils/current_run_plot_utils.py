@@ -1,9 +1,9 @@
 """Shared aggregation and plotting helpers for the current-run notebooks.
 
-Every notebook under ``analysis/current_runs`` follows the same shape: declare a
-run matrix, discover the completed seed directories under ``OUTPUTS_ROOT``,
-aggregate the selected test checkpoints, and draw the same three figures. This
-module holds everything that is not model-specific.
+Every notebook under ``notebooks/tradeoff_analysis`` follows the same shape:
+declare a run matrix, discover the completed seed directories under
+``OUTPUTS_ROOT``, aggregate the selected test checkpoints, and draw the same
+three figures. This module holds everything that is not model-specific.
 
 All of it reads the **independently selected** checkpoint and the independent
 metric family. Top-down decoding is deliberately not offered here: its predicted
@@ -12,7 +12,7 @@ path is consistent by construction, so ``tice_topdown`` is identically zero and
 trade-off view to show.
 
 Figures are authored for the thesis at their final printed size, using the same
-style contract as ``analysis/datasets_analysis.ipynb`` so that every figure in
+style contract as ``notebooks/datasets_analysis.ipynb`` so that every figure in
 the document reads as one system. See :func:`use_paper_style` and
 :func:`save_figure`.
 """
@@ -137,7 +137,7 @@ MODEL_REFERENCE_SPECS = (
 # Figures are authored at their final printed width and must be included with
 # width=\linewidth and no extra scaling: any additional resizing in LaTeX shrinks
 # the font sizes set below along with the artwork. These values are copied from
-# analysis/datasets_analysis.ipynb so the two notebook families produce figures
+# notebooks/datasets_analysis.ipynb so the two notebook families produce figures
 # that sit side by side in the thesis without a visible style break.
 TEXT_WIDTH_IN = 6.3   # A4 text block with 2.5 cm margins
 HALF_WIDTH_IN = 3.05

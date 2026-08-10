@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import torch
 import yaml
 
-from models.orthonormal_plugin.losses import _shared_level_weights
+from models.hiercos.losses import _shared_level_weights
 from train.config_validation import validate_config
 
 
@@ -22,10 +22,7 @@ def _native_cfg(weight_mode: str, weight_beta=None):
     }
     if weight_beta is not None:
         model["weight_beta"] = weight_beta
-    return SimpleNamespace(
-        model=model,
-        orthonormal_plugin={"enabled": False},
-    )
+    return SimpleNamespace(model=model)
 
 
 def _weights(cfg):
@@ -71,29 +68,6 @@ class HierCosBranchingWeightTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaisesRegex(ValueError, "weight_beta"):
                     _weights(_native_cfg("cumulative_branching", invalid))
-
-    def test_branching_modes_are_rejected_by_orthonormal_plugin(self):
-        for mode in ("cumulative_branching", "marginal_branching"):
-            with self.subTest(mode=mode):
-                cfg = SimpleNamespace(
-                    model={"name": "hcast"},
-                    orthonormal_plugin={
-                        "enabled": True,
-                        "weight_mode": mode,
-                    },
-                )
-                with self.assertRaisesRegex(ValueError, "orthonormal_plugin.weight_mode"):
-                    _weights(cfg)
-
-    def test_branching_modes_are_rejected_outside_native_hiercos(self):
-        for mode in ("cumulative_branching", "marginal_branching"):
-            with self.subTest(mode=mode):
-                cfg = SimpleNamespace(
-                    model={"name": "hcast", "weight_mode": mode},
-                    orthonormal_plugin={"enabled": False},
-                )
-                with self.assertRaisesRegex(ValueError, "model.weight_mode"):
-                    _weights(cfg)
 
     def test_native_static_config_accepts_modes_and_validates_beta(self):
         with (REPO_ROOT / "configs/hiercos/hiercos_cifar100.yaml").open(

@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from .aircraft import AircraftDataset
 from .cifar100 import CIFAR100Dataset
 from .cub import CUBDataset
-from .transforms import build_batch_normalizer, build_transforms
+from .transforms import build_batch_normalizer, build_transforms, normalization_scope
 from .types import DatasetLabelSpace, DatasetMetadata
 
 
@@ -49,11 +49,28 @@ def _build_loader(cfg: Any, split: str, label_space: Optional[DatasetLabelSpace]
             f"Unsupported dataset '{dataset_name}'. "
             f"Expected one of {sorted(_DATASET_REGISTRY)}."
         )
+    # Dataset-scoped normalization needs the concrete split before its image
+    # transform can be assembled. Dataset adapters do not access the transform
+    # during construction, so all scopes can follow the same two-stage path.
     dataset = _DATASET_REGISTRY[dataset_name](
         cfg=cfg,
         split=split,
-        transform=build_transforms(cfg, split),
+        transform=None,
         label_space=label_space,
+    )
+    dataset_statistics = None
+    transform_cfg = cfg.dataset["transforms"]
+    if normalization_scope(transform_cfg) == "dataset":
+        statistics_fn = getattr(dataset, "scalar_normalization_statistics", None)
+        if not callable(statistics_fn):
+            raise ValueError(
+                f"dataset-scoped normalization is not implemented for dataset '{dataset_name}'."
+            )
+        dataset_statistics = statistics_fn(transform_cfg["normalization"])
+    dataset.transform = build_transforms(
+        cfg,
+        split,
+        dataset_statistics=dataset_statistics,
     )
 
     workers = int(cfg.dataloader.get("num_workers", 4))

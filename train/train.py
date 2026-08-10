@@ -44,15 +44,6 @@ def _print_model_parameter_count(model) -> None:
     print(f"[model] parameters total={total_params:,} trainable={trainable_params:,}")
 
 
-def _set_hcc_final_test_active(model: torch.nn.Module, active: bool) -> None:
-    if hasattr(model, "set_hcc_final_test_active"):
-        model.set_hcc_final_test_active(active)
-        return
-    wrapped_model = getattr(model, "module", None)
-    if wrapped_model is not None and hasattr(wrapped_model, "set_hcc_final_test_active"):
-        wrapped_model.set_hcc_final_test_active(active)
-
-
 def _apply_lr_scaling_if_enabled(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
     if not bool(cfg.train.get("scale_lr", False)):
         return
@@ -243,39 +234,35 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
 
     # Evaluate each best validation checkpoint on the test set.
     test_results = {}
-    _set_hcc_final_test_active(model, True)
-    try:
-        for mode in BEST_SELECTION_MODES:
-            best_ckpt = best_ckpts[mode]
-            if not best_ckpt.exists():
-                raise RuntimeError(
-                    f"Best {mode} checkpoint not found at {best_ckpt}. "
-                    "Training likely ran zero epochs; check train.resume and train.stop_epoch."
-                )
-
-            checkpoint = load_trusted_checkpoint(best_ckpt, map_location=device)
-            model.load_state_dict(checkpoint["model_state"])
-            checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))
-            checkpoint_best_metrics = checkpoint["best_metrics"]
-            best_metric = float(checkpoint_best_metrics[mode])
-            checkpoint_selection = checkpoint.get("best_selection_keys", {})
-            best_selection_key = normalize_selection_key(
-                checkpoint_selection.get(mode) if isinstance(checkpoint_selection, dict) else None,
-                legacy_primary=best_metric,
+    for mode in BEST_SELECTION_MODES:
+        best_ckpt = best_ckpts[mode]
+        if not best_ckpt.exists():
+            raise RuntimeError(
+                f"Best {mode} checkpoint not found at {best_ckpt}. "
+                "Training likely ran zero epochs; check train.resume and train.stop_epoch."
             )
 
-            print(f"[test:{mode}] loaded best checkpoint from: {best_ckpt} (epoch {checkpoint_epoch + 1})")
-            test_metrics = evaluate(model, test_loader, device, cfg, epoch=checkpoint_epoch, taxonomy=taxonomy)
-            print(f"[test:{mode}] {pretty_metrics(test_metrics, level_names=level_names)}")
-            test_results[mode] = {
-                "best_checkpoint": str(best_ckpt),
-                "best_epoch": checkpoint_epoch + 1,
-                "best_metric": best_metric,
-                "best_selection_key": list(best_selection_key),
-                "test_metrics": test_metrics,
-            }
-    finally:
-        _set_hcc_final_test_active(model, False)
+        checkpoint = load_trusted_checkpoint(best_ckpt, map_location=device)
+        model.load_state_dict(checkpoint["model_state"])
+        checkpoint_epoch = int(checkpoint.get("epoch", epochs - 1))
+        checkpoint_best_metrics = checkpoint["best_metrics"]
+        best_metric = float(checkpoint_best_metrics[mode])
+        checkpoint_selection = checkpoint.get("best_selection_keys", {})
+        best_selection_key = normalize_selection_key(
+            checkpoint_selection.get(mode) if isinstance(checkpoint_selection, dict) else None,
+            legacy_primary=best_metric,
+        )
+
+        print(f"[test:{mode}] loaded best checkpoint from: {best_ckpt} (epoch {checkpoint_epoch + 1})")
+        test_metrics = evaluate(model, test_loader, device, cfg, epoch=checkpoint_epoch, taxonomy=taxonomy)
+        print(f"[test:{mode}] {pretty_metrics(test_metrics, level_names=level_names)}")
+        test_results[mode] = {
+            "best_checkpoint": str(best_ckpt),
+            "best_epoch": checkpoint_epoch + 1,
+            "best_metric": best_metric,
+            "best_selection_key": list(best_selection_key),
+            "test_metrics": test_metrics,
+        }
 
     logger.log_test(test_results)
 

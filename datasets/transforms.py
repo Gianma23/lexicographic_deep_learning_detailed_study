@@ -1,6 +1,6 @@
 """Image transformation construction for train, validation, and test splits."""
 
-from typing import Any
+from typing import Any, Mapping, Optional
 
 import torch
 from torchvision import transforms
@@ -50,6 +50,26 @@ class _MinMaxNormalize:
         return f"{self.__class__.__name__}(eps={self.eps})"
 
 
+class _FixedScalarNormalize:
+    """Apply scalar statistics computed once from a complete dataset split."""
+
+    def __init__(self, offset: float, scale: float, eps: float = 1e-6):
+        self.offset = float(offset)
+        self.scale = float(scale)
+        self.eps = float(eps)
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        tensor = tensor.float()
+        scale = max(self.scale, self.eps)
+        return (tensor - self.offset) / scale
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"{self.__class__.__name__}(offset={self.offset}, "
+            f"scale={self.scale}, eps={self.eps})"
+        )
+
+
 class _CropBottomPixels:
     def __init__(self, pixels: int):
         self.pixels = int(pixels)
@@ -69,7 +89,35 @@ class _CropBottomPixels:
         return f"{self.__class__.__name__}(pixels={self.pixels})"
 
 
-def _normalization_ops(mode: str, mean, std, eps: float):
+def _normalization_ops(
+    mode: str,
+    mean,
+    std,
+    eps: float,
+    dataset_statistics: Optional[Mapping[str, float]] = None,
+):
+    if dataset_statistics is not None:
+        if mode == "standardscaler":
+            return [
+                _FixedScalarNormalize(
+                    offset=float(dataset_statistics["mean"]),
+                    scale=float(dataset_statistics["std"]),
+                    eps=eps,
+                )
+            ]
+        if mode == "minmax":
+            minimum = float(dataset_statistics["minimum"])
+            maximum = float(dataset_statistics["maximum"])
+            return [
+                _FixedScalarNormalize(
+                    offset=minimum,
+                    scale=maximum - minimum,
+                    eps=eps,
+                )
+            ]
+        raise ValueError(
+            "Dataset-scoped statistics require standardscaler or minmax normalization."
+        )
     if mode == "torchvision":
         return [transforms.Normalize(mean=mean, std=std)]
     if mode == "standardscaler":
@@ -86,8 +134,8 @@ def _normalization_ops(mode: str, mean, std, eps: float):
 
 # Scopes over which a whole-tensor normalization statistic is reduced.
 # `image` keeps the statistic per sample. `batch` reduces over the assembled
-# batch instead, matching the upstream HT-CapsNet pipeline, which maps
-# `Normalize_StandardScaler` over an already-batched `tf.data` dataset.
+# batch. `dataset` computes one statistic once per split, matching the upstream
+# HT-CapsNet array branch used by CIFAR-100.
 _BATCH_SCOPED_MODES = {"standardscaler", "minmax"}
 
 
@@ -95,15 +143,15 @@ def normalization_scope(transform_cfg: Any) -> str:
     scope = transform_cfg.get("normalization_scope", "image")
     if not isinstance(scope, str):
         raise ValueError("dataset.transforms.normalization_scope must be a string.")
-    if scope not in {"image", "batch"}:
+    if scope not in {"image", "batch", "dataset"}:
         raise ValueError(
             f"Unsupported dataset.transforms.normalization_scope='{scope}'. "
-            "Expected image or batch."
+            "Expected image, batch, or dataset."
         )
     mode = transform_cfg["normalization"]
-    if scope == "batch" and mode not in _BATCH_SCOPED_MODES:
+    if scope in {"batch", "dataset"} and mode not in _BATCH_SCOPED_MODES:
         raise ValueError(
-            "dataset.transforms.normalization_scope='batch' requires "
+            f"dataset.transforms.normalization_scope='{scope}' requires "
             f"normalization to be one of {sorted(_BATCH_SCOPED_MODES)}, got '{mode}'."
         )
     return scope
@@ -312,7 +360,11 @@ def _build_eval(image_size: int, cfg: Any, crop_bottom, normalization_ops):
     return transforms.Compose(operations)
 
 
-def build_transforms(cfg: Any, split: str):
+def build_transforms(
+    cfg: Any,
+    split: str,
+    dataset_statistics: Optional[Mapping[str, float]] = None,
+):
     """Build the configured transformation pipeline for one dataset split."""
     dataset_cfg = cfg.dataset
     transform_cfg = dataset_cfg["transforms"]
@@ -323,13 +375,19 @@ def build_transforms(cfg: Any, split: str):
     normalization_eps = float(transform_cfg.get("normalization_eps", 1e-6))
     if normalization_eps <= 0.0:
         raise ValueError("dataset.transforms.normalization_eps must be > 0.")
+    scope = normalization_scope(transform_cfg)
+    if scope == "dataset" and dataset_statistics is None:
+        raise ValueError(
+            "dataset-scoped normalization requires statistics from the loaded dataset split."
+        )
     normalization_ops = _normalization_ops(
         normalization_mode,
         mean,
         std,
         normalization_eps,
+        dataset_statistics=dataset_statistics if scope == "dataset" else None,
     )
-    if normalization_scope(transform_cfg) == "batch":
+    if scope == "batch":
         # The statistic is reduced over the assembled batch in the collate
         # instead, so the per-sample pipeline must not normalize twice.
         normalization_ops = []

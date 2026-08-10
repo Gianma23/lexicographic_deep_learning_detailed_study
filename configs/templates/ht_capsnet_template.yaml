@@ -14,6 +14,10 @@ model:
   # Backbone controls
   backbone_net: efficientnet_b7    # Supported: custom | efficientnet_b7
   backbone_net_weights: imagenet   # Supported: imagenet | none
+  backbone_variant: tf_efficientnet_b7.aa_in1k # Keras ImageNet weight conversion; avoid untagged timm alias
+  backbone_preprocessing: keras    # keras: embedded Rescaling+Normalization parity | timm: native timm normalization
+  backbone_bn_momentum: 0.01       # PyTorch equivalent of Keras BatchNorm momentum=0.99
+  backbone_drop_path: 0.2          # Keras EfficientNet progressive drop-connect maximum
   num_blocks: 4                    # Used only for backbone_net=custom: number of conv blocks
   initial_filters: 64              # Used only for custom backbone: filters in first block
   filter_increment: 2              # Used only for custom backbone: filter growth multiplier per block
@@ -30,6 +34,7 @@ model:
   attn_key_dim: 32                 # Per-head Q/K/V width, matching Keras key_dim
   attn_dropout: 0.0                # Dropout inside scaled dot-product attention
   attn_postprocess: layernorm      # Post-attention fusion: layernorm | squash
+  attn_initializer: keras_glorot   # keras_glorot (rank-3 EinsumDense fans) | pytorch_xavier
 
   loss:
     margin_m_pos: 0.9              # Positive margin in capsule margin loss

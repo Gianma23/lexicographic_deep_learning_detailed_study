@@ -153,7 +153,6 @@ for dataset in "${DATASETS[@]}"; do
   config="$(config_for_dataset "$dataset")"
   run_seeded_train "$config" "$(run_output_dir "$dataset")" \
     "${hard_target_overrides[@]}" \
-    "orthonormal_plugin.enabled=false" \
     "model.loss=level_marginal" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \

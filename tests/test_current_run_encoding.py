@@ -7,7 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "analysis" / "current_runs"))
+sys.path.insert(0, str(REPO_ROOT / "notebooks" / "utils"))
 
 from current_run_plot_utils import (  # noqa: E402
     MECHANISM_COLORS,

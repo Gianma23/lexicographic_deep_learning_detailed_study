@@ -236,12 +236,10 @@ def build_hcc_config(cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     eps = float(cfg.get("eps", 1e-12))
     if eps <= 0.0:
         eps = 1e-12
-    final_test_only = bool(cfg.get("final_test_only", False))
 
     return {
         "enabled": enabled,
         "eps": eps,
-        "final_test_only": final_test_only,
     }
 
 
@@ -290,7 +288,6 @@ class HccController(nn.Module):
     ):
         super().__init__()
         self.cfg = build_hcc_config(hcc_cfg)
-        self._final_test_active = False
 
         self.projector: Optional[HierarchicalAffineProjector] = None
         if self.cfg["enabled"]:
@@ -310,15 +307,10 @@ class HccController(nn.Module):
                 eps=float(self.cfg["eps"]),
             )
 
-    def set_final_test_active(self, active: bool) -> None:
-        self._final_test_active = bool(active)
-
     def enabled(self) -> bool:
         if not self.cfg["enabled"]:
             return False
         if self.projector is None:
-            return False
-        if self.cfg.get("final_test_only", False) and not self._final_test_active:
             return False
         return True
 

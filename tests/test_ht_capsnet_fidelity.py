@@ -8,6 +8,7 @@ import torch
 from PIL import Image
 from torchvision import transforms as torchvision_transforms
 
+from datasets.cifar100 import CIFAR100Dataset
 from datasets.loaders import _collate_fn
 from datasets.transforms import build_batch_normalizer, build_transforms
 from models.ht_capsnet.losses import _initial_level_weights, _margin_loss, compute_loss
@@ -16,6 +17,7 @@ from models.ht_capsnet.model import (
     KerasMultiHeadAttention,
     _build_backbone,
     _ConvBackbone,
+    _keras_glorot_uniform_limit,
 )
 from models.ht_capsnet.routing import (
     hierarchical_agreement,
@@ -23,7 +25,7 @@ from models.ht_capsnet.routing import (
     taxonomy_guided_routing_weights,
 )
 from train.mixup import Mixup
-from train.runtime.optimization import HTCapsNetExponentialScheduler
+from train.runtime.optimization import HTCapsNetExponentialScheduler, KerasAdam
 
 
 def _taxonomy():
@@ -83,13 +85,43 @@ class KerasAttentionTests(unittest.TestCase):
         self.assertEqual(layer.key_projection.out_features, 512)
         self.assertEqual(layer.output_projection.out_features, 16)
 
+    def test_rank_three_keras_glorot_fans_set_attention_scale(self):
+        torch.manual_seed(5)
+        layer = KerasMultiHeadAttention(64, 32, num_heads=16, key_dim=32)
+        expected_limits = {
+            "query_projection": _keras_glorot_uniform_limit((64, 16, 32)),
+            "key_projection": _keras_glorot_uniform_limit((32, 16, 32)),
+            "value_projection": _keras_glorot_uniform_limit((32, 16, 32)),
+            "output_projection": _keras_glorot_uniform_limit((16, 32, 64)),
+        }
+        for name, limit in expected_limits.items():
+            weights = getattr(layer, name).weight.detach()
+            self.assertLessEqual(float(weights.abs().max()), limit)
+            self.assertAlmostEqual(
+                float(weights.std(unbiased=False)),
+                limit / math.sqrt(3.0),
+                delta=limit * 0.02,
+            )
+
+        legacy = KerasMultiHeadAttention(
+            64,
+            32,
+            num_heads=16,
+            key_dim=32,
+            initializer="pytorch_xavier",
+        )
+        self.assertGreater(
+            float(legacy.query_projection.weight.detach().std()),
+            float(layer.query_projection.weight.detach().std()) * 2.0,
+        )
+
 
 class RoutingAndLossTests(unittest.TestCase):
     def test_squash_and_margin_loss_match_source_equations(self):
         capsules = torch.tensor([[[3.0, 4.0], [0.0, 2.0]]])
         squared_norm = capsules.square().sum(dim=-1, keepdim=True)
         expected = squared_norm / (1.0 + squared_norm)
-        expected = expected * capsules / torch.sqrt(squared_norm + 1e-8)
+        expected = expected * capsules / torch.sqrt(squared_norm + 1e-7)
         torch.testing.assert_close(squash(capsules), expected)
 
         scores = torch.tensor([[0.8, 0.3, 0.05]])
@@ -198,15 +230,40 @@ class HTCapsNetStateTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "never falls back"):
                 _build_backbone("efficientnet_b7", "imagenet", 4, 64, 2)
 
+    def test_efficientnet_uses_explicit_keras_weight_conversion_and_training_defaults(self):
+        with patch("timm.create_model", return_value=torch.nn.Identity()) as create_model:
+            _build_backbone("efficientnet_b7", None, 4, 64, 2)
+        create_model.assert_called_once_with(
+            "tf_efficientnet_b7.aa_in1k",
+            pretrained=False,
+            num_classes=0,
+            global_pool="",
+            bn_momentum=0.01,
+            drop_path_rate=0.2,
+        )
+
     def test_inference_probabilities_are_normalized(self):
         model = self._model().eval()
         with torch.no_grad():
             output = model(torch.randn(2, 3, 32, 32))
-        for probabilities in output["effective_probs_per_level"]:
+        for probabilities, margin_scores in zip(
+            output["effective_probs_per_level"],
+            output["margin_scores_per_level"],
+        ):
             torch.testing.assert_close(
                 probabilities.sum(dim=-1),
                 torch.ones(probabilities.size(0)),
             )
+            torch.testing.assert_close(margin_scores, probabilities)
+
+    def test_training_margin_scores_are_raw_capsule_lengths(self):
+        model = self._model().train()
+        output = model(torch.randn(2, 3, 32, 32))
+        for raw, margin_scores in zip(
+            output["logits_per_level"],
+            output["margin_scores_per_level"],
+        ):
+            self.assertIs(raw, margin_scores)
 
     def test_dynamic_weights_apply_to_next_batch_and_round_trip(self):
         model = self._model()
@@ -292,7 +349,7 @@ class HTCapsNetStateTests(unittest.TestCase):
         # whose ImageNet weights carry mean [0.485, 0.456, 0.406] and variance
         # [0.229, 0.224, 0.225]; the layer divides by sqrt(variance).
         model = self._model()
-        model._keras_efficientnet_rescale = True
+        model.backbone_preprocessing = "keras"
         images = torch.randn(2, 3, 32, 32)
 
         actual = model._prepare_backbone_input(images)
@@ -307,9 +364,19 @@ class HTCapsNetStateTests(unittest.TestCase):
         images = torch.randn(2, 3, 32, 32)
         torch.testing.assert_close(model._prepare_backbone_input(images), images)
 
+    def test_timm_preprocessing_is_an_explicit_non_source_ablation(self):
+        model = self._model()
+        model.backbone_preprocessing = "timm"
+        images = torch.rand(2, 3, 32, 32)
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        torch.testing.assert_close(
+            model._prepare_backbone_input(images),
+            (images - mean) / std,
+        )
 
-class BatchScopedNormalizationTests(unittest.TestCase):
-    """Upstream maps `Normalize_StandardScaler` over the batched `tf.data` pipeline."""
+
+class ScopedNormalizationTests(unittest.TestCase):
 
     @staticmethod
     def _cfg(scope):
@@ -359,6 +426,34 @@ class BatchScopedNormalizationTests(unittest.TestCase):
         batch = [(image, torch.zeros(3, dtype=torch.long), {}) for image in images]
         collated, _, _ = _collate_fn(batch)
         torch.testing.assert_close(collated, torch.stack(images, dim=0))
+
+    def test_dataset_scope_uses_one_fixed_scalar_for_the_complete_split(self):
+        cfg = self._cfg("dataset")
+        pipeline = build_transforms(
+            cfg,
+            "train",
+            dataset_statistics={"mean": 0.25, "std": 0.5},
+        )
+        image = Image.fromarray(np.full((8, 8, 3), 128, dtype=np.uint8), mode="RGB")
+        actual = pipeline(image)
+        expected = torch.full_like(actual, ((128.0 / 255.0) - 0.25) / 0.5)
+        torch.testing.assert_close(actual, expected)
+        self.assertIsNone(build_batch_normalizer(cfg))
+
+    def test_cifar_split_statistics_reduce_only_selected_samples(self):
+        dataset = object.__new__(CIFAR100Dataset)
+        dataset._cifar_images = np.stack(
+            [
+                np.zeros((2, 2, 3), dtype=np.uint8),
+                np.full((2, 2, 3), 128, dtype=np.uint8),
+                np.full((2, 2, 3), 255, dtype=np.uint8),
+            ],
+            axis=0,
+        )
+        dataset.samples = [{"image": 0}, {"image": 2}]
+        statistics = dataset.scalar_normalization_statistics("standardscaler")
+        self.assertAlmostEqual(statistics["mean"], 0.5, places=12)
+        self.assertAlmostEqual(statistics["std"], 0.5, places=12)
 
 
 class FixedResizeTests(unittest.TestCase):
@@ -448,6 +543,26 @@ class MixupAndSchedulerTests(unittest.TestCase):
         self.assertAlmostEqual(optimizer.param_groups[0]["lr"], 0.001, places=12)
         scheduler.step(11)
         self.assertAlmostEqual(optimizer.param_groups[0]["lr"], 0.00095, places=12)
+
+    def test_keras_adam_matches_epsilon_hat_update(self):
+        parameter = torch.nn.Parameter(torch.tensor([1.0, -2.0], dtype=torch.float64))
+        gradient = torch.tensor([0.25, -0.5], dtype=torch.float64)
+        parameter.grad = gradient.clone()
+        optimizer = KerasAdam([parameter], lr=0.001, eps=1e-7)
+
+        beta1, beta2 = 0.9, 0.999
+        moment = (1.0 - beta1) * gradient
+        variance = (1.0 - beta2) * gradient.square()
+        lr_t = 0.001 * math.sqrt(1.0 - beta2) / (1.0 - beta1)
+        expected = torch.tensor([1.0, -2.0], dtype=torch.float64)
+        expected -= lr_t * moment / (variance.sqrt() + 1e-7)
+
+        optimizer.step()
+        torch.testing.assert_close(parameter, expected, rtol=1e-12, atol=1e-12)
+        restored_parameter = torch.nn.Parameter(parameter.detach().clone())
+        restored = KerasAdam([restored_parameter], lr=0.001, eps=1e-7)
+        restored.load_state_dict(optimizer.state_dict())
+        self.assertEqual(restored.param_groups[0]["step"], 1)
 
 
 if __name__ == "__main__":

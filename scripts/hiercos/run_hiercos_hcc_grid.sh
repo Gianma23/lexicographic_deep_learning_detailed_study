@@ -2,19 +2,22 @@
 set -euo pipefail
 
 # Runs the Hier-COS + HCC arm (HCC generalized from H-CAST, see
-# models/common/hcc.py) on top of the plain Hier-COS baseline configs:
-# - hiercos_hcc_<dataset>_kl_reg_orthonormal_random_global_step_0epoch
+# models/common/hcc.py) with the standard Hier-COS baseline settings:
+# - model.loss=global_softmax_ce_reg
+# - model.weight_mode=kl_leaf
+# - model.fixed_frame_mode=orthonormal_random
+# - model.transform_mode=full
+# - hiercos_<dataset>_global_softmax_ce_reg_hcc_kl_leaf
 # for: cifar100, cub200, aircraft.
 #
-# HCC is a binary on/off switch; there is no onset/alpha/temperature ablation.
-# The `_step_0epoch` suffix is legacy naming kept so existing run directories
-# and analysis notebooks stay valid.
+# HCC is a binary on/off switch and is fully active throughout training.
 #
-# Each run preserves the baseline Hier-COS loss and fixed frame. HCC operates
-# after the fixed classifier, the unchanged native loss consumes the modified
-# node logits, and inference recomputes taxonomy-subspace scores from the same
-# modified tensor. Hier-COS's optional LH-DNN-style `model.projection` remains
-# disabled because combining both projection mechanisms would confound them.
+# HCC is the only mechanism added to the matched baseline arm. It operates after
+# the fixed classifier; the baseline CE+regularization loss consumes the
+# modified node logits, and inference recomputes taxonomy-subspace scores from
+# the same modified tensor. Hier-COS's optional LH-DNN-style `model.projection`
+# remains disabled because combining both projection mechanisms would confound
+# them.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -28,6 +31,10 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
+LOSS_MODE="global_softmax_ce_reg"
+WEIGHT_MODE="kl_leaf"
+FIXED_FRAME_MODE="orthonormal_random"
+FEATURE_DIM="0"
 
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
@@ -125,11 +132,15 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  echo "$OUTPUTS_ROOT/hiercos_hcc_${ds}_kl_reg_orthonormal_random_global_step_0epoch"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_hcc_${WEIGHT_MODE}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
+printf 'Loss: %s\n' "$LOSS_MODE"
+printf 'Weight mode: %s\n' "$WEIGHT_MODE"
+printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
+printf 'Transform mode: full\n'
 printf 'Lexicographic mode: disabled\n'
 printf 'HCC: enabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
@@ -141,6 +152,12 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
+    "model.loss=$LOSS_MODE" \
+    "model.weight_mode=$WEIGHT_MODE" \
+    "model.transform_mode=full" \
+    "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
+    "model.projection.feature_dim=$FEATURE_DIM" \
+    "model.projection.enabled=false" \
     "hcc.enabled=true" \
     "hcc.eps=1e-12" \
     "train.lexicographic.enabled=false"

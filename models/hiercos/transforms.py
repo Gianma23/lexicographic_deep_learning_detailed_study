@@ -3,7 +3,7 @@ import torch.nn as nn
 
 def get_activation(name: str, channels: int) -> nn.Module:
     if not isinstance(name, str):
-        raise ValueError("Orthonormal plugin activation name must be a string.")
+        raise ValueError("Hier-COS activation name must be a string.")
     if name == "relu":
         return nn.ReLU()
     if name == "elu":
@@ -68,7 +68,7 @@ class NarrowResidualTransformationHead(nn.Module):
         return x
 
 
-def build_transformation_module(width: int, mode: str, owner: str = "Orthonormal plugin") -> nn.Module:
+def build_transformation_module(width: int, mode: str, owner: str = "Hier-COS") -> nn.Module:
     if not isinstance(mode, str):
         raise ValueError(f"{owner} transform mode must be a string.")
     if mode == "full":

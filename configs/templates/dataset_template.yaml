@@ -22,10 +22,9 @@ dataset:
     use_timm: true                   # true: timm train pipeline, false: manual train pipeline
     normalization: torchvision       # torchvision | standardscaler | minmax | none
     normalization_eps: 1.0e-6        # Epsilon for standardscaler/minmax numerical stability
-    normalization_scope: image       # image | batch. Scope the standardscaler/minmax statistic is
-                                     # reduced over. `batch` reduces over the assembled batch in the
-                                     # collate (HT-CapsNet upstream behavior); requires
-                                     # standardscaler or minmax.
+    normalization_scope: image       # image | batch | dataset. `batch` reduces over the assembled
+                                     # batch; `dataset` computes one split-wide scalar and is currently
+                                     # supported for CIFAR-100. Both require standardscaler or minmax.
     fixed_resize_antialias: true     # Only when fixed_resize_only=true. true: resample the PIL image
                                      # (filter support scales with the ratio). false: convert to a
                                      # float tensor first and resample with a fixed 2x2 kernel,

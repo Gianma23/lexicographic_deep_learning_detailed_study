@@ -7,10 +7,16 @@ import torch.nn as nn
 
 from models.common.hcc import HccController
 from models.common.cifar_wide_resnet import CifarWideResNetFeatures
-from models.orthonormal_plugin.config import parse_bool
-from models.orthonormal_plugin.head import FrozenBlockDiagonalClassifier, build_fixed_classifier
-from models.orthonormal_plugin.topology import build_topology, normalize_parent_of
-from models.orthonormal_plugin.transforms import build_transformation_module
+from models.common.subspace_supervision import (
+    SUBSPACE_SCORES_KEY,
+    SUBSPACE_TARGET_PROFILES_KEY,
+    build_sqrt_path_target_profiles,
+    subspace_norms,
+)
+from .config import parse_bool
+from .fixed_frame import FrozenBlockDiagonalClassifier, build_fixed_classifier
+from .topology import build_topology, normalize_parent_of
+from .transforms import build_transformation_module
 
 
 def _build_resnet50_backbone(pretrained: bool):
@@ -184,13 +190,27 @@ class HierCosModel(nn.Module):
 
         self.level_node_id_names: List[str] = []
         self.level_subspace_mask_names: List[str] = []
+        self.subspace_target_profile_names: List[str] = []
+        subspace_target_profiles = build_sqrt_path_target_profiles(
+            level_node_ids=topology["level_node_ids"],
+            level_subspace_masks=topology["level_subspace_masks"],
+            leaf_to_level_local=topology["leaf_to_level_local"],
+            path_weights=topology["node_prob_weights"],
+        )
         for level in range(self.depth):
             node_ids_name = f"level_node_ids_{level}"
             mask_name = f"level_subspace_mask_{level}"
+            target_profile_name = f"subspace_target_profile_{level}"
             self.register_buffer(node_ids_name, topology["level_node_ids"][level], persistent=False)
             self.register_buffer(mask_name, topology["level_subspace_masks"][level], persistent=False)
+            self.register_buffer(
+                target_profile_name,
+                subspace_target_profiles[level],
+                persistent=False,
+            )
             self.level_node_id_names.append(node_ids_name)
             self.level_subspace_mask_names.append(mask_name)
+            self.subspace_target_profile_names.append(target_profile_name)
 
         self.register_buffer("leaf_to_level_local", topology["leaf_to_level_local"], persistent=False)
         self.register_buffer("node_prob_weights", topology["node_prob_weights"], persistent=False)
@@ -299,9 +319,6 @@ class HierCosModel(nn.Module):
             hcc_cfg=hcc_cfg,
         )
 
-    def set_hcc_final_test_active(self, active: bool) -> None:
-        self.hcc.set_final_test_active(active)
-
     def parameter_groups(
         self,
         base_lr: float,
@@ -347,16 +364,16 @@ class HierCosModel(nn.Module):
         return groups
 
     def _level_subspace_scores(self, node_logits: torch.Tensor) -> List[torch.Tensor]:
-        squared = node_logits.pow(2)
-        scores: List[torch.Tensor] = []
-        for mask_name in self.level_subspace_mask_names:
-            mask = getattr(self, mask_name).to(device=node_logits.device, dtype=node_logits.dtype)
-            level_scores_sq = torch.matmul(squared, mask.transpose(0, 1).contiguous())
-            scores.append(torch.sqrt(level_scores_sq.clamp_min(0.0)))
-        return scores
+        return subspace_norms(node_logits, self._level_subspace_masks())
 
     def _level_node_ids(self) -> List[torch.Tensor]:
         return [getattr(self, name) for name in self.level_node_id_names]
+
+    def _level_subspace_masks(self) -> List[torch.Tensor]:
+        return [getattr(self, name) for name in self.level_subspace_mask_names]
+
+    def _subspace_target_profiles(self) -> List[torch.Tensor]:
+        return [getattr(self, name) for name in self.subspace_target_profile_names]
 
     def _parent_baseline(self, level: int, previous_logits: torch.Tensor) -> torch.Tensor:
         if level <= 0:
@@ -506,21 +523,18 @@ class HierCosModel(nn.Module):
         level_node_ids = self._level_node_ids()
         return {
             "logits_per_level": logits_per_level,
+            SUBSPACE_SCORES_KEY: logits_per_level,
+            SUBSPACE_TARGET_PROFILES_KEY: self._subspace_target_profiles(),
             "effective_logits_per_level": effective_logits_per_level,
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,
-            "orthonormal_plugin_node_logits": node_logits,
             "node_logits_per_level": node_logits_per_level,
-            "orthonormal_plugin_node_logits_per_level": node_logits_per_level,
             # HCC constrains signed fixed-layer node logits. Hier-COS then uses
             # those modified logits in its unchanged loss and subspace norms.
             "projected_node_logits_per_level": hcc_output["projected_logits_per_level"],
             "effective_node_logits_per_level": effective_node_logits_per_level,
             "hcc_diagnostics": hcc_output["hcc_diagnostics"],
             "hiercos_level_node_ids": level_node_ids,
-            "orthonormal_plugin_level_node_ids": level_node_ids,
             "leaf_to_level_local": self.leaf_to_level_local,
-            "orthonormal_plugin_leaf_to_level_local": self.leaf_to_level_local,
             "node_prob_weights": self.node_prob_weights,
-            "orthonormal_plugin_node_prob_weights": self.node_prob_weights,
         }

@@ -60,7 +60,6 @@ taxonomy sizes matched, and a transformed sample was loaded from every split.
 | HT-CapsNet | source-aligned TensorFlow-to-PyTorch port with Keras-shaped SDPA attention | framework numerical equivalence, unified CUB taxonomy, and Aircraft extrapolation |
 | HRN | source-aligned full-label architecture/loss | unified validation/full-eval protocol differs from upstream |
 | Hier-COS | source-aligned fixed-frame/KL core plus local CE/lex modes | local hierarchy depths and ambiguous upstream Aircraft script |
-| Orthonormal plugin | local extension | no upstream-equivalence claim |
 
 Detailed evidence is in the
 [model fidelity and divergence log](model_repo_differences.md).

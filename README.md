@@ -132,7 +132,7 @@ Runnable configs use these required top-level sections:
 model, dataset, dataloader, train, optim, scheduler, runtime
 ```
 
-Optional top-level sections are `hcc` and `orthonormal_plugin`. OmegaConf
+The optional top-level section is `hcc`. OmegaConf
 environment interpolation and command-line dotlist overrides are resolved
 before validation.
 
@@ -140,11 +140,11 @@ Configuration is fail-fast:
 
 - unknown keys are rejected;
 - level-name count must equal `dataset.hierarchy_depth`;
-- model/dataset/HCC/plugin/lexicographic incompatibilities are rejected;
+- model/dataset/HCC/lexicographic incompatibilities are rejected;
 - `dataloader.drop_last_eval: true` is rejected by the corrected protocol;
 - explicit annotation paths are mandatory and missing files fail at dataset
   construction;
-- HT-CapsNet, LH-DNN, Hier-COS, and plugin paths require a complete taxonomy.
+- HT-CapsNet, LH-DNN, and Hier-COS require a complete taxonomy.
 
 The commented fragments under `configs/templates/` document the accepted
 fields. They are not standalone runnable experiments.
@@ -173,8 +173,7 @@ HCC is an output-space affine hierarchy constraint. It changes the objective’s
 logits but does not explicitly project parameter gradients. Explicit
 lexicographic training is enabled by `train.lexicographic.enabled` and projects
 lower-priority gradients. Native lexicographic training is supported for
-H-CAST, HT-CapsNet, HRN, and decomposed-loss Hier-COS. LH-DNN is excluded,
-including when the orthonormal plugin is enabled.
+H-CAST, HT-CapsNet, HRN, and decomposed-loss Hier-COS. LH-DNN is excluded.
 
 ### LH-DNN
 
@@ -197,15 +196,20 @@ presets remain local extrapolations.
 - `configs/capsnet/capsnet_aircraft.yaml`
 
 The presets use the upstream runner’s 200-epoch horizon, taxonomy temperature
-`0.5`, 16×32 Keras-shaped attention, per-example MixUp, the exact source
-exponential schedule, deterministic execution, capsule margin loss, and
-next-batch dynamic level weights. CIFAR uses 32 px; CUB and Aircraft use 64 px.
+`0.5`, 16×32 Keras-shaped attention with rank-three Keras Glorot initialization,
+per-example MixUp, the paper-reported epoch schedule, Keras 2.8 Adam update,
+deterministic execution, capsule margin loss, and next-batch dynamic level
+weights. The EfficientNet preset pins the Keras-compatible
+`tf_efficientnet_b7.aa_in1k` conversion and restores Keras BatchNorm/drop-connect
+training semantics. CIFAR uses native 32 px inputs and split-wide scalar
+standardization; CUB and Aircraft use 64 px.
 The CUB preset deliberately retains this repository's 13/38/200 taxonomy, so
 it is not an exact reproduction of the paper's 39/123/200 run. Aircraft is a
 64 px extrapolation from the paper datasets. `train.resume` is empty by
 default; runs never silently reuse an old checkpoint.
-Older local HT-CapsNet checkpoints predate the corrected attention projections
-and loss-weight buffer and must not be resumed for these fidelity runs.
+Older local HT-CapsNet checkpoints predate the corrected attention
+initialization, backbone semantics, optimizer, and loss-weight buffer and must
+not be resumed for these fidelity runs.
 Native lexicographic HT-CapsNet uses the same three capsule margin losses. The
 lex launcher selects `model.loss.weight_mode: none`, which is the existing
 unit-weight mode; the paper-baseline configs retain their dynamic weighting.
@@ -250,9 +254,8 @@ Native Hier-COS additionally supports two taxonomy-size-derived modes. With
 `model.weight_beta` and defaults to `0.5`. With
 `model.weight_mode: marginal_branching`, the unnormalised scores are
 `[1, C_1/C_0, ..., C_l/C_(l-1)]` and are normalised to sum to one. These two
-modes are not available through `orthonormal_plugin`; as with the existing
-Hier-COS modes, they weight the path/CE component while level regularisation
-remains unweighted.
+mode weights the path/CE component while level regularisation remains
+unweighted.
 
 The optional `model.projection.enabled: true` path gives each level an
 LH-DNN-style projected learnable FC head. It concatenates the three head
@@ -270,6 +273,31 @@ batch-shared `A` variant has been removed. The launcher names these runs
 Set `model.projection.advantage_enabled: true` to additionally propagate
 detached parent-class logits as LH-DNN advantage baselines. This path requires
 `model.loss: level_softmax_ce_reg`.
+
+Direct subspace-norm supervision is enabled with
+`train.subspace_supervision.enabled: true`. It replaces the model's native
+loss with an equal average of per-level squared errors between L2-normalized
+predicted and target subspace profiles. Hier-COS precomputes one dense target
+profile per leaf: the true path coordinates contain the square roots of its
+native path probabilities, so the true class has score `1` and other classes
+are scored by shared ancestry. The trained tensors are the same
+`logits_per_level` tensors used by evaluation.
+
+The loss dispatch is capability-based rather than tied to `model.name`. A model
+using it must return `subspace_scores_per_level` (`[B, C_l]`) and
+`subspace_target_profiles_by_level` (`[num_leaf, C_l]`). The mechanism rejects
+soft targets, mixup/cutmix, HCC, lexicographic training, and the Hier-COS LH
+projection. Its loss log includes raw and equally weighted level errors plus
+unnormalized score norms for collapse detection. The accepted config block is:
+
+```yaml
+train:
+  subspace_supervision:
+    enabled: true
+    target_mode: sqrt_path_weights
+    loss: normalized_mse
+    eps: 1.0e-12
+```
 
 ## Dataset behavior
 
@@ -329,7 +357,7 @@ of them: `node_score` for H-CAST/HRN/LH-DNN/HT-CapsNet, `subspace_norm` for
 native Hier-COS, and the `hcc_`-prefixed cell of the same readout for a run
 trained with `hcc.enabled: true`. That cell is recorded as
 `native_inference_mode` and used as the paired reference for the others. Nothing
-here loads an orthonormal plugin, changes the loss, or updates parameters.
+here changes the loss or updates parameters.
 
 Two properties shape the deltas: `hcc_node_score` shifts each sibling group by
 one constant, so it cannot change any top-down metric for a signed readout (it
@@ -412,10 +440,21 @@ DRY_RUN=1 \
 scripts/hcast/run_hcast_lex.sh
 ```
 
-Hier-COS and plugin launchers similarly accept `LEX_PROJECTION_MODES` and
+Hier-COS launchers similarly accept `LEX_PROJECTION_MODES` and
 `TRANSFORM_MODES`. Each launcher prints the selected matrix. Narrow defaults
 remain narrow so invoking a script cannot unexpectedly start the full
 expensive grid.
+
+Run Hier-COS with direct subspace supervision using:
+
+```bash
+DATASETS=cifar100 BASE_SEED=0 NUM_RUNS=1 \
+scripts/hiercos/run_hiercos_subspace.sh
+```
+
+The launcher sets `alpha=0`, enables direct profile supervision, and forces the
+Hier-COS LH projection, HCC, mixup/cutmix, label smoothing, and lexicographic
+training off. Run directories are named `hiercos_<dataset>_subspace`.
 
 Run native HT-CapsNet baselines on the three dataset configurations with:
 

@@ -3,14 +3,14 @@
 import torch
 
 
-def squash(x: torch.Tensor, dim: int = -1, eps: float = 1e-8) -> torch.Tensor:
+def squash(x: torch.Tensor, dim: int = -1, eps: float = 1e-7) -> torch.Tensor:
     """Apply the standard capsule squash non-linearity."""
     sq_norm = (x * x).sum(dim=dim, keepdim=True)
     scale = sq_norm / (1.0 + sq_norm)
     return scale * x / torch.sqrt(sq_norm + eps)
 
 
-def safe_norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-8) -> torch.Tensor:
+def safe_norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-7) -> torch.Tensor:
     """Compute a numerically stable L2 norm."""
     sq_norm = (x * x).sum(dim=dim)
     return torch.sqrt(sq_norm + eps)

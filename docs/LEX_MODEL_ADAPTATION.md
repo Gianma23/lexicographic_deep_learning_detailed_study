@@ -50,7 +50,7 @@ Validation runs in two places, both of which must pass:
 | --- | --- |
 | Hierarchy depth must be exactly 3 | `config_validation.py:909`, `config.py:177` |
 | Exactly 3 differentiable, scalar, `requires_grad` level losses | `gradients.py:35-50` |
-| Model must be `hcast`, `hiercos`, `ht_capsnet`, `hrn`, or plugin-wrapped | `config.py:134-139` |
+| Model must be `hcast`, `hiercos`, `ht_capsnet`, or `hrn` | `config.py` |
 | `model.name: lhdnn` is rejected unconditionally | `config.py:132-133` |
 | Hier-COS `model.projection.enabled: true` is mutually exclusive with lex | `config_validation.py:903-907` |
 | `projection_mode` in `coarse_first`, `fine_first` | `config.py:9` |
@@ -106,8 +106,7 @@ deviating from that is the trap.
 ### 3.2 Hier-COS (`model.name: hiercos`)
 
 **Level objectives.** `level_losses[l] = ce_level_l + alpha * reg_level_l`
-(`models/orthonormal_plugin/losses.py:253-269`), which Hier-COS reaches via
-`models/hiercos/losses.py`. Level weights are folded **inside**
+(`models/hiercos/losses.py`). Level weights are folded **inside**
 `ce_level_losses` by `_weighted_target_ce_level_losses`, so unlike H-CAST and
 HT-CapsNet they do survive into the update.
 
@@ -125,7 +124,7 @@ Launchers: `scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh`,
 
 **Why the loss mode is coerced.** The upstream-aligned default `kl_reg` produces
 a single KL over the whole node vector and exposes no per-level tensors
-(`orthonormal_plugin/losses.py:612-613`). `global_softmax_ce_reg` is its exact
+(`models/hiercos/losses.py`). `global_softmax_ce_reg` is its exact
 per-level regrouping; `level_softmax_ce_reg` additionally replaces the global
 softmax with per-level softmaxes and is therefore a genuinely different
 objective, not a regrouping.
@@ -182,22 +181,9 @@ should be stated when reporting HRN lex results.
 (`native`: leaf-observed joint tree marginal plus leaf CE). An HRN lex-vs-baseline
 comparison is only clean if the baseline also runs at `level_marginal`.
 
-### 3.5 Orthonormal plugin (`orthonormal_plugin.enabled: true`)
+### 3.5 LH-DNN — not supported
 
-Permitted with any wrapped base model, but requires
-`orthonormal_plugin.loss: global_softmax_ce_reg` or `level_softmax_ce_reg`
-(`config.py:141-150`). Plain `kl_reg` exposes no per-level tensors. Level
-objectives and weight handling are identical to Hier-COS (Section 3.2), since
-both share `models/orthonormal_plugin/losses.py`.
-
-Note the plugin consumes `orthonormal_plugin_scores_per_level`, which every model
-sets to its already-computed per-level logits. The plugin therefore operates
-strictly downstream of the heads.
-
-### 3.6 LH-DNN — not supported
-
-Rejected unconditionally, with or without the plugin
-(`config.py:132-133`, `config_validation.py:902`). LH-DNN's own branch
+Rejected unconditionally (`config.py`, `config_validation.py`). LH-DNN's own branch
 projection (`z - c + sg(c)`, `models/lhdnn/model.py:285`) is an always-on,
 per-sample, branch-point gradient intervention. Stacking a second, global
 parameter-space projection on top would make the resulting update attributable to
@@ -287,5 +273,4 @@ training objective.
 | Hier-COS | yes | `loss: global_softmax_ce_reg` or `level_softmax_ce_reg`; `projection.enabled: false` | `t1` only | yes |
 | HT-CapsNet | yes | none enforced; launcher sets `weight_mode: none` | `t1` only | no (unweighted tensors) |
 | HRN | yes | `loss: level_marginal` | `t1` only | n/a (unweighted objective) |
-| Orthonormal plugin | yes | `plugin.loss: global_softmax_ce_reg` or `level_softmax_ce_reg` | as base model | yes |
 | LH-DNN | **no** | — | — | — |

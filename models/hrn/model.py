@@ -142,9 +142,6 @@ class HRNModel(nn.Module):
             hcc_cfg=hcc_cfg,
         )
 
-    def set_hcc_final_test_active(self, active: bool) -> None:
-        self.hcc.set_final_test_active(active)
-
     def _build_fc_block(self, branch_hidden_dim: int, embedding_dim: int, dropout: float) -> nn.Module:
         layers: List[nn.Module] = [
             nn.BatchNorm1d(self.num_ftrs),
@@ -242,7 +239,6 @@ class HRNModel(nn.Module):
 
         return {
             "logits_per_level": logits_per_level,
-            "orthonormal_plugin_scores_per_level": [order_logits, family_logits, species_ce_logits],
             "effective_probs_per_level": effective_probs_per_level,
             "tree_scores_per_level": [order_sig, family_sig, species_sig],
             "tree_logits_per_level": tree_logits_per_level,

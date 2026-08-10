@@ -41,5 +41,4 @@ model:
 # Optional model-agnostic Hierarchical Constraint Cascade (HCC) projection block.
 hcc:
   enabled: false                   # true enables hierarchical affine projection constraints (fully on from epoch 0)
-  final_test_only: false           # true applies HCC only during final test evaluations
   eps: 1.0e-12                     # Numerical stability epsilon (auto-clamped to > 0)

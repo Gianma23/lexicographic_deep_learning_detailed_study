@@ -13,13 +13,13 @@ import numpy as np
 import yaml
 from matplotlib import colors as mcolors
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from dotenv import load_dotenv
 try:
-    from notebooks.multiseed_utils import (
+    from notebooks.utils.multiseed_utils import (
         aggregate_parsed_seed_runs,
         discover_seed_dirs,
         has_seed_runs,
@@ -55,8 +55,7 @@ BEST_SELECTION_MODES = ("topdown", "independent")
 
 def resolve_project_root() -> Path:
     cwd = Path.cwd().resolve()
-    candidates = [cwd, cwd.parent]
-    for candidate in candidates:
+    for candidate in [cwd, *cwd.parents]:
         if (candidate / "configs").exists():
             return candidate
     return cwd
@@ -273,11 +272,6 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
     model_loss: Optional[str] = None
     weight_mode: Optional[str] = None
     model_transform_mode: Optional[str] = None
-    orthonormal_plugin_enabled = False
-    orthonormal_plugin_loss: Optional[str] = None
-    orthonormal_plugin_weight_mode: Optional[str] = None
-    orthonormal_plugin_transform_mode: Optional[str] = None
-    orthonormal_plugin_alpha: Optional[float] = None
     cfg: Dict[str, Any] = {}
     cfg_path = run_path / "config_resolved.yaml"
     if cfg_path.exists():
@@ -305,31 +299,6 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
                 if not isinstance(raw_transform_mode, str):
                     raise ValueError("Hier-COS model.transform_mode in config_resolved.yaml must be a string.")
                 model_transform_mode = raw_transform_mode
-        plugin_cfg = cfg.get("orthonormal_plugin", {})
-        if isinstance(plugin_cfg, MappingABC):
-            orthonormal_plugin_enabled = bool(plugin_cfg.get("enabled", False))
-            raw_plugin_loss = plugin_cfg.get("loss")
-            if raw_plugin_loss is not None:
-                if not isinstance(raw_plugin_loss, str):
-                    raise ValueError("orthonormal_plugin.loss in config_resolved.yaml must be a string.")
-                orthonormal_plugin_loss = raw_plugin_loss
-            raw_plugin_weight_mode = plugin_cfg.get("weight_mode")
-            if raw_plugin_weight_mode is not None:
-                if not isinstance(raw_plugin_weight_mode, str):
-                    raise ValueError("orthonormal_plugin.weight_mode in config_resolved.yaml must be a string.")
-                orthonormal_plugin_weight_mode = raw_plugin_weight_mode
-            raw_plugin_transform_mode = plugin_cfg.get("transform_mode")
-            if raw_plugin_transform_mode is not None:
-                if not isinstance(raw_plugin_transform_mode, str):
-                    raise ValueError("orthonormal_plugin.transform_mode in config_resolved.yaml must be a string.")
-                orthonormal_plugin_transform_mode = raw_plugin_transform_mode
-            raw_plugin_alpha = plugin_cfg.get("alpha")
-            if raw_plugin_alpha is not None:
-                try:
-                    orthonormal_plugin_alpha = float(raw_plugin_alpha)
-                except (TypeError, ValueError):
-                    orthonormal_plugin_alpha = None
-
     best_epoch_events = _best_epoch_events_by_mode(epoch_events, test_results)
     best_epoch_event = best_epoch_events.get("topdown")
 
@@ -348,11 +317,6 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         "model_loss": model_loss,
         "weight_mode": weight_mode,
         "model_transform_mode": model_transform_mode,
-        "orthonormal_plugin_enabled": orthonormal_plugin_enabled,
-        "orthonormal_plugin_loss": orthonormal_plugin_loss,
-        "orthonormal_plugin_weight_mode": orthonormal_plugin_weight_mode,
-        "orthonormal_plugin_transform_mode": orthonormal_plugin_transform_mode,
-        "orthonormal_plugin_alpha": orthonormal_plugin_alpha,
         "best_epoch_events": best_epoch_events,
         "best_epoch_event": best_epoch_event,
     }
@@ -598,28 +562,6 @@ def _detect_hiercos_study_family(run_like: Mapping[str, Any], text: str) -> Opti
     return "hiercos_loss_kl_reg"
 
 
-def _detect_orthonormal_plugin_family(run_like: Mapping[str, Any], text: str) -> Optional[str]:
-    plugin_enabled = bool(run_like.get("orthonormal_plugin_enabled", False))
-    looks_like_plugin = plugin_enabled or "orthonormal_plugin" in text or "plugin" in text
-    if not looks_like_plugin:
-        return None
-
-    loss_raw = run_like.get("orthonormal_plugin_loss", None)
-    loss_mode = loss_raw.strip().lower() if isinstance(loss_raw, str) else ""
-    transform_raw = run_like.get("orthonormal_plugin_transform_mode", None)
-    transform_mode = transform_raw.strip().lower() if isinstance(transform_raw, str) else ""
-
-    if transform_mode == "final_only" or "final_only" in text or "final only" in text:
-        return "orthonormal_plugin_final_only"
-    if loss_mode == "level_softmax_ce_reg" or "level_softmax_ce_reg" in text:
-        return "orthonormal_plugin_loss_level_softmax_ce_reg"
-    if loss_mode == "global_softmax_ce_reg" or "global_softmax_ce_reg" in text:
-        return "orthonormal_plugin_loss_global_softmax_ce_reg"
-    if loss_mode == "kl_reg" or "kl_reg" in text:
-        return "orthonormal_plugin_loss_kl_reg"
-    return "orthonormal_plugin_loss_global_softmax_ce_reg"
-
-
 def _detect_color_family(run_like: Mapping[str, Any]) -> str:
     if bool(run_like.get("is_baseline", False)):
         return "baseline"
@@ -631,10 +573,6 @@ def _detect_color_family(run_like: Mapping[str, Any]) -> str:
         run_dir_name = Path(run_dir).name.lower()
 
     text = f"{label} {run_dir_name}"
-    plugin_family = _detect_orthonormal_plugin_family(run_like, text)
-    if plugin_family is not None:
-        return plugin_family
-
     hiercos_family = _detect_hiercos_study_family(run_like, text)
     if hiercos_family is not None:
         return hiercos_family
@@ -682,11 +620,6 @@ def _apply_semantic_color_gradients(run_data_by_dataset: Mapping[str, List[RunDa
         "hiercos_loss_level_softmax_ce_reg": ["#fdba74", "#f97316", "#c2410c"],
         # Hier-COS final fixed-layer ablation (`transform_mode=final_only`).
         "hiercos_final_only": ["#c4b5fd", "#8b5cf6", "#5b21b6"],
-        # Non-Hier-COS models using the shared orthonormal plugin.
-        "orthonormal_plugin_loss_kl_reg": ["#d1d5db", "#9ca3af", "#4b5563"],
-        "orthonormal_plugin_loss_global_softmax_ce_reg": ["#f9a8d4", "#ec4899", "#9d174d"],
-        "orthonormal_plugin_loss_level_softmax_ce_reg": ["#67e8f9", "#06b6d4", "#0e7490"],
-        "orthonormal_plugin_final_only": ["#ddd6fe", "#a78bfa", "#6d28d9"],
         # HCC variants use a perceptually clear warm ramp instead of similar greens.
         "hcc": ["#f6d32d", "#f59e0b", "#ef4444", "#991b1b"],
         # Lexicographic runs use a green/teal ramp, separated from baseline blue and HCC warm colors.
@@ -1080,7 +1013,6 @@ class HCastAnalysis:
                 strength_max = run_data.get("hcc_constraint_strength_max", None)
                 dataset_name = run_data.get("dataset_name", "unknown")
                 is_baseline = bool(run_data.get("is_baseline", False))
-                plugin_enabled = bool(run_data.get("orthonormal_plugin_enabled", False))
                 seeds = list(run_data.get("seeds", []))
 
                 temp_txt = "" if temperature is None else f", T={temperature:g}"
@@ -1089,18 +1021,6 @@ class HCastAnalysis:
                     strength_txt = ""
                 else:
                     strength_txt = f", strength_max={strength_max:g}"
-                if plugin_enabled:
-                    plugin_bits = [
-                        f"plugin_loss={run_data.get('orthonormal_plugin_loss', 'unknown')}",
-                        f"plugin_weight={run_data.get('orthonormal_plugin_weight_mode', 'unknown')}",
-                        f"plugin_transform={run_data.get('orthonormal_plugin_transform_mode', 'unknown')}",
-                    ]
-                    plugin_alpha = run_data.get("orthonormal_plugin_alpha", None)
-                    if plugin_alpha is not None and np.isfinite(plugin_alpha):
-                        plugin_bits.append(f"plugin_alpha={plugin_alpha:g}")
-                    plugin_txt = ", " + ", ".join(plugin_bits)
-                else:
-                    plugin_txt = ""
                 baseline_txt = ", baseline" if is_baseline else ""
                 seeds_txt = f", seeds={seeds}" if seeds else ""
 
@@ -1111,7 +1031,7 @@ class HCastAnalysis:
 
                 print(
                     f"[{dataset_name}] {run_data['label']}: epochs={epoch_count}, "
-                    f"{best_txt}{temp_txt}{mode_txt}{strength_txt}{plugin_txt}{baseline_txt}{seeds_txt}"
+                    f"{best_txt}{temp_txt}{mode_txt}{strength_txt}{baseline_txt}{seeds_txt}"
                 )
 
     def plot_validation_curves(

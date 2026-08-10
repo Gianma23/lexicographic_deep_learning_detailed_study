@@ -9,6 +9,13 @@ model:
   filter_increment: 2
   backbone_net: efficientnet_b7
   backbone_net_weights: imagenet
+  # Keras-compatible AutoAugment ImageNet weight conversion (explicitly tagged).
+  backbone_variant: tf_efficientnet_b7.aa_in1k
+  backbone_preprocessing: keras
+  # Keras BN momentum=0.99 maps to PyTorch momentum=0.01. The application
+  # progressively scales drop-connect to 0.2 across its blocks.
+  backbone_bn_momentum: 0.01
+  backbone_drop_path: 0.2
 
   # Taxonomy-guided routing controls
   taxonomy_temperature: 0.5
@@ -22,6 +29,7 @@ model:
   attn_key_dim: 32
   attn_dropout: 0.0
   attn_postprocess: layernorm
+  attn_initializer: keras_glorot
   loss:
     margin_m_pos: 0.9
     margin_m_neg: 0.1
@@ -43,15 +51,15 @@ dataset:
   val_split_ratio: 0.1
   split_seed: 0
   transforms:
-    # Keep HT-CapsNet parity preprocessing (fixed resize + z-score normalization).
-    # Known gap: CIFAR reaches the upstream `image_type='array'` branch, which
-    # standardizes the whole split array once (a per-split scalar). Neither `image`
-    # nor `batch` scope reproduces that; `image` is retained here pending a
-    # split-scoped implementation.
+    # CIFAR reaches the upstream array branch, which computes one scalar mean
+    # and standard deviation over each complete train/validation/test split.
     fixed_resize_only: true
     fixed_resize_interpolation: bilinear
+    fixed_resize_antialias: false
     use_timm: false
     normalization: standardscaler
+    normalization_eps: 1.0e-7
+    normalization_scope: dataset
     mixup: 0.2
     cutmix: 0.0
     cutmix_minmax: null
@@ -79,7 +87,8 @@ train:
 
 optim:
   # Upstream optimizer default: Adam (lr=0.001).
-  name: adam
+  # Keras 2.8 epsilon-hat Adam update, not PyTorch's differently ordered form.
+  name: keras_adam
   lr: 0.001
   weight_decay: 0.0
   momentum: 0.9

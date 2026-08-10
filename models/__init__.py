@@ -30,16 +30,6 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
     else:
         raise ValueError(f"Unsupported model '{name}'. Expected one of ['hcast', 'lhdnn', 'ht_capsnet', 'hrn', 'hiercos']")
 
-    if name != "hiercos":
-        from .orthonormal_plugin import OrthonormalPluginWrapper, is_enabled
-
-        if is_enabled(cfg):
-            return OrthonormalPluginWrapper(
-                base_model=model,
-                cfg=cfg,
-                num_classes_per_level=num_classes_per_level,
-                taxonomy=taxonomy,
-            )
     return model
 
 
@@ -53,16 +43,23 @@ def compute_loss(
     Tuple[torch.Tensor, Dict[str, float]],
     Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
 ]:
+    from .common.subspace_supervision import (
+        compute_subspace_supervision_loss,
+        subspace_supervision_enabled,
+    )
+
+    if subspace_supervision_enabled(cfg):
+        return compute_subspace_supervision_loss(
+            output,
+            targets,
+            cfg,
+            taxonomy,
+            return_aux=return_aux,
+        )
+
     name = cfg.model.name
     if not isinstance(name, str):
         raise ValueError("model.name must be a string.")
-    from .orthonormal_plugin import is_enabled as orthonormal_plugin_enabled
-
-    if orthonormal_plugin_enabled(cfg):
-        from .orthonormal_plugin.losses import compute_loss as loss_orthonormal
-
-        return loss_orthonormal(output, targets, cfg, taxonomy, return_aux=return_aux)
-
     if name == "hcast":
         from .hcast.losses import compute_loss as loss_hcast
 

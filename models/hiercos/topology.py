@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 import torch
 
 
-def normalize_parent_of(taxonomy: Dict[str, Any], owner: str = "Orthonormal plugin") -> Dict[int, Dict[int, int]]:
+def normalize_parent_of(taxonomy: Dict[str, Any], owner: str = "Hier-COS") -> Dict[int, Dict[int, int]]:
     if not taxonomy or "parent_of" not in taxonomy:
         raise ValueError(f"{owner} requires taxonomy with `parent_of` mappings.")
 
@@ -30,7 +30,7 @@ def level_offsets(num_classes_per_level: Sequence[int]) -> List[int]:
 def build_topology(
     num_classes_per_level: Sequence[int],
     taxonomy: Dict[str, Any],
-    owner: str = "Orthonormal plugin",
+    owner: str = "Hier-COS",
 ) -> Dict[str, Any]:
     num_classes = [int(v) for v in num_classes_per_level]
     if len(num_classes) < 2:

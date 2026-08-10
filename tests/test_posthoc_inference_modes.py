@@ -14,7 +14,6 @@ from evaluation.evaluate_checkpoints import (
 )
 from evaluation.posthoc_inference import PosthocInferenceRule
 from models.hiercos.model import HierCosModel
-from models.orthonormal_plugin.config import INPUT_KEY
 
 
 NUM_CLASSES = [2, 3, 4]
@@ -38,7 +37,7 @@ def _rule(mode: str, model_name: str = "hcast") -> PosthocInferenceRule:
 def _classifier_output() -> dict:
     torch.manual_seed(7)
     scores = [torch.randn(5, classes) for classes in NUM_CLASSES]
-    return {"logits_per_level": scores, INPUT_KEY: scores}
+    return {"logits_per_level": scores}
 
 
 class NodeScoreReadoutTests(unittest.TestCase):

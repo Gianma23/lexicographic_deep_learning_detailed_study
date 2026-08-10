@@ -32,12 +32,22 @@ class FidelityPresetTests(unittest.TestCase):
                 self.assertEqual(cfg["dataloader"]["batch_size"], 32)
                 self.assertEqual(cfg["train"]["epochs"], 200)
                 self.assertFalse(cfg["train"]["amp"])
-                self.assertEqual(cfg["optim"]["name"], "adam")
+                self.assertEqual(cfg["optim"]["name"], "keras_adam")
                 self.assertEqual(cfg["optim"]["lr"], 0.001)
                 self.assertEqual(cfg["optim"]["opt_eps"], 1.0e-7)
+                self.assertEqual(
+                    cfg["model"]["backbone_variant"],
+                    "tf_efficientnet_b7.aa_in1k",
+                )
+                self.assertEqual(cfg["model"]["backbone_preprocessing"], "keras")
+                self.assertEqual(cfg["model"]["backbone_bn_momentum"], 0.01)
+                self.assertEqual(cfg["model"]["backbone_drop_path"], 0.2)
+                self.assertEqual(cfg["model"]["attn_initializer"], "keras_glorot")
                 self.assertEqual(cfg["scheduler"]["name"], "ht_capsnet_exponential")
                 self.assertEqual(cfg["scheduler"]["start_epoch"], 10)
                 self.assertEqual(cfg["scheduler"]["decay_rate"], 0.95)
+                expected_scope = "dataset" if image_size == 32 else "batch"
+                self.assertEqual(transforms["normalization_scope"], expected_scope)
 
     def test_hrn_presets(self):
         cifar = self._load("configs/hrn/hrn_cifar100.yaml")
