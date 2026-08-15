@@ -41,6 +41,8 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "mask_threshold_low",
         "mask_temperature",
         "mask_center",
+        "routing_parent_activation",
+        "primary_capsule_mode",
         "attn_heads",
         "attn_key_dim",
         "attn_dropout",
@@ -184,7 +186,6 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
     "train.lexicographic": {
         "enabled",
         "projection_mode",
-        "projection_rule",
         "eps",
         "log_metrics",
     },
@@ -250,6 +251,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "lambda_downweight",
         "weight_mode",
         "dynamic_weight",
+        "dynamic_weight_formula",
     },
     "model.loss.level_weighting": {"mode", "gamma", "eps"},
 }
@@ -535,7 +537,6 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
         raise ValueError("`train.smoothing` must be in [0, 1].")
     if not isinstance(train.get("output_dir"), (str, Path)):
         raise ValueError("`train.output_dir` must be a path string.")
-
     _require_enum(
         optim.get("name"),
         "optim.name",
@@ -591,9 +592,9 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             {"sqrt_path_weights"},
         )
         _require_enum(
-            subspace_supervision.get("loss", "normalized_mse"),
+            subspace_supervision.get("loss", "cross_entropy"),
             "train.subspace_supervision.loss",
-            {"normalized_mse"},
+            {"cross_entropy", "normalized_mse"},
         )
         if _finite_float(
             subspace_supervision.get("eps", 1e-12),
@@ -655,11 +656,21 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                 "tf_efficientnet_b7",
             },
         )
+        backbone_preprocessing = model.get("backbone_preprocessing", "keras")
         _require_enum(
-            model.get("backbone_preprocessing", "keras"),
+            backbone_preprocessing,
             "model.backbone_preprocessing",
-            {"keras", "timm"},
+            {"keras", "keras_unit_range", "timm"},
         )
+        if (
+            backbone_preprocessing == "keras_unit_range"
+            and payload["dataset"].get("transforms", {}).get("normalization", "none")
+            != "none"
+        ):
+            raise ValueError(
+                "HT-CapsNet keras_unit_range requires "
+                "dataset.transforms.normalization=none."
+            )
         bn_momentum = _finite_float(
             model.get("backbone_bn_momentum", 0.01),
             "model.backbone_bn_momentum",
@@ -682,6 +693,16 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             "model.attn_initializer",
             {"keras_glorot", "pytorch_xavier"},
         )
+        _require_enum(
+            model.get("routing_parent_activation", "softmax_norm"),
+            "model.routing_parent_activation",
+            {"norm", "softmax_norm"},
+        )
+        _require_enum(
+            model.get("primary_capsule_mode", "source_reuse"),
+            "model.primary_capsule_mode",
+            {"paper_independent", "source_reuse"},
+        )
         if _finite_float(model.get("taxonomy_temperature", 0.5), "model.taxonomy_temperature") <= 0:
             raise ValueError("HT-CapsNet taxonomy_temperature must be > 0.")
         mask_low = _finite_float(model.get("mask_threshold_low", 0.1), "model.mask_threshold_low")
@@ -703,6 +724,11 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             loss.get("weight_mode", "dynamic"),
             "model.loss.weight_mode",
             {"dynamic", "static", "none"},
+        )
+        _require_enum(
+            loss.get("dynamic_weight_formula", "released_source"),
+            "model.loss.dynamic_weight_formula",
+            {"paper", "released_source"},
         )
         m_pos = _finite_float(loss.get("margin_m_pos", 0.9), "model.loss.margin_m_pos")
         m_neg = _finite_float(loss.get("margin_m_neg", 0.1), "model.loss.margin_m_neg")
@@ -970,11 +996,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             lex.get("projection_mode", "coarse_first"),
             "train.lexicographic.projection_mode",
             {"coarse_first", "fine_first"},
-        )
-        _require_enum(
-            lex.get("projection_rule", "orthogonalize_all"),
-            "train.lexicographic.projection_rule",
-            {"orthogonalize_all", "conflict_only"},
         )
         if _finite_float(lex.get("eps", 1e-12), "train.lexicographic.eps") <= 0.0:
             raise ValueError("Enabled lexicographic training requires a positive epsilon.")

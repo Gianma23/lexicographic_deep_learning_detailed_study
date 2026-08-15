@@ -2,39 +2,40 @@
 \label{ch:methods}
 
 This chapter defines the methods that the thesis compares.
-\S\ref{sec:methodology_problem} fixes the setting: the taxonomy, the score
-conventions, the training objective, and the lexicographic problem that the rest
-of the chapter addresses.
+\S\ref{sec:methodology_problem} fixes the setting that the rest of the chapter addresses.
 
-Three mechanisms are then developed, one per section. All three pursue the same
-goal, that the coarse levels of the taxonomy take precedence over the finer ones,
-but each enforces it on a different object:
+Three mechanisms are then developed, one per section. All three impose the same
+ordering: the coarse levels of the taxonomy take precedence over the finer
+ones. However, each acts on a different object:
 
 \begin{itemize}
-    \item the \textbf{Hierarchical Constraint Cascade} (HCC) constrains the
-    \emph{outputs}. The coarse scores are produced first, and the finer ones are
-    then obtained as the solution of a linear problem that forces them to agree
-    with the coarse ones. (\S\ref{sec:methodology_hcc}).
     \item \textbf{Lexicographic mode} constrains the \emph{update}. Gradients are
-    computed as usual, and the contribution of each level is then projected so
-    that, to first order, it cannot undo what the levels above it are asking for
+    computed one level at a time, and the contribution of each level is projected
+    so that, to first order, it cannot act against the levels above it
     (\S\ref{sec:methodology_lex}).
     \item The \textbf{LH-projection} constrains \emph{what each level learns
     from}. At the point where a level head reads the shared representation, the
     learning signal that head sends back is filtered so that it carries no
     component along the directions in which the heads above it currently read
     (\S\ref{sec:methodology_lhproj}).
+    \item The \textbf{Hierarchical Constraint Cascade} (HCC) constrains the
+    \emph{outputs}. The coarse scores are produced first, and the finer ones are
+    obtained as the solution of a linear problem that forces them to agree with
+    the coarse ones (\S\ref{sec:methodology_hcc}).
 \end{itemize}
 
-The first acts in the forward pass and therefore also at inference; the other two
-act only in the backward pass, and change nothing about the function a trained
-network computes. That asymmetry recurs throughout the chapter and is what makes
-the three comparable rather than interchangeable.
+The first two alter optimisation without changing the function associated with a
+fixed parameter vector. HCC instead transforms the model outputs and is therefore
+present at inference as well. It is presented last because its construction is
+the most specific of the three: it requires a complete taxonomy and a
+level-by-level affine correction, and it is the only one that can also be applied
+to an already trained model. That asymmetry recurs throughout the chapter and is
+what makes the three comparable rather than interchangeable.
 
 Two further sections complete the apparatus.
 \S\ref{sec:methodology_inference} fixes how a trained network is turned into a
-predicted path, introducing multiple inference methods. \S\ref{sec:methodology_axis} compares
-the three mechanisms.
+predicted path, introducing multiple inference methods.
+\S\ref{sec:methodology_axis} compares the mechanisms.
 
 \section{Problem formulation}
 \label{sec:methodology_problem}
@@ -42,11 +43,11 @@ the three mechanisms.
 This section states the problem addressed by the rest of the chapter and fixes
 the notation used for it throughout the thesis. The setting is the one already
 introduced in \cref{sec:hc_formulation}: in the terms of the Silla and Freitas
-classification of hierarchical problems~\cite{silla2011survey}, it is the case
+classification of hierarchical problems~\cite{silla2011survey} it is the case
 $\langle T, S, FD\rangle$, that is, a tree-shaped hierarchy in which every
 instance belongs to exactly one root-to-leaf path and is labelled down to a leaf.
-What follows restates that setting in the notation the constructions of this
-chapter require, and ends with the optimisation problem they are meant to solve.
+What follows restates that setting in the notation required by this chapter, and
+ends with the optimisation problem they are meant to solve.
 
 \subsection{Taxonomy}
 \label{ssec:problem_taxonomy}
@@ -78,57 +79,116 @@ y=(y_1,\dots,y_L),\qquad y_l\in\{1,\dots,C_l\},\qquad y_l=\pi_l(y_{l+1}).
 \]
 A path satisfying $y_l=\pi_l(y_{l+1})$ for all $l$ is called \emph{consistent};
 the datasets provide consistent ground-truth paths by construction, whereas a
-model's prediction need not be consistent, which is what the metrics of
-\S\ref{ssec:inference_metrics} quantify. Note that a model could be consistent without 
-being correct.
+model's prediction doesn't have to be consistent, which is what the metrics of
+\S\ref{ssec:inference_metrics} quantify. A model can be consistent without being
+correct.
 
-All datasets used in this thesis are given a three-level hierarchy, $L=3$. The
-methods are defined for arbitrary $L$ and the restriction is a property of the
-experimental setting, not of the formulation; the two exceptions --- the HRN
-baseline and the lexicographic mode of \S\ref{sec:methodology_lex}, both of which
-require exactly three levels as realised here --- are noted where they
-arise.
+All datasets used in this thesis are given a three-level hierarchy, $L=3$. Some
+methods, such as Hier-COS, are defined for arbitrary $L$ and the restriction is a property of the
+experimental setting, not of the formulation.
 
-\subsection{Classifier and score conventions}
+\subsection{Classifier output interface}
 \label{ssec:problem_scores}
 
-A hierarchical classifier is a map $x\mapsto\big(z_1,\dots,z_L\big)$
-parameterised by $\theta$, with
+A hierarchical classifier is represented by a parameterised map
+$f_\theta:\mathcal{X}\to\mathcal{U}$, where the output space $\mathcal{U}$
+depends on the model architecture. To formulate the task independently of that
+architecture, let
 \[
-z_l\;:=\;z_l(x;\theta)\in\mathbb{R}^{C_l}
+\rho_l:\mathcal{U}\to\mathbb{R}^{C_l},
+\qquad
+z_l(x;\theta):=\rho_l\!\big(f_\theta(x)\big)
 \]
-the vector of scores assigned to the classes of level $l$. The explicit
-dependence on $x$ and $\theta$ is omitted whenever it is not needed. Levels are
-always indexed coarse-to-fine, so that $z_1$ is the coarsest and $z_L$ the
-finest.
+be the score vector used for level $l$. The maps $\rho_l$ constitute the
+model's readout. The problem formulation requires only one
+score for each class at each level, it does not prescribe how the network must
+produce those scores. The explicit dependence on $x$ and $\theta$ is omitted
+whenever it is not needed. Levels are always indexed coarse-to-fine, so that
+$z_1$ refers to the coarsest level and $z_L$ to the finest.
 
-Two conventions for producing $z_l$ occur among the model families compared here,
-and the distinction matters when the constructions of the following sections are
-applied.
+The compared families realise this interface differently. Models with
+level-specific classifier heads, including H-CAST, LH-DNN, HRN and HT-CapsNet,
+make the vectors $z_l$ available directly. Hier-COS instead produces a vector
+$u\in\mathbb{R}^{N}$ of taxonomy-node coordinates and, under its native
+readout, assigns node $c$ the score
+\[
+z_l[c]=\big\lVert \Pi_{S_c}\,u\big\rVert_2,
+\]
+where $S_c$ is the taxonomy subspace associated with that node.
 
-\begin{itemize}
-    \item \textbf{Per-level heads.} Most families (H-CAST, LH-DNN, HRN,
-    HT-CapsNet) emit one score vector per level directly, as the output of a
-    level-specific head applied to a shared representation.
-    \item \textbf{Taxonomy-node scores.} Hier-COS instead emits a single node
-    vector $u\in\mathbb{R}^{N}$ over the whole taxonomy and reduces it to level
-    scores by subspace norms,
-    \[
-    z_l[c]=\big\lVert \Pi_{S_c}\,u\big\rVert_2,
-    \]
-    where $S_c$ is the taxonomy subspace assigned to node $c$ of level $l$. This
-    reduction is non-linear, and consequently the affine constructions of
-    \S\ref{sec:methodology_hcc} and \S\ref{sec:methodology_lhproj} act on the
-    linear per-level node blocks of $u$ rather than on the subspace norms
-    themselves. Where this distinction affects the interpretation of a result it
-    is stated explicitly.
-\end{itemize}
+This architectural difference is relevant later only because a method may
+modify either the network's internal output or the scores used to make a
+prediction. These quantities coincide for models that emit $z_l$ directly, but
+not necessarily for models such as Hier-COS, which derive $z_l$ from $u$. Each
+method will therefore state explicitly which quantity it acts on.
 
-\subsection{Objective}
+\subsection{Direct supervision of taxonomy-subspace scores}
+\label{ssec:methodology_subspace_ce}
+
+The native Hier-COS objective supervises the taxonomy-node coordinates $u$:
+it constructs a sparse probability distribution supported on the ground-truth
+path, applies a global softmax to $|u|$, and combines the resulting KL term with
+a level-wise coordinate regulariser. The subspace norms $z_l$ are then used as
+the readout at inference. To isolate the effect of supervising that readout
+itself, this thesis additionally defines a direct-subspace objective. It is a
+local training variant, not the published Hier-COS loss.
+
+For node $c$ at level $l$, let $I_{l,c}\subseteq\{1,\dots,N\}$ index the
+orthonormal taxonomy coordinates spanning its ancestors, itself and its
+descendants. The score entering both training and inference is
+\[
+z_l[c]
+=\left\lVert\Pi_{S_c}u\right\rVert_2
+=\left(\sum_{j\in I_{l,c}}u_j^2\right)^{1/2}.
+\]
+Given the hard ground-truth path $y=(y_1,\dots,y_L)$, the loss at level $l$ is
+cross-entropy over these scores,
+\[
+\ell_l^{\mathrm{subCE}}
+=-\log
+\frac{\exp\!\left(z_l[y_l]\right)}
+{\sum_{c=1}^{C_l}\exp\!\left(z_l[c]\right)},
+\qquad
+\mathcal{L}_{\mathrm{subCE}}
+=\frac{1}{L}\sum_{l=1}^{L}\ell_l^{\mathrm{subCE}}.
+\]
+At inference no softmax is required because it is order-preserving: the
+predicted class is $\arg\max_c z_l[c]$. Thus the objective acts on exactly the
+score vector that the independent and top-down decoders subsequently rank.
+
+This construction uses no dense shared-ancestry target. Taxonomic coupling is
+already present in the scores: coordinates shared by two node subspaces
+contribute to both norms. Cross-entropy nevertheless treats $y_l$ as the sole
+positive class and explicitly increases its score relative to every competing
+subspace. This is different from regressing a normalized dense profile, which
+assigns positive target mass to relatives and constrains only the direction of
+the score vector. The hard-label formulation therefore rewards a classification
+margin directly and, unlike normalized profile regression, makes score scale
+affect the objective.
+
+For a non-zero subspace norm, its coordinate derivative is
+\[
+\frac{\partial z_l[c]}{\partial u_j}
+=
+\begin{cases}
+u_j/z_l[c], & j\in I_{l,c},\\
+0, & j\notin I_{l,c}.
+\end{cases}
+\]
+At an exactly zero norm the implementation selects the finite zero subgradient.
+Consequently, the cross-entropy signal propagates through the same
+ancestor--self--descendant coordinates that define the Hier-COS readout. The
+per-level losses are averaged equally; they replace rather than supplement the
+native KL and coordinate regulariser. To keep this intervention attributable,
+the direct-subspace condition uses hard labels without smoothing, mixup or
+cutmix and is not combined with HCC, lexicographic gradient projection or the
+LH-style projected heads.
+
+\subsection{Scalarised objectives and level weights}
 \label{ssec:problem_objective}
 
-Unless a section states otherwise, training minimises a scalarised objective of
-the form
+The baseline training objectives can be written, when they expose one loss per
+level, as a weighted sum
 \[
 \mathcal{L}(\theta)
 =
@@ -137,101 +197,164 @@ the form
 \lambda\,\mathcal{R}\big(z_1,\dots,z_L\big),
 \]
 where $\ell_l$ is a level-wise loss (cross-entropy, or a family-specific
-surrogate such as the capsule margin loss of HT-CapsNet), $w_l>0$ are level
-weights with $\sum_l w_l=1$, and $\mathcal{R}$ is an optional family-specific
-regulariser with coefficient $\lambda$.
+surrogate such as the capsule margin loss of HT-CapsNet), $w_l>0$ are
+coefficients with $\sum_l w_l=1$, and $\mathcal{R}$ is an optional
+family-specific regulariser with coefficient $\lambda$. The normalisation of
+$w$ fixes a common scale and does not change its interpretation: $w_l$
+determines how much level $l$ contributes to the scalar objective. A larger
+value makes that level more influential, but does not give it lexicographic
+priority, since an improvement at one level can still compensate for a
+deterioration at another. This is the role of level weights in architectures
+based on a weighted-sum scalarisation, such as B-CNN~\cite{zhu2017bcnn}.
 
-The level weights are a genuine degree of freedom rather than an implementation
-detail, and because several claims of this thesis turn on them they are stated
-in closed form rather than by name.
+The compared model families do not all define or use these coefficients in the
+same way. LH-DNN and H-CAST use an unweighted sum, HRN has no analogous fixed
+level coefficient, and HT-CapsNet updates its level weights during training.
+Other families assemble their native loss terms according to their own
+definitions.
 
-\paragraph{Depth-derived weights.} The default weighting of the Hier-COS family,
-denoted \texttt{kl\_leaf}, assigns to level $l$ the value $\exp\!\big(1/(L+1-l)\big)$,
-normalises the resulting vector in $\ell_2$ and squares it. Since $\ell_2$
-normalisation followed by squaring is algebraically identical to $\ell_1$
-normalisation of the squares, the resulting weight has the closed form
+\subsection{Gradient scaling in lexicographic mode}
+\label{ssec:problem_lr}
+
+Lexicographic mode (\S\ref{sec:methodology_lex}) computes one gradient per level
+and projects the lower-priority gradients before assembling the update. The
+projection controls the directions in which a lower-priority objective may act,
+but it does not remove the effect of gradient magnitude. Indeed, the projected level
+contributions must still be added, and a much larger contribution can dominate
+that sum. Relative gradient scale is therefore an empirical degree of freedom of
+the lexicographic approach even though it does not change the priority order.
+
+A first candidate is to set $\eta_l=w_l$, reusing the coefficients of the
+scalarised baselines. This provides a natural controlled comparison between the
+two optimisation approaches. However, there is no reason for coefficients
+defined or tuned for the scalarised objective to be optimal for lexicographic
+mode. In the baseline they act through the direct sum
 \[
-w_l
-=
-\frac{\exp\!\big(2/(L+1-l)\big)}{\sum_{k=1}^{L}\exp\!\big(2/(L+1-k)\big)}
-=
-\operatorname{softmax}_l\!\Big(\tfrac{2}{L+1-l}\Big) ,
+\nabla_\theta\mathcal{L}=\sum_{l=1}^{L}w_l\nabla_\theta\ell_l,
 \]
-so that the squaring acts as an inverse temperature on the weight distribution:
-the weights actually used correspond to $\exp\!\big(2/(L+1-l)\big)$ and not, as the
-expression $\exp\!\big(1/(L+1-l)\big)$ alone would suggest, to a milder
-concentration. This doubling originates in the released implementation of the
-method rather than in this work, and is reproduced here deliberately so that the
-baseline is the published one; it is recorded because the resulting weight vector
-is markedly more leaf-heavy than the written form implies. Two further settings
-are obtained from it: \texttt{equal}, with $w_l=1/L$, and \texttt{kl\_coarse},
-which reverses the \texttt{kl\_leaf} vector and therefore concentrates weight on
-the coarsest level. For $L=3$ the three vectors are, coarse to fine,
-$(0.162,\,0.225,\,0.613)$, $(1/3,\,1/3,\,1/3)$ and $(0.613,\,0.225,\,0.162)$.
+whereas lexicographic mode first modifies each lower-priority gradient according
+to the higher-priority directions and only then combines the surviving
+components. The projection can change their relative magnitudes, and the
+sequential composition also depends on the scale of the intermediate
+resultants. A vector that balances the unprojected gradient sum may therefore
+leave the projected contributions poorly balanced.
 
-\paragraph{Branching-derived weights.} The weightings above depend only on the
-depth of the taxonomy: they assign the same numbers to a hierarchy that fans out
-sharply at the last level and to one that does not. Two alternatives are
-therefore defined, in which the weight of a level is a function of the taxonomy
-itself rather than of its index. Writing $C_l$ for the number of classes at level
-$l$, \emph{cumulative branching} sets
+The per-level factors $\eta_l$ are introduced to study this point: they test
+whether changing the relative magnitudes supplied to the projection makes
+lexicographic training more effective than reusing the baseline weights. Each
+$\eta_l$ scales one level's classification signal before projection; unlike
+$w_l$, it does not describe that level's share of a scalarised objective.
+
+For the decomposed Hier-COS objective used in this ablation,
 \[
-w_l \;\propto\; C_l^{\beta},
-\qquad\text{equivalently}\qquad
-w = \operatorname{softmax}\big(\beta \log C\big),
-\]
-with $\beta\ge 0$ (default $\beta=1/2$) controlling how strongly the weighting
-follows the class counts: $\beta=0$ recovers \texttt{equal}, and increasing
-$\beta$ concentrates weight on the more populated levels. \emph{Marginal
-branching} instead takes the coarsest level as the reference unit and scores each
-subsequent level by its average expansion with respect to its predecessor,
-\[
-s_1 = 1,
+g_l(\eta_l)=\nabla_\theta\!\left[\eta_l\,\ell_l^{\mathrm{CE}}+\alpha\,\mathcal{R}_l\right],
 \qquad
-s_l = \frac{C_l}{C_{l-1}}\ \ (l>1),
-\qquad
-w_l = \frac{s_l}{\sum_k s_k} ,
+\Delta\theta=-\,\mathcal{A}\!\left(g_1(\eta_1),\dots,g_L(\eta_L)\right),
 \]
-so that a level receives weight in proportion to the number of decisions it
-actually introduces. Both are available for Hier-COS. They
-exist because a weighting justified only by level index is difficult to defend as
-a modelling choice, whereas both alternatives above are functions of the
-taxonomy's own branching structure and can be stated before any result is seen.
+where $\mathcal{A}$ denotes the projection and composition of
+\S\ref{ssec:lex_modes}. The regulariser coefficient $\alpha$ remains fixed, so
+changing $\eta_l$ changes the balance between classification and regularisation
+within that level as well as the magnitude of the level contribution.
 
-\medskip
+Two new assignments of $\eta$ are introduced, both defined directly from the
+structure of the taxonomy. Introduce a virtual root at level $0$, with $C_0=1$,
+and define the average branching factor into level $l$ as
+\[
+b_l:=\frac{C_l}{C_{l-1}},\qquad l=1,\dots,L.
+\]
+The two rules use these factors differently.
 
-Because two of the mechanisms introduced below either bypass $w_l$ or replace it
-by a uniform weighting, $w_l$ is treated as a \emph{controlled variable} of the
-experimental design and is reported for every run; the resulting confound between
-arms is discussed in \S\ref{ssec:lex_setting} and in the threats to validity.
+\paragraph{Cumulative branching.} This rule measures the total expansion from
+the root to level $l$. The product of the branching factors telescopes:
+\[
+q_l:=\prod_{j=1}^{l}b_j
+=\prod_{j=1}^{l}\frac{C_j}{C_{j-1}}
+=C_l.
+\]
+The resulting scale is normalised and equipped with an exponent $\beta$,
+\[
+\eta_l^{\mathrm{cum}}(\beta)
+:=\frac{q_l^\beta}{\sum_{k=1}^{L}q_k^\beta}
+=\frac{C_l^\beta}{\sum_{k=1}^{L}C_k^\beta}
+=\operatorname{softmax}_l\!\big(\beta\log C\big),
+\]
+so cumulative branching is equivalent to scaling a level according to its
+number of classes. The exponent controls the concentration: $\beta=0$ recovers
+uniform scaling, $\beta=1$ gives the untempered class-count rule,
+$0<\beta<1$ softens it, and $\beta>1$ sharpens it. The proposal considers
+$\beta\in\{0.5,1,1.5\}$.
+
+\paragraph{Marginal branching.} This rule uses only the expansion introduced at
+the current transition. Directly using $b_1=C_1$ for the coarsest level would
+make the root-to-coarse expansion dominate the later factors. The coarsest level
+is therefore taken as the reference unit, while each subsequent level retains
+its local average branching factor:
+\[
+s_1 := 1,
+\qquad
+s_l := b_l=\frac{C_l}{C_{l-1}}\ \ (l>1),
+\qquad
+\eta_l^{\mathrm{marg}}:=\frac{s_l}{\sum_{k=1}^{L}s_k} .
+\]
+Unlike cumulative branching, this rule need not increase with depth: it assigns
+the largest scale to the level whose transition has the largest average fan-out.
+
+\begin{table}[htbp]
+\centering
+\caption{Taxonomy-derived gradient-scaling vectors, ordered coarse to fine.
+Values follow directly from the class counts and are rounded to three decimal
+places.}
+\label{tab:eta_branching}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Assignment} & \textbf{CIFAR-100} & \textbf{CUB-200-2011} &
+\textbf{FGVC-Aircraft} \\
+\midrule
+Cumulative, $\beta=0.5$ & $(0.163,\,0.258,\,0.578)$ & $(0.151,\,0.258,\,0.591)$ & $(0.230,\,0.351,\,0.419)$ \\
+Cumulative, $\beta=1$   & $(0.062,\,0.156,\,0.781)$ & $(0.052,\,0.151,\,0.797)$ & $(0.150,\,0.350,\,0.500)$ \\
+Cumulative, $\beta=1.5$ & $(0.020,\,0.080,\,0.899)$ & $(0.015,\,0.075,\,0.910)$ & $(0.094,\,0.335,\,0.571)$ \\
+Marginal                  & $(0.118,\,0.294,\,0.588)$ & $(0.109,\,0.318,\,0.573)$ & $(0.210,\,0.490,\,0.300)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both taxonomy-derived rules are fixed before training. The purpose of the ablation
+is precisely to determine whether any of them improves lexicographic training
+over uniform gradient scale.
 
 \subsection{The lexicographic problem}
 \label{ssec:problem_priority}
 
-The objective above is the one the baseline families minimise, and it treats the
-$L$ levels as commensurable: a weight $w_l$ prices one level against another, so
-a gain at one level can always be bought with a loss at some other. The problem
-this thesis addresses is instead the lexicographic one, in which the levels are
-ordered by priority and the ordering is absolute:
+The objective of \S\ref{ssec:problem_objective} is the one the baseline families
+minimise, and it treats the $L$ levels as commensurable: a coefficient $w_l$
+prices one level against another, so a gain at one level can always be bought
+with a loss at some other. The problem this thesis addresses is instead the
+lexicographic one, in which the levels are ordered by priority and the ordering
+is absolute:
 \begin{equation}
 \lexmin_{\theta}\ \ \ell_1(z_1,y_1),\ \ell_2(z_2,y_2),\ \dots,\ \ell_L(z_L,y_L),
 \label{eq:hc_lmop}
 \end{equation}
-that is, the sequence of programs of \cref{def:lmop}, in which level $l+1$ is
+that is, the sequence of problems of \cref{def:lmop}, in which level $l+1$ is
 minimised only over the minimisers of the levels $1,\dots,l$. The ordering
 adopted throughout is $\ell_1\prec\ell_2\prec\dots\prec\ell_L$, coarse before
 fine.
 
-The two formulations are not two ways of writing the same thing. As established
-in \cref{sec:lexico-real}, no positive real weight vector encodes a lexicographic
+The defining feature of \eqref{eq:hc_lmop} is that
+a lower-priority objective may act only \emph{within the level set already fixed
+by the higher-priority ones}. The mechanisms of this chapter realise that
+restriction at three different points of the computation, and the phrase is used
+in that sense throughout.
+
+As established in \cref{sec:lexico-real}, no positive real weight vector encodes a lexicographic
 order (\cref{prop:debreu}), and for any fixed $w$ there are level-wise changes
 under which the scalarised objective improves while the lexicographic order
-worsens (\cref{cor:compensation}). The weights of \S\ref{ssec:problem_objective}
-therefore express a trade-off, not a priority.
+worsens (\cref{cor:compensation}). The coefficients of
+\S\ref{ssec:problem_objective} therefore express a trade-off between levels, not a lexicographic priority.
 
-\paragraph{Why coarse before fine.} The ordering in \eqref{eq:hc_lmop} is an
-assumption rather than a consequence of the taxonomy, and the argument for it is
-the graded cost of errors already discussed in \cref{sec:hc_formulation}. Under a
+\paragraph{Order of priority.} The ordering in \eqref{eq:hc_lmop} is an
+assumption rather than a consequence of the taxonomy. Under a
 flat objective, predicting a different breed of the correct bird and predicting a
 vehicle are the same event; a hierarchy exists precisely because they are not.
 
@@ -240,412 +363,79 @@ which the coarse levels come first. The argument, however, says only which error
 are less damaging when they occur; it does not say that imposing the ordering
 during training will produce fewer of the damaging ones. Two qualifications
 follow. First, the ordering is a hypothesis about \emph{which} objective should
-dominate, and the thesis tests it
-rather than assuming it: \S\ref{ssec:lex_modes} applies the
-same operator with the priority reversed (fine before coarse), and any effect reproduced under it is
-not an effect of the hierarchy (\S\ref{ssec:design_controls}). Second, the
-ordering is not free: protecting the coarse level can only restrict the fine
-level, so a cost in fine-level accuracy is the expected price rather than a
-failure of the method, and the results are read as a position on an
-accuracy--consistency trade-off rather than as a uniform improvement.
-
-\section{Hierarchical Constraint Cascade}
-\label{sec:methodology_hcc}
-
-The \emph{Hierarchical Constraint Cascade} (HCC) is a differentiable method for enforcing hierarchical relations among the outputs of a multi-level classifier. The method builds on the \textsc{HardNet} framework for imposing hard constraints on neural networks \cite{min2024hardnet}, of which it constitutes a specific instance: the equality-only case, applied recursively along a taxonomy.
-
-This section first presents the general framework (\S\ref{ssec:hardnet}), then formally derives the hierarchical instantiation underlying HCC (\S\ref{ssec:hardnet_to_hcc}), relates the resulting construction to the lexicographic approaches that form the backbone of this thesis (\S\ref{ssec:lexicographic}), and finally discusses the extensions introduced here with respect to the original method (\S\ref{ssec:hcc_extensions}).
-
-\subsection{The HardNet framework}
-\label{ssec:hardnet}
-
-\subsubsection{Motivation}
-
-Prior knowledge about the input--output relations of a model is typically imposed in one of two ways. The first, \emph{soft constraints}, penalises violations through a regularisation term in the objective; this offers no guarantee of constraint satisfaction, particularly for inputs far from the training distribution, a condition that is critical in safety-critical applications \cite{min2024hardnet}. The second, \emph{hard constraints} imposed naively --- for instance by redefining the architecture so that the constraint holds by construction through an \emph{ad hoc} parameterisation --- risks a drastic reduction of the model's representational capacity.
-
-HardNet was proposed as a resolution of this trade-off \cite{min2024hardnet}: a framework for constructing networks that satisfy \emph{input-dependent} hard constraints by construction, without sacrificing model capacity, and that remain trainable end-to-end with standard unconstrained optimisation algorithms.
-
-\subsubsection{Definition}
-
-Let $f_\theta:\mathcal{X}\to\mathbb{R}^{n_{\mathrm{out}}}$ be a neural network parameterised by $\theta$. HardNet enforces the input-dependent affine constraint
-
-\[
-b^l(x)\le A(x)f(x)\le b^u(x)\qquad\forall x\in\mathcal{X},
-\]
-
-with $A(x)\in\mathbb{R}^{n_c\times n_{\mathrm{out}}}$, by appending to $f_\theta$ a differentiable \emph{enforcement layer}, that is, a projection $\mathcal{P}$ such that $\mathcal{P}(f_\theta):\mathcal{X}\to\mathbb{R}^{n_{\mathrm{out}}}$ satisfies the constraint for every $x$ while remaining differentiable with respect to $\theta$ through $f_\theta$. The layer is agnostic to the upstream architecture: it can be attached to any network exposing an output vector of dimension $n_{\mathrm{out}}$ \cite{min2024hardnet}.
-
-Under the assumptions that, for every $x$, the constraint is feasible and $A(x)$ has full row rank, the closed-form solution \textsc{HardNet-Aff} is given by \cite{min2024hardnet}
-
-\[
-\mathcal{P}(f_\theta)(x)
-=
-f_\theta(x)
-+
-A(x)^{+}
-\Big[
-\operatorname{ReLU}\!\big(b^l(x)-A(x)f_\theta(x)\big)
--
-\operatorname{ReLU}\!\big(A(x)f_\theta(x)-b^u(x)\big)
-\Big],
-\]
-
-where $A(x)^{+}:=A(x)^{\top}\big(A(x)A(x)^{\top}\big)^{-1}$ denotes the Moore--Penrose pseudoinverse. Two properties established in \cite{min2024hardnet} are directly relevant here:
-
-\begin{itemize}
-    \item \textbf{Exact constraint satisfaction}: for each row $a_i$ of $A(x)$, the projected output satisfies $a_i^{\top}\mathcal{P}(f_\theta)(x)=b^l_{(i)}(x)$ or $b^u_{(i)}(x)$ whenever the constraint is violated, and is left unchanged otherwise (Proposition 4.4 in \cite{min2024hardnet}).
-    \item \textbf{Preservation of universal approximation}: if the function class realised by $f_\theta$ universally approximates a class $\mathcal{F}$, then the class of projected functions $\mathcal{P}(f_\theta)$ universally approximates the subset of $\mathcal{F}$ satisfying the constraint (Theorem 4.6 in \cite{min2024hardnet}). Enforcing the constraint by construction therefore does not, in the limit, reduce the representational capacity of the model.
-\end{itemize}
-
-\subsubsection{Rationale for the choice of HardNet}
-
-Relative to the alternatives surveyed in \cite{min2024hardnet} --- soft constraints (no guarantee), iterative correction procedures such as DC3 (no guarantee within a fixed number of iterations, higher computational cost, sensitivity to the hyperparameters of the correction procedure) and parameterisations of the output set alone, which are input-independent --- HardNet-Aff is presented as the first method with a closed-form (hence inexpensive) forward pass capable of enforcing multiple \emph{input-dependent} affine constraints with a guarantee of exact satisfaction and without a proven loss of expressivity.
-
-This combination of properties --- low computational cost, exact guarantee, architecture independence, and a proven preservation of model capacity --- is the reason this thesis adopts HardNet-Aff as the underlying mechanism for enforcing hierarchical consistency, rather than a soft penalty in the loss or an iterative correction procedure.
-
-\subsection{Notation}
-\label{ssec:formulation}
-
-The notation of \S\ref{sec:methodology_problem} is used throughout: $z_l$ denotes
-the level-$l$ logits of a classifier parameterised by $\theta$, levels are ordered
-$1\prec 2\prec\dots\prec L$ from the most general to the most specific, and
-$M_{l,l+1}\in\{0,1\}^{C_l\times C_{l+1}}$ is the incidence matrix of the
-parent--child relation between consecutive levels, with exactly one non-zero entry
-per column. Only the two structural assumptions of
-\S\ref{sec:methodology_problem} --- unique parent, and no parent without children
---- are required by the derivation that follows.
-
-\subsection{From the HardNet-Aff projection to the hierarchical cascade}
-\label{ssec:hardnet_to_hcc}
-
-HCC instantiates HardNet-Aff separately for each level transition $l\to l+1$, setting $A(x)\equiv M_{l,l+1}$ --- a \emph{fixed} matrix, not input-dependent, since it encodes the structure of the taxonomy rather than the input --- and imposing an equality-only constraint, that is $b^l=b^u=\hat z_l$:
-
-\[
-M_{l,l+1}\hat z_{l+1}=\hat z_l.
-\]
-
-An equality constraint is the degenerate case of the box constraint $b^l\le A z\le b^u$ obtained by setting $b^l=b^u$ (Remark 4.1 in \cite{min2024hardnet}). The following paragraph makes explicit the form taken by the general HardNet-Aff projection in this case.
-
-It should be stressed that the constraint is imposed in \emph{logit space}. In general it does not imply the equality
-\[
-\operatorname{softmax}(\hat z_l)
-=
-M_{l,l+1}\operatorname{softmax}(\hat z_{l+1}).
-\]
-HCC must therefore not be read as a normalisation of probability mass between parent and children, but as a structural affine constraint on the representations fed to the objective function.
-
-\subsubsection{Reduction to the equality-only case}
-
-\begin{proposition}
-For $b^l=b^u=b$, the HardNet-Aff projection reduces to
-\[
-\mathcal{P}(f_\theta)(x)=f_\theta(x)-A(x)^{+}\big(A(x)f_\theta(x)-b(x)\big).
-\]
-\end{proposition}
-\begin{proof}
-Let $v:=b-Af_\theta(x)$. For every scalar $v$ the identity $\operatorname{ReLU}(v)-\operatorname{ReLU}(-v)=v$ holds, as verified by cases: if $v\ge 0$ then $\operatorname{ReLU}(v)-\operatorname{ReLU}(-v)=v-0=v$; if $v<0$ then $=0-(-v)=v$. The identity extends componentwise to the vector case. Substituting into the general HardNet-Aff expression with $b^l=b^u=b$ yields $\operatorname{ReLU}(b-Af_\theta)-\operatorname{ReLU}(Af_\theta-b)=b-Af_\theta$, from which the claim follows.
-\end{proof}
-
-Applying this result with $A=M_{l,l+1}$, $f_\theta(x)=z_{l+1}$ and $b=\hat z_l$ recovers exactly the Euclidean projection onto the affine subspace $\{q:M_{l,l+1}q=\hat z_l\}$:
-
-\[
-\hat z_{l+1}
-=
-z_{l+1}
--
-M_{l,l+1}^{\top}
-\left(
-M_{l,l+1}M_{l,l+1}^{\top}
-\right)^{-1}
-\left(
-M_{l,l+1}z_{l+1}-\hat z_l
-\right).
-\]
-
-By Proposition 4.4 in \cite{min2024hardnet}, specialised to $b^l=b^u$, this projection satisfies the constraint \emph{exactly} for any $z_{l+1}$, irrespective of whether the constraint was initially violated.
-
-\subsubsection{A structural property specific to taxonomies}
-
-Unlike the general case treated in \cite{min2024hardnet}, in which $A(x)$ may vary with the input and the invertibility of $A(x)A(x)^{\top}$ must be verified pointwise for every $x$, in HCC the matrix $M_{l,l+1}$ is fixed and its "single parent per child" structure admits a closed-form characterisation of $M_{l,l+1}M_{l,l+1}^{\top}$.
-
-\begin{lemma}
-\label{lemma:diag}
-If every column of $M_{l,l+1}$ contains exactly one non-zero entry, then $M_{l,l+1}M_{l,l+1}^{\top}$ is diagonal, with $i$-th diagonal entry equal to the number of child classes of class $i$ at level $l$.
-\end{lemma}
-\begin{proof}
-Write $M:=M_{l,l+1}$. For $i=i'$ we have $(MM^\top)_{i,i}=\sum_j M[i,j]^2=\sum_j M[i,j]$, since $M$ is binary, which equals the number $n_i$ of children of class $i$. For $i\ne i'$ we have $(MM^\top)_{i,i'}=\sum_j M[i,j]M[i',j]$; by hypothesis, for each column $j$ at most one of $M[i,j]$ and $M[i',j]$ is non-zero, so every summand vanishes and the entry is zero.
-\end{proof}
-
-It follows that $M_{l,l+1}M_{l,l+1}^{\top}=\operatorname{diag}(n_1,\dots,n_{C_l})$, which is invertible if and only if every class at level $l$ has at least one child at level $l+1$ --- a structural condition of the taxonomy, verifiable once when the hierarchy graph is built, rather than for every $x$ as required in the general HardNet-Aff setting. Moreover, since $M_{l,l+1}M_{l,l+1}^\top$ is diagonal, the numerically regularised term $M_{l,l+1}M_{l,l+1}^{\top}+\varepsilon I=\operatorname{diag}(n_1+\varepsilon,\dots,n_{C_l}+\varepsilon)$ remains diagonal, so the linear system solved at each forward pass is a diagonal one: it is exact, costs $O(C_l)$ per sample, and could in principle be inverted once before training, since the matrix depends on the taxonomy and not on the input. This is a computational advantage specific to the taxonomic case relative to the general variable-$A(x)$ setting in \cite{min2024hardnet}.
-
-Note further that, for equality-only constraints, feasibility (Assumption 4.3-i in \cite{min2024hardnet}) is implied by full row rank (Assumption 4.3-ii): a surjective linear map admits a solution for any right-hand side. The only condition to be verified on the taxonomy is therefore the absence of parent classes without children.
-
-\subsubsection{Recursive cascade}
-
-Setting $\hat z_1=z_1$ and applying the projection recursively, with the stop-gradient operator $\operatorname{sg}(\cdot)$ on the right-hand side (discussed in \S\ref{ssec:hcc_extensions}), yields
-
-\begin{align}
-\hat z_1 &= z_1,\\
-\hat z_2 &= P_{1,2}\big(z_2;\operatorname{sg}(\hat z_1)\big),\\
-&\;\vdots\\
-\hat z_L &= P_{L-1,L}\big(z_L;\operatorname{sg}(\hat z_{L-1})\big),
-\end{align}
-
-where each $P_{l,l+1}$ is, by construction, an instance of equality-only HardNet-Aff applied to the level pair $(l,l+1)$. The coarsest level is left unchanged and acts as the reference; each subsequent level is projected onto the affine set determined by the level above it, producing a coarse-to-fine cascade of hierarchical projections.
-
-\subsection{Relation to lexicographic approaches}
-\label{ssec:lexicographic}
-
-Since this thesis is concerned with lexicographic formulations of hierarchical classification, the position of HCC within that framework requires explicit justification: HCC is not a lexicographic optimisation method, yet it realises --- in output space and in closed form --- the same priority structure that lexicographic formulations realise in objective space. This subsection makes the correspondence precise, together with its limits.
-
-\subsubsection{Lexicographic priority as level-set restriction}
-
-Given objectives ordered by priority $f_1\prec f_2\prec\dots\prec f_L$, lexicographic optimisation solves the sequence of problems
-
-\[
-\min_{q} f_k(q)
-\qquad\text{subject to}\qquad
-f_j(q)=f_j^{\star},\quad j<k,
-\]
-
-where $f_j^\star$ denotes the optimal value attained at stage $j$. The defining feature is not the ordering as such, but the fact that a lower-priority objective may act \emph{only within the level set already fixed by the higher-priority ones}. Equivalently: no finite weight can purchase a trade-off of a higher priority against a lower one, which is precisely what distinguishes lexicographic formulations from the weighted-sum scalarisations used by multi-level architectures such as B-CNN \cite{zhu2017bcnn}. This is the structure exploited by the lexicographic hybrid deep neural network of \cite{fiaschi2024informed}, which combines lexicographic multi-objective optimisation with non-standard analysis \cite{benci2022nonstandard,benci2019measure} to obtain a hierarchical classifier equipped with projection operators before each output layer.
-
-\subsubsection{The structural correspondence}
-
-The HCC projection derived in \S\ref{ssec:hardnet_to_hcc},
-
-\[
-\hat z_{l+1}
-=
-\arg\min_{q\in\mathbb{R}^{C_{l+1}}}
-\tfrac{1}{2}\lVert q-z_{l+1}\rVert_2^2
-\quad\text{subject to}\quad
-M_{l,l+1}q=\hat z_l,
-\]
-
-has the same algebraic form. The coarse level contributes an equality constraint --- that is, a level set --- and the fine level is resolved, in the minimum-perturbation sense, strictly inside it. Three consequences follow, and they are the substantive sense in which HCC belongs in a thesis on lexicographic hierarchical classification:
-
-\begin{itemize}
-    \item \textbf{One-directional dominance.} The coarse level determines the feasible set for the fine level; the fine level cannot alter the coarse one through the projection branch. The stop-gradient operator extends this asymmetry from the forward pass to the gradient, so that the direction of influence is coarse-to-fine in both.
-    \item \textbf{Non-negotiability.} Because the constraint is an equality enforced exactly (Proposition 4.4 in \cite{min2024hardnet}), coarse-level consistency is not traded against fine-level accuracy at any finite value of the level weights $w_l$. In this respect HCC behaves as a lexicographic priority rather than as a scalarised multi-objective compromise, even though the losses themselves are combined additively.
-    \item \textbf{Closed form.} The restriction to the higher-priority level set, which in a lexicographic optimisation procedure is obtained by solving a constrained subproblem, is here available in closed form by \cref{lemma:diag}, at the cost of a diagonal rescaling.
-\end{itemize}
-
-\subsubsection{Limits of the correspondence}
-
-The analogy must not be overstated. Two differences are substantive and should be borne in mind when interpreting the experimental results.
-
-First, lexicographic optimisation prioritises \emph{objectives} and requires the higher-priority problem to be solved to optimality before the next is considered. HCC constrains \emph{outputs}, and its anchor $\hat z_1=z_1$ is the network's current coarse prediction, not the coarse-optimal one; all levels continue to train jointly. HCC therefore exhibits lexicographic \emph{structure} without lexicographic \emph{sequential optimality}.
-
-Second, the protection afforded by the stop-gradient is partial. It removes the influence of the fine-level loss on the coarse logits along the projection branch, but level-wise losses can still interact through the shared backbone, so parameter-space priority is not enforced.
-
-\subsubsection{Methodological role in this thesis}
-
-Given both the correspondence and its limits, HCC serves three distinct purposes within the present work.
-
-\begin{enumerate}
-    \item \textbf{It isolates the contribution of hierarchical priority from that of a particular lexicographic method.} The approach in \cite{fiaschi2024informed} couples lexicographic priority with a specific architecture and with machinery drawn from non-standard analysis. HCC delivers a comparable coarse-to-fine priority structure while remaining architecture-agnostic, allowing the two to be compared and the sources of any observed gain to be attributed.
-    \item \textbf{It occupies the hard-constraint end of an axis whose soft end is lexicographic optimisation.} Lexicographic formulations realise priority at optimisation time, with guarantees that hold to first order and per step; HardNet realises it by construction, with exact satisfaction and a proven preservation of expressivity. Comparing the two therefore addresses whether hierarchical priority is better imposed on the optimisation trajectory or on the output contract.
-    \item \textbf{It fixes the locus of the intervention while leaving the objective untouched.} HCC adds no term to the loss and no hyperparameter that trades one level against another: it changes only the arguments on which the existing level losses are evaluated. Any difference with respect to the unconstrained baseline is therefore attributable to the constraint itself and not to a reweighting of the objective, which is what makes it comparable, arm for arm, against the two gradient-space mechanisms of \S\ref{sec:methodology_lex} and \S\ref{sec:methodology_lhproj}.
-\end{enumerate}
-
-\subsection{Extensions of HCC with respect to HardNet}
-\label{ssec:hcc_extensions}
-
-The framework in \cite{min2024hardnet} is designed to impose a constraint --- or a set of constraints --- at a single output point of the network, typically specified by a known function of the problem (for instance a control barrier function, or the constraints of an optimisation problem). HCC adapts it to a different setting: a chain of $L-1$ projections applied in sequence, in which the right-hand side of each projection is not an externally known function but the \emph{projected output of the previous step of the same network}. This difference motivates a design choice that is not part of the original HardNet-Aff formulation, and which should not be attributed to its authors.
-
-\paragraph{Stop-gradient.} In the original formulation the right-hand side $b(x)$ does not depend on $\theta$, so the question of gradient coupling between $b$ and the projection does not arise. In HCC, by contrast, $\hat z_l$ is itself the result of a projection that is differentiable with respect to $\theta$. Without further provision, the level-$(l+1)$ loss would backpropagate through the projection branch and directly modify $\hat z_l$, mixing the objectives of the two levels along that path. The operator $\operatorname{sg}(\cdot)$ --- which returns its argument unchanged in the forward pass and annihilates its gradient in the backward pass --- instead treats $\hat z_l$ as an anchor, realising the coarse-to-fine dependence discussed in \S\ref{ssec:lexicographic}. As noted there, this does not amount to full lexicographic protection of the shared parameters.
-
-The stabilised form of the projection used throughout is therefore
-
-\[
-\hat z_{l+1}
-=
-z_{l+1}
--
-M_{l,l+1}^{\top}
-\left(
-M_{l,l+1}M_{l,l+1}^{\top}
-+
-\varepsilon I
-\right)^{-1}
-\left(
-M_{l,l+1}z_{l+1}-\operatorname{sg}(\hat z_l)
-\right).
-\]
-
-For $\varepsilon=0$ and full row rank the affine constraints are satisfied exactly; for $\varepsilon>0$ they are satisfied up to the numerical precision determined by the stabilisation term.
-
-\paragraph{Activation.} The projection is in force from the first optimisation
-step: every run reported in this thesis uses $\hat z_l$ in place of $z_l$ for the
-whole of training and at evaluation, with no warm start and no gradual
-introduction of the constraint. The implementation exposes a blending
-coefficient $\alpha\in[0,1]$ that would interpolate between the raw and the
-projected logits, and it is logged at every epoch as
-\texttt{proj\_constraint\_alpha}; in every configuration used here it is
-identically $1$, so the effective logits are $\hat z_l$ throughout and the
-coefficient plays no experimental role. It is mentioned only because the
-diagnostic is the quantity from which the experimental chapters verify that the
-constraint was in fact applied, rather than inferring it from the name of a run.
-
-\paragraph{What the constraint costs the gradient.} Enforcing the constraint from
-the first step is not free, and the price is best stated exactly, since
-\cite{min2024hardnet} raises it as a hazard --- its Appendix~C reports that an
-enforcement layer can produce a vanishing gradient when the loss gradient with
-respect to the projected output lies in the span of the active constraint vectors,
-a condition that becomes more likely as the number of constraints approaches the
-output dimension. Under equality constraints every constraint is active at every
-step, so the condition is not occasional but structural, and in the taxonomic case
-it takes a closed form.
-
-\begin{proposition}
-\label{prop:hcc_backward}
-Let $\varepsilon=0$ and write $Q:=M_{l,l+1}^{\top}(M_{l,l+1}M_{l,l+1}^{\top})^{-1}
-M_{l,l+1}$. Then $\partial\hat z_{l+1}/\partial z_{l+1}=I-Q$, where $Q$ is the
-orthogonal projector onto $\operatorname{row}(M_{l,l+1})$, of rank $C_l$.
-Consequently the gradient reaching the raw level-$(l+1)$ logits is confined to a
-subspace of dimension $C_{l+1}-C_l$, and $Q$ replaces each coordinate by the mean
-of its sibling group, so $I-Q$ centres each sibling group to zero mean.
-\end{proposition}
-\begin{proof}
-The anchor is detached, so differentiating the stabilised form at $\varepsilon=0$
-gives $I-M^{\top}(MM^{\top})^{-1}M=I-Q$. $Q$ is symmetric and idempotent with range
-$\operatorname{row}(M)$, hence the orthogonal projector onto it, and its rank is the
-rank $C_l$ of $M$. By \cref{lemma:diag}, $(MM^{\top})^{-1}=\operatorname{diag}(1/n_i)$,
-and row $i$ of $M$ is the indicator of the children of parent $i$; therefore
-$(Qv)_j$ is the average of $v$ over the siblings of $j$.
-\end{proof}
-
-The fine head therefore never receives the component of its own learning signal
-that would raise or lower a whole sibling group together: that degree of freedom
-has been delegated to the level above, which is precisely the priority the
-mechanism exists to impose. It is the backward-pass counterpart of
-\cref{cor:hcc_sibling_shift}, which shows the forward correction to be a common
-additive shift per sibling group. The two statements are the same fact seen from
-either side of the projection.
-
-Two consequences follow for the interpretation of the results. First, the fraction
-of directions removed from level $l+1$ is $C_l/C_{l+1}$, the reciprocal of the
-average fan-out at that transition, so the constraint bites hardest wherever the
-taxonomy branches least --- and which transition that is depends on the dataset,
-not on the depth. It is the coarse-to-middle transition on CIFAR-100 ($8/20$
-against $20/100$) and on CUB-200 ($13/38$ against $38/200$), but the
-middle-to-fine one on FGVC-Aircraft ($70/100$ against $30/70$), whose taxonomy is
-nearly flat at its last level. Any level-wise reading of an HCC result should be
-made against the fan-out of the corresponding transition rather than against its
-depth. Second, because the constraint is on from the first step, this is a
-permanent feature of a run rather than a transient of early training, and no
-schedule attenuates it. Whether it is damaging is an empirical question that the
-algebra does not settle: the removed component is exactly the one the constraint
-declares the finer level has no authority over.
-
-\paragraph{Multi-level cascade.} Finally, whereas HardNet-Aff is applied and evaluated as a single terminal layer in \cite{min2024hardnet}, HCC applies it recursively across $L-1$ successive transitions. The guarantees of exact satisfaction (Proposition 4.4) and preservation of universal approximation (Theorem 4.6) established in \cite{min2024hardnet} concern a single application of the projection; their formal extension by induction over levels to the full cascade with $L>2$ is not proved in this work and remains an open theoretical question. Experimentally this means that exact satisfaction between two consecutive levels is guaranteed by each projection taken individually (\cref{lemma:diag} and the preceding proposition), whereas the effect of composing the projections with the stop-gradient on the overall representational capacity must be assessed empirically.
-
-\subsection{Objective function}
-
-HCC does not introduce a new loss: it modifies the logits on which the objectives already defined by the classifier are evaluated. Writing $\ell_l$ for the loss associated with level $l$, the general objective is
-
-\[
-\mathcal{L}_{\mathrm{HCC}}
-=
-\sum_{l=1}^{L}
-w_l\,\ell_l\big(\hat z_l,y_l\big)
-+
-\lambda\,\mathcal{R}\big(\hat z_1,\dots,\hat z_L\big),
-\]
-
-where $w_l$ are the level weights of \S\ref{ssec:problem_objective} and $\mathcal{R}$ an optional model-specific regularisation term. Because the projection is differentiable with respect to the logits, the model does not merely have its outputs corrected after the fact: it is trained on the corrected representations from the first step, and adapts its raw logits to the correction that will be applied to them.
-
-\subsection{Architecture independence}
-
-Like the HardNet enforcement layer, which is presented as applicable to any neural network provided its output contract is specified \cite{min2024hardnet}, HCC is defined on the output contract of the classifier rather than on its internal structure. Only the following are required:
-
-\begin{enumerate}
-    \item a vector of differentiable logits for each level of the hierarchy;
-    \item a complete taxonomy, with a unique parent for every non-root class and no parent class without children (the condition required by \cref{lemma:diag});
-    \item a consistent ordering of the levels from coarsest to finest.
-\end{enumerate}
-
-The same cascade can therefore be attached to models with transformer, convolutional, capsule-based or taxonomic-frame backbones, provided their outputs can be reduced to this common interface. The formulation supports an arbitrary number of levels by recursive repetition of the same operation; a given instantiation may restrict itself to a three-level hierarchy without that restriction belonging to the general definition of the method.
-
-This independence concerns the applicability of the mechanism and does not imply that HCC produces the same effect on all architectures. The effectiveness of the constraint, and the interaction between the cascade and the stop-gradient, must be verified experimentally for each combination of model, dataset and decoding strategy.
-
+dominate, and the thesis tests it rather than assuming it:
+\S\ref{ssec:lex_modes} applies the same operator with the priority reversed (fine
+before coarse), and any effect reproduced under it is not an effect of the
+hierarchy (\S\ref{ssec:design_controls}). Second, the ordering is not free:
+protecting the coarse level can only restrict the fine level, so a cost in
+fine-level accuracy is the expected price rather than a failure of the method,
+and the results are read as a position on an accuracy--consistency trade-off
+rather than as a uniform improvement.
 
 \section{Gradient-space lexicographic optimisation}
 \label{sec:methodology_lex}
 
-Section~\ref{sec:methodology_hcc} imposed hierarchical priority on the \emph{outputs} of the
-classifier: the coarse logits define an affine set inside which the fine logits are resolved.
-That construction has lexicographic structure, but, as noted in \S\ref{ssec:lexicographic}, it
-leaves the shared parameters unprotected --- the level-wise losses still interact freely through
-the backbone. This section describes the complementary mechanism developed in this work, which
-this thesis refers to as \emph{lexicographic mode}: priority is imposed directly on the
-\emph{update direction} in parameter space, by projecting the gradients of lower-priority
-objectives so that, to first order, they cannot act against the higher-priority ones.
+The first mechanism imposes priority directly on the \emph{update direction} in
+parameter space. The gradients of the level objectives are computed separately
+and the lower-priority ones are projected so that they cannot
+act against the higher-priority ones. This thesis refers to it as
+\emph{lexicographic mode}. It is the most direct of the three constructions, which
+reads the priority ordering of \S\ref{ssec:problem_priority} as a statement about
+the step the optimiser takes, and enforces it there.
 
 \subsection{Setting and requirements}
 \label{ssec:lex_setting}
 
-Lexicographic mode assumes a classifier exposing exactly three differentiable scalar level
-objectives
+Lexicographic mode assumes a classifier with exactly three differentiable scalar
+level objectives
 \[
 \ell_1(\theta),\quad \ell_2(\theta),\quad \ell_3(\theta),
 \]
-associated with the coarse, middle and fine levels and ordered by decreasing priority,
-$\ell_1 \prec \ell_2 \prec \ell_3$. Writing
+associated with the coarse, middle and fine levels and ordered by decreasing
+priority, $\ell_1 \prec \ell_2 \prec \ell_3$. Their parameter gradients are
 \[
 g_l := \nabla_\theta \ell_l(\theta) \in \mathbb{R}^{P}
 \]
-for the gradient of the $l$-th objective with respect to the vector $\theta$ of trainable
-parameters, each optimisation step computes the three gradients separately by three backward
-passes through the shared graph, rather than a single backward pass on a scalarised total loss.
+with respect to the trainable parameter vector $\theta$.
 
-Two consequences of this design must be stated explicitly, because they affect the
-interpretation of every experiment run in this mode.
+Two consequences of this design must be stated explicitly, because they affect
+the interpretation of every experiment using this mechanism.
 
 \begin{itemize}
-    \item \textbf{The scalarised loss is not used for the update.} In lexicographic mode the
-    quantity actually applied to the parameters is a combination of the three per-level
-    gradients; the weighted total loss is still computed and reported, but never backpropagated.
-    Any term of the objective that is not decomposable into the three level losses therefore
-    contributes nothing to the update. This is why the mode requires H-CAST to be run without
-    its global KL term: that term is not part of any level objective and would be silently
-    discarded. The analogous requirements for the baselines are that HRN uses its decomposed
-    level-marginal objective, with the leaf cross-entropy folded into the fine level; that
-    Hier-COS replaces its published KL objective, which yields a single coupled scalar, by one
-    of the two objectives that expose one differentiable term per level; and that HT-CapsNet
-    uses its three capsule margin losses. LH-DNN is excluded, since it does not expose three
-    independent differentiable level objectives in the required form.
-    \item \textbf{The level weights survive in some families and not in others.} The projection
-    acts on the three tensors a family publishes as its level objectives, and those tensors do
-    not carry the level weights $w_l$ of \S\ref{ssec:problem_objective} uniformly. In H-CAST and
-    HT-CapsNet the published level losses are the raw, unweighted ones --- the weights are
-    applied only when the scalarised total is assembled, which lexicographic mode never
-    backpropagates --- so activating the mode silently replaces the chosen weighting by a
-    uniform one. In Hier-COS the level weight is already folded into the cross-entropy part of
-    each level loss (though not into the node-norm regulariser), so it survives the projection
-    and continues to act. HRN's level-marginal objective exposes no configurable level weights
-    at all.
+    \item \textbf{Need of level losses.} Lexicographic
+    mode combines the three per-level gradients directly. Any objective term that
+    cannot be assigned to a level therefore lies outside this construction. This
+    requires several model-specific adaptations. H-CAST excludes its global KL
+    term; HRN uses the decomposed level-marginal objective and assigns leaf
+    cross-entropy to the fine level; Hier-COS replaces its coupled node-wide KL
+    objective with separate differentiable level objectives; and HT-CapsNet uses
+    its three level-wise capsule margin losses. LH-DNN is excluded because it does
+    not provide three independent differentiable objectives in the required form.
+    \item \textbf{Level coefficients affect only families that define them inside
+    the level objectives.} As set out in \S\ref{ssec:problem_lr}, a coefficient
+    acts as a per-level learning rate only when it is part of the corresponding
+    level objective. This is the case for the cross-entropy component of Hier-COS,
+    but not for its node-norm regulariser. H-CAST and HT-CapsNet introduce their
+    coefficients only when forming the scalarised total, so their levels
+    participate uniformly under lexicographic optimisation. HRN defines no
+    analogous per-level coefficient.
 
     This is a confound between the lexicographic and non-lexicographic arms wherever the
-    baseline uses non-uniform weights, and it is treated as such in the threats to validity: for
-    H-CAST and HT-CapsNet the comparison isolates ``priority plus uniform weighting'' against
-    ``weighted scalarisation'', not priority alone. It also means that the weighting is not a
-    variable one may assume away when reading a lexicographic result, and every run therefore
-    reports the weighting it was launched with.
+    baseline uses a non-uniform setting, and it is treated as such in the threats to validity:
+    for H-CAST and HT-CapsNet the comparison isolates ``priority plus uniform
+    participation'' against ``weighted scalarisation'', not priority alone.
 
-    One consequence of the projection's algebra limits how far the weights can matter. The
-    coefficient of \S\ref{ssec:lex_projection} normalises by $\lVert r\rVert_B^2$, so
-    $\Pi_B(g;\mu r)=\Pi_B(g;r)$ for every $\mu>0$: rescaling a \emph{reference} gradient leaves
-    the projection unchanged. Rescaling a \emph{target} gradient rescales its projection by the
-    same factor. The weights therefore act on the magnitudes summed into the final direction,
-    and --- through the resultant $g_1+m$ of \S\ref{ssec:lex_modes}, which is not invariant under
-    separate rescaling of its two summands --- on the reference direction used for the fine
-    level, but never on the pairwise projections taken one at a time.
+    As explained in \S\ref{ssec:problem_lr}, the gradient scales do not change
+    the subspace defined by a single positive rescaling of a reference gradient.
+    They change the magnitudes combined in the final update and, in the
+    three-level composition, the intermediate resultant used as the final
+    reference. The scaling ablation therefore changes the strength of the
+    admissible level contributions, not their priority order.
 \end{itemize}
 
-\subsection{Parameter blocks induced by gradient support}
+\subsection{Parameter blocks and the projection operator}
 \label{ssec:lex_blocks}
+\label{ssec:lex_projection}
 
 Projecting one gradient onto another is meaningful only on the coordinates where both objectives
 actually act. In a hierarchical network the three losses do not reach the same parameters: a
@@ -680,11 +470,9 @@ shared by the two finer levels; such coordinates carry a genuine conflict that t
 does not address, and their absence in the architectures used here is a property of those
 architectures rather than of the construction.
 
-\subsection{The projection operator and the two removal rules}
-\label{ssec:lex_projection}
-
-Given a target gradient $g$, a reference gradient $r$ and a block $B$, the basic operation is the
-Euclidean projection of $g$ onto the orthogonal complement of $r$, restricted to $B$:
+\paragraph{The operator.} Given a target gradient $g$, a reference gradient $r$ and a block $B$,
+the basic operation is the Euclidean projection of $g$ onto the orthogonal complement of $r$,
+restricted to $B$:
 
 \[
 \Pi_B(g;r)_i =
@@ -695,63 +483,34 @@ g_i, & i \notin B,
 \qquad
 \gamma \;=\; \frac{\langle g,r\rangle_B}{\langle r,r\rangle_B} .
 \]
-
-Whether the coefficient $\gamma$ is actually applied is governed by a \emph{removal rule}, and the
-choice between the two rules defined below is a genuine methodological decision rather than an
-implementation detail: they encode two different readings of what it means for one objective to
-be subordinate to another.
-
-\paragraph{\texttt{orthogonalize\_all} (default): subordination.} The component along $r$ is
-removed unconditionally, irrespective of the sign of $\langle g,r\rangle_B$, so that
+The coefficient $\gamma$ is applied unconditionally, irrespective of the sign of
+$\langle g,r\rangle_B$, so that
 \[
 \big\langle \Pi_B(g;r),\, r\big\rangle_B = 0 .
 \]
 The lower-priority objective is confined to the orthogonal complement of the higher-priority
-direction, which is the parameter-space analogue of the level-set restriction of
-\S\ref{ssec:lexicographic}: the subordinate objective may act only where the dominant one is, to
-first order, indifferent. Removing the component also when the two gradients agree is what
+direction, which is the parameter-space form of the level-set restriction of
+\S\ref{ssec:problem_priority}: the subordinate objective may act only where the dominant one is,
+to first order, indifferent. Removing the component also when the two gradients agree is what
 distinguishes subordination from mere de-conflicting: an objective allowed to keep its positive
 component along a higher-priority direction is still, in effect, being summed with it, and the
-size of its contribution to the dominant objective's progress is then again a matter of relative
-magnitude --- exactly the trade-off a lexicographic ordering is meant to forbid.
+size of its contribution is then again a matter of relative magnitude --- exactly the trade-off a
+lexicographic ordering is meant to forbid.
 
-\paragraph{\texttt{conflict\_only}: de-conflicting.} The coefficient is applied only when the two
-gradients disagree, $\langle g,r\rangle_B<-\varepsilon$, and the target is passed through
-unchanged otherwise. Writing $\tilde g$ for the result,
-\[
-\big\langle \tilde g, r\big\rangle_B
-=
-\begin{cases}
-0, & \langle g,r\rangle_B < -\varepsilon,\\[0.6ex]
-\langle g,r\rangle_B \;(\ge -\varepsilon), & \text{otherwise},
-\end{cases}
-\]
-so the guarantee becomes one-sided: the lower-priority objective can no longer \emph{oppose} the
-higher-priority direction, but it is free to \emph{reinforce} it. This is the gradient-surgery
-rule familiar from multi-task learning, where the goal is to remove destructive interference
-rather than to install an ordering. It is included here for exactly that contrast. Under
-\texttt{orthogonalize\_all} the higher level's first-order progress is a function of its own
-gradient alone; under \texttt{conflict\_only} it can still be accelerated by the levels below it,
-so the two rules differ not in how much interference they remove but in whether the ordering they
-impose is an ordering at all. The comparison between them separates ``priority'' from
-``compatibility'' as explanations of any observed effect.
+\paragraph{Degeneracy guard.} One guard completes the definition. If
+$\lVert r\rVert_B^2 \le \varepsilon$ the coefficient is ill-conditioned and the
+projection is skipped, $\Pi_B(g;r):=g$, with $\varepsilon=10^{-12}$ throughout.
 
-\paragraph{Degeneracy guard.} One guard completes the definition, under both rules. If
-$\lVert r\rVert_B^2 \le \varepsilon$ the coefficient is ill-conditioned and the projection is
-skipped, $\Pi_B(g;r):=g$, with $\varepsilon=10^{-12}$ throughout. How often the guard fires, and
-how often \texttt{conflict\_only} declined to act because the gradients agreed, is recorded at
-every step, so that a run can be audited for how often the nominal operator was actually
-applied.
-
-\subsection{Composition modes}
+\subsection{Priority order}
 \label{ssec:lex_modes}
 
-With three objectives the pairwise operator has to be composed, and the composition fixes what
-each level is made subordinate to. Two schemes are defined; in both, the final update direction
-passed to the optimiser is the sum $d := \tilde g_1 + \tilde g_2 + \tilde g_3$ of the (possibly
-projected) level gradients.
+With three objectives the pairwise operator has to be composed, and the
+composition fixes what each level is made subordinate to. Two schemes are
+defined; in both, the final update direction is the sum
+$d := \tilde g_1 + \tilde g_2 + \tilde g_3$ of the (possibly projected) level
+gradients.
 
-\paragraph{\texttt{coarse\_first} (default).} The coarse gradient is left unchanged; the middle
+\paragraph{Coarse-to-fine priority.} The coarse gradient is left unchanged; the middle
 gradient is orthogonalised against it, separately on $T_2$ and on $T_1$; the fine gradient is
 orthogonalised, on $T_1$, against the \emph{resultant} of the two higher-priority directions:
 \[
@@ -765,40 +524,39 @@ substantive choice: what the fine level is forbidden to oppose is the update the
 it have jointly agreed on, not each of their directions in isolation.
 \Cref{prop:lex_firstorder} states exactly what that buys and what it does not.
 
-\paragraph{\texttt{fine\_first}.} The priority order is inverted, with the roles of $g_1$ and
+\paragraph{Fine-to-coarse control.} The priority order is inverted, with the roles of $g_1$ and
 $g_3$ exchanged and the same composition applied: the fine gradient is left unchanged, the middle
 gradient is orthogonalised against it on $T_1$ (and left unchanged on $T_2$, where the fine level
 does not reach), and the coarse gradient is orthogonalised against the raw middle gradient on
 $T_2$ and against the resultant $g_3+\tilde g_2$ on $T_1$. This mode is not a hierarchical
 hypothesis but a \emph{control}: it applies exactly the same amount of gradient surgery, with the
-same operator and the same removal rule, in the opposite order, and so separates the effect of
-hierarchical priority from the effect of orthogonalisation as such. Any gain observed under
-\texttt{coarse\_first} that is reproduced under \texttt{fine\_first} cannot be attributed to the
-hierarchy.
+same operator in the opposite order, and so separates the effect of hierarchical priority from
+the effect of orthogonalisation as such. Any gain reproduced under the reversed
+priority cannot be attributed to the hierarchy.
 
 The two modes apply the same composition to the reversed priority order, block by block, over
 whichever levels reach the block in question, and each performs the same number of projections:
-two on $T_1$ and one on $T_2$. Every statement proved below for \texttt{coarse\_first} therefore
-holds for \texttt{fine\_first} after reversing the order --- on $T_1$ with the roles of $g_1$ and
+two on $T_1$ and one on $T_2$. Every statement proved below for coarse-to-fine
+priority therefore holds for the reversed order --- on $T_1$ with the roles of $g_1$ and
 $g_3$ exchanged, and on $T_2$, where the fine level is absent by definition, with the middle level
 dominating the coarse one. The blocks themselves are not symmetric, since $T_2$ and $T_3$ are
 defined by supports that always contain the coarse level; this asymmetry is a property of where
 the level objectives reach, identical in both modes, and not something the reversal introduces.
-Only \texttt{coarse\_first} is discussed explicitly from here on.
+Only coarse-to-fine priority is discussed explicitly from here on.
 
-\subsection{First-order priority guarantee}
+\subsection{Guarantee and scope}
 \label{ssec:lex_guarantee}
 
 The sense in which this construction realises lexicographic priority is a first-order, per-step
 one, and it is not uniform across the parameter blocks. It is exact on $T_2$ and $T_3$, where at
-most two levels compete, and weaker on $T_1$, the shared trunk, where all three do. Stating the
-two cases separately is not pedantry: $T_1$ is by far the largest block, so it is the weaker
-statement that governs how the results should be read.
+most two levels compete, and weaker on $T_1$, the shared trunk, where all three do. The two cases
+are stated separately because $T_1$ is by far the largest block, so it is the weaker statement
+that governs how the results should be read.
 
 \begin{proposition}
 \label{prop:lex_firstorder}
-Assume \texttt{coarse\_first} with the \texttt{orthogonalize\_all} rule and all degeneracy guards
-inactive, and let $d$ be the assigned direction.
+Assume coarse-to-fine priority with all degeneracy guards inactive, and let $d$ be the assigned
+direction.
 
 \emph{(a) On $T_2$}, where $d=g_1+\Pi_{T_2}(g_2;g_1)$ and $m_2:=\Pi_{T_2}(g_2;g_1)$,
 \[
@@ -861,19 +619,9 @@ $-\eta\langle g_l,d\rangle+O(\eta^2)$, the proposition reads as follows.
     the $g_1$--$m$ plane.
     \item \textbf{The residual is measured, not assumed away.} $\rho$ is exactly what the
     post-projection cosine between $\tilde g_3$ and $g_1$ on $T_1$ reports. It is expected to be
-    non-zero, and it is logged at every epoch (\S\ref{ssec:lex_implementation}); any claim in the
-    experimental chapters that the ordering was tight on the trunk is made against that
-    measurement rather than against the construction.
+    non-zero, and the empirical assessment of the ordering is based on this quantity
+    (\S\ref{ssec:lex_diagnostics}) rather than on the construction alone.
 \end{itemize}
-
-Under the \texttt{conflict\_only} rule every equality above becomes an inequality in the
-favourable direction, up to the guard band: $\langle d,g_1\rangle_{T_2}\ge\lVert
-g_1\rVert^2_{T_2}-\varepsilon$, and correspondingly for the resultant on $T_1$. The reason is
-that a projection which does not fire leaves an inner product that was, by the rule's own test,
-no smaller than $-\varepsilon$. The lower levels can then only help the higher ones, never hinder
-them --- a weaker and qualitatively different statement, since it removes interference without
-installing an ordering: the size of the help still depends on relative magnitudes, which is
-precisely the trade-off a lexicographic ordering is meant to exclude.
 
 Four limitations bound the scope of the guarantee and should be carried into the interpretation
 of the results.
@@ -882,96 +630,111 @@ of the results.
     \item \textbf{First-order and per-step.} The statement concerns directional derivatives at the
     current $\theta$, not the value of the objectives after the step: it guarantees a descent
     \emph{direction} for the dominant objective, not monotone decrease, and says nothing about the
-    limit of the trajectory. It is therefore not sequential lexicographic optimality: the coarse
-    objective is never solved to optimality before the others are considered. As with HCC, this is
-    lexicographic \emph{structure} without lexicographic \emph{sequential optimality}.
-    \item \textbf{The optimiser is not gradient descent.} The projected direction $d$ is handed to
-    the family's own optimiser in place of the ordinary gradient --- AdamW for H-CAST, Adam for
-    HT-CapsNet, SGD with momentum $0.9$ for Hier-COS and HRN --- and none of these applies
-    $-\eta d$. Momentum mixes the current direction with past ones, so the applied step is not
-    orthogonal to $g_1$ even where $d$ is; adaptive per-coordinate preconditioning additionally
-    fails to preserve inner products. \Cref{prop:lex_firstorder} therefore constrains the assigned
-    gradient rather than the realised step, and weight decay acts on top of both.
+    limit of the trajectory. The coarse objective is never solved to optimality before the others
+    are considered, so this is lexicographic \emph{structure} without lexicographic
+    \emph{sequential optimality} --- a qualification that will recur for the other two mechanisms.
+    \item \textbf{The optimiser need not preserve the projected geometry.}
+    Momentum mixes the current direction with previous ones, while adaptive
+    preconditioning rescales coordinates and need not preserve inner products.
+    \Cref{prop:lex_firstorder} therefore constrains the gradient supplied to the
+    optimisation rule rather than the realised parameter displacement; regularisation
+    may alter that displacement further.
     \item \textbf{Stochasticity.} All gradients are mini-batch estimates. Orthogonality is enforced
     between the estimates, not between the population gradients, and the projection coefficients
     inherit their variance.
     \item \textbf{Block restriction.} The guarantee holds inside each block. It says nothing about
-    coordinates in $R$, where the level objectives do not compete, nor about interactions mediated
-    by the forward pass rather than by the shared parameters.
+    coordinates in $R$, where the level objectives do not compete, nor about
+    interactions mediated by the model outputs rather than by shared parameters.
 \end{enumerate}
 
-\subsection{Cost and observable quantities}
-\label{ssec:lex_implementation}
+\subsection{Validation measurements and computational cost}
+\label{ssec:lex_diagnostics}
 
-\paragraph{Cost.} Each optimisation step computes three backward passes over the shared graph
-instead of one, and holds three gradients of the trainable parameters at once. The same three
-per-level gradients are what the diagnostics below are computed from, so they are obtained once
-and reused.
+\paragraph{Cost.} Each optimisation step requires one gradient for each of the
+three level objectives instead of one gradient of their scalarised sum, and must
+retain the three parameter-space vectors simultaneously. The computational and
+memory costs therefore grow approximately linearly with the number of levels.
 
 \paragraph{What is observed.} The guarantee of \S\ref{ssec:lex_guarantee} is conditional: it
-holds under the \texttt{orthogonalize\_all} rule, only where the degeneracy guard did not fire,
-and --- on the shared trunk --- only for the resultant rather than for the coarse level alone.
-Whether its hypotheses were met, and how large the residual $\rho$ was, is therefore a matter of
-measurement rather than of intention, and four families of quantity are recorded at every epoch
-for that purpose. The pre-projection cosines between level gradients, on each block, measure how
-much conflict there is to resolve. The post-projection cosines verify which orthogonalities were
-in fact achieved --- the one against the resultant is expected to vanish, the one against $g_1$
-alone is not, and the gap between them is $\rho$. The per-block gradient norms before and after
-projection quantify how much of the lower-priority signal was removed. Records of whether each
-projection was applied or skipped establish how often the nominal operator was the one actually
-used, which matters especially under \texttt{conflict\_only}, where declining to act is the
-common case. Claims about lexicographic behaviour in the experimental chapters rest on these
-measurements rather than on the setting a run was launched with.
-
-\subsection{Position relative to HCC}
-\label{ssec:lex_vs_hcc}
-
-Lexicographic mode and HCC realise the same coarse-to-fine ordering at two different loci.
-HCC constrains the logits: the restriction is exact,
-holds per sample, and holds at inference as well as during training, but it governs only what
-the heads emit and leaves the shared parameters free to be pulled in incompatible directions by
-the level losses. Lexicographic mode constrains the assembled update: the restriction is
-first-order and holds per batch, it says nothing about the scores a given parameter vector
-produces, and it has no effect at inference whatsoever.
-
-The opposition should not be pressed further than it goes, and one qualification is
-due on HCC's side. Because the projection sits inside the computational graph, its
-Jacobian filters the backward pass as well: by \cref{prop:hcc_backward}, the
-level-$(l+1)$ signal reaching the raw logits is mean-centred within each sibling
-group. HCC therefore does act in gradient space, but only as a consequence of what
-it does in output space, and only on the level heads' own logits rather than on the
-shared parameters. It is an output-space method with a gradient-space side effect,
-not a second gradient-space method; the distinction matters because the side effect
-is not something the design chose, and it cannot be varied independently of the
-constraint.
-
-Whether the two can be combined is a question about attribution rather than about mechanics, and
-it is settled in \S\ref{ssec:design_axis}. The full comparison of the three mechanisms, including
-the LH-projection of \S\ref{sec:methodology_lhproj}, is given once in
-Table~\ref{tab:framework_mechanisms}.
-
+holds only where the degeneracy guard did not fire and --- on the shared trunk --- only for the
+resultant rather than for the coarse level alone. Whether its hypotheses were met, and how large
+the residual $\rho$ was, is therefore a matter of measurement. Four families of
+quantity are used for that purpose. The pre-projection cosines between level gradients, on
+each block, measure how much conflict there is to resolve. The post-projection cosines verify
+which orthogonalities were in fact achieved --- the one against the resultant is expected to
+vanish, the one against $g_1$ alone is not, and the gap between them is $\rho$. The per-block
+gradient norms before and after projection quantify how much of the lower-priority signal was
+removed. The frequency with which the degeneracy condition is met establishes
+whether the nominal operator was active. Claims about lexicographic behaviour in
+the experimental chapters rest on these measurements rather than on the nominal
+experimental condition.
 
 \section{LH-projection}
 \label{sec:methodology_lhproj}
 
-The third mechanism considered in this thesis originates in the lexicographic
-hybrid deep neural network of \cite{fiaschi2024informed}, and is referred to here
-as the \emph{LH-projection}. Where HCC constrains the logits emitted by the heads
-(\S\ref{sec:methodology_hcc}) and lexicographic mode constrains the update
-direction assembled from three separate backward passes
-(\S\ref{sec:methodology_lex}), the LH-projection operates at the branch points of
-a shared trunk: at the point where each level head reads the shared
-representation, the component lying in the subspace already claimed by the
-higher-priority heads is removed. As \S\ref{ssec:lhproj_forward} establishes, the
-removal is realised in the backward pass alone, so what the mechanism filters is
-the learning signal and not the representation itself.
+The second mechanism originates in the lexicographic hybrid deep neural network of
+\cite{fiaschi2024informed}, which combines lexicographic multi-objective
+optimisation with non-standard analysis
+\cite{benci2022nonstandard,benci2019measure} and equips a hierarchical classifier
+with projection operators before each output layer. It is referred to here as the
+\emph{LH-projection}. Where lexicographic mode acts on the update assembled from
+separate level gradients (\S\ref{sec:methodology_lex}), the LH-projection acts at
+a single branch point: where each level head reads the shared representation, the
+component lying in the subspace already claimed by the higher-priority heads is
+removed from the derivative received by the shared trunk. As
+\S\ref{ssec:lhproj_forward} establishes, the representation value is unchanged;
+only the learning signal is filtered.
 
-This section derives the operator and its properties
-(\S\ref{ssec:lhproj_construction}--\S\ref{ssec:lhproj_forward}), states the
-instantiation used here on top of the Hier-COS taxonomy-frame architecture,
-including the structural conditions that instantiation requires
-(\S\ref{ssec:lhproj_hiercos}), and delimits the guarantee
-(\S\ref{ssec:lhproj_limits}).
+\subsection{Setting and requirements}
+\label{ssec:lhproj_hiercos}
+
+The construction assumes a shared trunk read by independent linear level heads,
+and an objective whose level terms can be received by one branch at a time.
+Hier-COS as published has neither: it emits a single node vector, maps it through
+a \emph{fixed} frame shared by the whole taxonomy, and scores levels by subspace
+norms (\S\ref{ssec:problem_scores}). Three structural changes are therefore part
+of the construction rather than free hyperparameters, and are stated here for
+that reason.
+
+\paragraph{(i) Independent level heads, hence an identity frame.} The projection
+is defined in terms of the weight matrices $W_1,\dots,W_{l-1}$ of the heads above
+level $l$. Under the dense random orthonormal frame of the published model the
+scores of every level are linear mixtures of a single shared node space, and no
+per-level matrix exists whose rows could be stacked: the object the construction
+needs is not present. The projected variant therefore replaces the frame by the
+identity --- equivalently, by a per-level block-diagonal frame, which leaves the
+level blocks independent --- and attaches one learnable linear head per level to
+the transform output. The combination of the projection with a dense frame is not
+admitted at all. The frame is thus a \emph{precondition} of the method, and the
+identity-versus-random comparison measures the cost of that precondition rather
+than a tuning choice; that cost is reported in the experimental chapter.
+
+\paragraph{(ii) Level-scoped normalisation, not merely a decomposed objective.}
+The objective must expose one differentiable term per level, and it must do so in
+a form that each level's branch can receive on its own. Two steps separate the
+published objective from that. The published objective is a KL divergence between
+one softmax taken over all $N$ taxonomy nodes and a target node distribution: it
+yields a single scalar, and no per-level signal can be extracted from it at all.
+An intermediate objective, retaining the global softmax but reading off the target
+node of each level separately, does yield three differentiable terms and is
+sufficient for the gradient-space ordering of \S\ref{sec:methodology_lex}. It is
+\emph{not} sufficient here: the three terms share one normaliser over all nodes, so
+the gradient of the level-$l$ term flows back through the branches of every other
+level, and the filtered representation that branch $l$ reads would no longer
+determine that term's learning signal. Only the level-scoped objective, in which
+the softmax is taken within each level's node block, makes each level loss a
+function of its own branch alone, and it is the one the projected variant uses,
+together with the same node-norm regulariser. As with the frame, the comparison
+against the published objective quantifies the price of a structural requirement.
+
+\paragraph{(iii) A non-trivial complement.} The projection is informative only if
+the reserved subspace does not exhaust the representation, which requires the
+width $D$ of the shared representation to exceed the total number of non-leaf
+classes, $D>\sum_{l<L}C_l$. \Cref{prop:lhproj_rank} makes this precise once the
+operator has been defined. The condition is verified before training rather than
+left to be discovered from the results, and it requires the width of the
+representation to be decoupled from the taxonomy size $N$ that the unprojected
+model uses.
 
 \subsection{The branch projection}
 \label{ssec:lhproj_construction}
@@ -1007,22 +770,19 @@ P^{(l)}_\varepsilon[b]\; z .
 The representation nominally offered to head $l$ is $z-c^{(l)}$: the higher levels
 keep the subspace they read, and level $l$ is confined to what remains. The
 qualification matters, and \S\ref{ssec:lhproj_forward} discharges it: the
-implementation restores the removed component in the forward pass, so the removal
-takes effect on the gradient only. Both the head weights $W_j$ and the activation
-derivative $\rho'(k_b)$ are taken \emph{detached} from the computational graph, so
-that the reserved subspace is treated as given rather than as something the lower
-level may reshape --- the parameter-space counterpart of the stop-gradient of
-\S\ref{ssec:hcc_extensions}. The regularisation $\varepsilon I$ plays the same role
-as there: it makes the linear system solvable when the stacked rows are close to
-linearly dependent, at the price of an exactness that
-\cref{prop:lhproj_operator} quantifies. The system is solved once per sample, at a
-cost of a batch of $R_l\times R_l$ solves per level.
+definition in \S\ref{ssec:lhproj_forward} restores the removed component in the
+representation value while suppressing its derivative. When differentiating the
+lower-level objective, the head weights $W_j$ and the activation derivative
+$\rho'(k_b)$ are treated as fixed, so the lower level cannot reshape the reserved
+subspace. The regularisation $\varepsilon I$ makes the linear system solvable when
+the stacked rows are close to linearly dependent, at the loss of exactness
+quantified by \cref{prop:lhproj_operator}. One $R_l\times R_l$ system is solved per
+sample and level.
 
 \paragraph{Why the activation derivative belongs in $A^{(l)}$.} The factor
 $\operatorname{diag}(\rho'(k_b))$ is not a refinement of the operator but a
-condition for it to remove the right subspace, and this is worth establishing
-before anything is built on top of it. Head $j<l$ emits $W_j\rho(k)$, so the map
-from the branch point to the stacked higher-level scores is
+condition for it to remove the right subspace. Head $j<l$ emits $W_j\rho(k)$, so
+the map from the branch point to the stacked higher-level scores is
 $F(k):=W_{<l}\,\rho(k)$ with Jacobian
 \[
 \frac{\partial F}{\partial k}\Big|_{k_b}
@@ -1067,10 +827,9 @@ input-dependent and the linear system must be solved per sample rather than once
 per batch.
 
 In LH-DNN as originally published, $\rho$ is a ReLU and
-$\rho'(k)=\mathbb{1}[k>0]$; in the Hier-COS instantiation of
-\S\ref{ssec:lhproj_hiercos} a shared PReLU is used and
-$\rho'(k)=\mathbb{1}[k>0]+a\,\mathbb{1}[k\le 0]$ with $a$ the learned negative
-slope, taken detached. Since $D_b^2=D_b$ requires each diagonal entry to be $0$ or
+$\rho'(k)=\mathbb{1}[k>0]$; in the Hier-COS instantiation a shared PReLU is used
+and $\rho'(k)=\mathbb{1}[k>0]+a\,\mathbb{1}[k\le 0]$ with $a$ the learned negative
+slope, treated as fixed in this derivative. Since $D_b^2=D_b$ requires each diagonal entry to be $0$ or
 $1$, the identity in \cref{prop:lhproj_rho} is exact for ReLU and only approximate
 for PReLU, by an amount governed by the distance of $a$ from $\{0,1\}$; this is
 recorded in \S\ref{ssec:lhproj_limits}. A second, more benign consequence of the
@@ -1118,130 +877,7 @@ fraction is largest along the \emph{weakest} singular directions of the stacked
 head matrix --- that is, precisely where the higher-priority heads are least
 confident of their geometry. Second, $I-P_\varepsilon$ is never rank-deficient for
 $\varepsilon>0$, so the operator is always well defined; whether it is
-\emph{informative} is a separate question, settled by the rank condition of
-\S\ref{ssec:lhproj_hiercos}.
-
-\subsection{What the projection acts on}
-\label{ssec:lhproj_forward}
-
-What head $l$ receives is not $z-c^{(l)}$ but
-\[
-z^{(l)} \;:=\; z-c^{(l)}+\operatorname{sg}\big(c^{(l)}\big),
-\]
-and this changes the character of the mechanism in a way that must be made
-explicit, because it determines whether the LH-projection alters the function
-computed by a given parameter vector or only the parameters that training
-reaches.
-
-\begin{proposition}
-\label{prop:lhproj_forward}
-Let $c^{(l)}=P^{(l)}_\varepsilon[b]\,z$ with $P^{(l)}_\varepsilon[b]$ constant with
-respect to $z$, and let
-$z^{(l)}=z-c^{(l)}+\operatorname{sg}(c^{(l)})$. Then
-\[
-\text{(i)}\quad z^{(l)}=z
-\qquad\text{(forward value)},
-\qquad\qquad
-\text{(ii)}\quad
-\frac{\partial z^{(l)}}{\partial z}=I-P^{(l)}_\varepsilon[b]
-\qquad\text{(Jacobian)} .
-\]
-\end{proposition}
-\begin{proof}
-(i) The stop-gradient operator returns its argument unchanged in the forward pass,
-so $z^{(l)}=z-c^{(l)}+c^{(l)}=z$. (ii) In the backward pass
-$\operatorname{sg}(c^{(l)})$ contributes no derivative, so
-$\partial z^{(l)}/\partial z=I-\partial c^{(l)}/\partial z$. The matrix
-$P^{(l)}_\varepsilon[b]$ is built from detached head weights and a detached
-activation derivative; it is therefore constant with respect to $z$, and
-$c^{(l)}=P^{(l)}_\varepsilon[b]\,z$ is linear in $z$ with
-$\partial c^{(l)}/\partial z=P^{(l)}_\varepsilon[b]$.
-\end{proof}
-
-The mechanism is therefore \emph{not} a modification of the forward map. Head $l$
-receives the unprojected representation $z$, and the function computed by a given
-parameter vector is exactly that of the unconstrained multi-head classifier. What
-the projection modifies is the gradient: by (ii), the contribution of $\ell_l$ to
-the gradient reaching the shared trunk is
-\[
-\big(I-P^{(l)}_\varepsilon[b]\big)\,\nabla_{z}\,\ell_l ,
-\]
-that is, the component of the level-$l$ learning signal lying along the directions
-that move the higher levels' scores is removed before it reaches the shared
-parameters. The LH-projection is therefore an intervention on the update direction
-and not on the forward map, and it has no effect at inference.
-
-This places it beside lexicographic mode rather than beside HCC, and the two admit
-a direct comparison, which is one reason both are studied here:
-
-\begin{itemize}
-    \item \textbf{Reference directions.} Lexicographic mode orthogonalises against
-    the \emph{gradients} of the higher-priority objectives, which change at every
-    step and depend on the current batch. The LH-projection orthogonalises against
-    the rows of the higher heads' \emph{Jacobian at the branch point}, a geometric
-    object that varies slowly through the weights and per sample through the
-    activation mask. The former asks ``in which direction does the coarse loss want
-    to move?''; the latter asks ``which part of the representation does the coarse
-    level currently read?''.
-    \item \textbf{Granularity.} The LH-projection is applied per sample, inside the
-    forward graph, before any gradient is accumulated; lexicographic mode is
-    applied per batch, to the accumulated gradient, on parameter blocks determined
-    by gradient support (\S\ref{ssec:lex_blocks}).
-    \item \textbf{Locus.} The LH-projection filters the signal at a single point,
-    the branch point of the shared trunk, and therefore cannot control how the
-    level objectives interact in parameters upstream of it beyond what that filter
-    removes. Lexicographic mode acts directly on the parameters of every shared
-    block.
-    \item \textbf{Cost.} The LH-projection requires one backward pass and $L-1$
-    linear solves of size $R_l$ per sample; lexicographic mode requires $L$
-    backward passes and no solves.
-\end{itemize}
-
-\subsection{Instantiation on Hier-COS}
-\label{ssec:lhproj_hiercos}
-
-The LH-projection is defined for a shared trunk read by independent linear level
-heads. Hier-COS as published does not have that structure: it emits a single node
-vector, maps it through a \emph{fixed} frame shared by the whole taxonomy, and
-scores levels by subspace norms (\S\ref{ssec:problem_scores}). Transplanting the
-projection onto it therefore requires three structural changes, which are part of
-the construction rather than free hyperparameters, and which are stated here for
-that reason.
-
-\paragraph{(i) Independent level heads, hence an identity frame.} The projection
-is defined in terms of the weight matrices $W_1,\dots,W_{l-1}$ of the heads above
-level $l$. Under the dense random orthonormal frame of the published model the
-scores of every level are linear mixtures of a single shared node space, and no
-per-level matrix exists whose rows could be stacked into $A^{(l)}$: the object the
-construction needs is simply not present. The projected variant therefore replaces
-the frame by the identity --- equivalently, by a per-level block-diagonal frame,
-which leaves the level blocks independent --- and attaches one learnable linear
-head per level to the transform output. The combination of the projection with a
-dense frame is therefore not admitted at all. The frame is thus a
-\emph{precondition} of the method, and the identity-versus-random comparison
-measures the cost of the precondition, not a tuning choice; that cost is reported
-in the experimental chapter.
-
-\paragraph{(ii) Level-scoped normalisation, not merely a decomposed objective.}
-The objective must expose one differentiable term per level, and it must do so in
-a form that each level's branch can receive on its own. Two steps separate the
-published objective from that. The published objective is a KL divergence between
-one softmax taken over all $N$ taxonomy nodes and a target node distribution: it
-yields a single scalar, and no per-level signal can be extracted from it at all.
-An intermediate objective, retaining the global softmax but reading off the target
-node of each level separately, does yield three differentiable terms and is
-sufficient for the gradient-space ordering of \S\ref{sec:methodology_lex}. It is
-\emph{not} sufficient here: the three terms share one normaliser over all nodes, so
-the gradient of the level-$l$ term flows back through the branches of every other
-level, and the filtered representation that branch $l$ reads would no longer
-determine that term's learning signal. Only the level-scoped objective, in which
-the softmax is taken within each level's node block, makes each level loss a
-function of its own branch alone, and it is the one the projected variant uses,
-together with the same node-norm regulariser. As with the frame, the comparison
-against the published objective quantifies the price of a structural requirement.
-
-\paragraph{(iii) A non-trivial complement.} The projection is informative only if
-the reserved subspace does not exhaust the representation.
+\emph{informative} is settled by the rank condition.
 
 \begin{proposition}
 \label{prop:lhproj_rank}
@@ -1258,41 +894,107 @@ onto that row space is the identity and its complement is zero. Since $R_l$ is
 increasing in $l$, the binding constraint is $l=L$.
 \end{proof}
 
-The condition $D>\sum_{l<L}C_l$ is verified before training rather than left to be
-discovered from the results, and it requires the width of the representation to be
-decoupled from the taxonomy size $N$ that the unprojected model uses. The reason
-for checking it in advance is that for $\varepsilon>0$ the failure predicted by
-\cref{prop:lhproj_rank} is not a hard zero but a uniform shrinkage of
-the fine-level gradient by $\varepsilon/(\sigma_i^2+\varepsilon)$
-(\cref{prop:lhproj_operator}), which would be hard to distinguish from
-a badly scaled learning rate.
+The reason for checking the condition in advance is that for $\varepsilon>0$ the
+failure it predicts is not a hard zero but a uniform shrinkage of the fine-level
+gradient by $\varepsilon/(\sigma_i^2+\varepsilon)$
+(\cref{prop:lhproj_operator}), which would be hard to distinguish from a badly
+scaled learning rate.
 
-\paragraph{Remaining degrees of freedom.} Given the three requirements above, the
-following are genuine ablation axes, varied in the experimental chapter and not
-constitutive of the method: the placement of the projection relative to the
-transformation layer, that is, whether the projected representation is the full
-residual transform, a batch-norm-plus-linear reduction, or the backbone output
-itself; the representation width, subject to \cref{prop:lhproj_rank}; and the
-\emph{advantage} parameterisation, in which the logits of level $l$ are expressed
-as a residual on top of the detached logit of the predicted parent,
-$z_l \leftarrow z_l + z_{l-1}[\pi_{l-1}(\cdot)]$, so that the head predicts a
-correction to its parent rather than an absolute score. The composition of the
-reserved subspace is \emph{not} on this list: by \cref{prop:lhproj_rho} the
-activation Jacobian is part of the operator, not a variant of it.
+\subsection{Effect on predictions and optimisation}
+\label{ssec:lhproj_forward}
 
-\paragraph{Exclusivity with HCC.} The LH-projection and HCC are mutually exclusive
-on Hier-COS: the configuration validator rejects the pair and no run combines
-them. The reason is that they would act on the same quantity in incompatible ways.
-The LH-projection determines the per-level logits by filtering what each head
-reads, and its reserved subspace is, by \cref{prop:lhproj_rho}, the row space of
-the Jacobian of the higher heads' outputs with respect to the branch point. HCC
-overwrites those same logits with the solution of an affine problem anchored on the
-level above. Composing them would leave the reserved subspace describing the
-Jacobian of a map that no longer produces the logits the objective evaluates, so
-the operator would remove a subspace with no relation to what it is meant to
-protect.
+What head $l$ receives is not $z-c^{(l)}$ but
+\[
+z^{(l)} \;:=\; z-c^{(l)}+\operatorname{sg}\big(c^{(l)}\big),
+\]
+where $\operatorname{sg}(\cdot)$ returns its argument unchanged in function
+evaluation and has zero derivative. This determines whether the LH-projection
+alters the function computed by a given parameter vector or only the parameters
+that training reaches.
 
-\subsection{Scope of the guarantee}
+\begin{proposition}
+\label{prop:lhproj_forward}
+Let $c^{(l)}=P^{(l)}_\varepsilon[b]\,z$ with $P^{(l)}_\varepsilon[b]$ constant with
+respect to $z$, and let
+$z^{(l)}=z-c^{(l)}+\operatorname{sg}(c^{(l)})$. Then
+\[
+\text{(i)}\quad z^{(l)}=z
+\qquad\text{(function value)},
+\qquad\qquad
+\text{(ii)}\quad
+\frac{\partial z^{(l)}}{\partial z}=I-P^{(l)}_\varepsilon[b]
+\qquad\text{(Jacobian)} .
+\]
+\end{proposition}
+\begin{proof}
+(i) The stop-gradient operator returns its argument unchanged, so
+$z^{(l)}=z-c^{(l)}+c^{(l)}=z$. (ii) It contributes no derivative, so
+$\partial z^{(l)}/\partial z=I-\partial c^{(l)}/\partial z$. The matrix
+$P^{(l)}_\varepsilon[b]$ is treated as constant with respect to $z$, and
+$c^{(l)}=P^{(l)}_\varepsilon[b]\,z$ is linear in $z$ with
+$\partial c^{(l)}/\partial z=P^{(l)}_\varepsilon[b]$.
+\end{proof}
+
+The mechanism is therefore \emph{not} a modification of the predictive map. Head $l$
+receives the unprojected representation $z$, and the function computed by a given
+parameter vector is exactly that of the unconstrained multi-head classifier. What
+the projection modifies is the gradient: by (ii), the contribution of $\ell_l$ to
+the gradient reaching the shared trunk is
+\[
+\big(I-P^{(l)}_\varepsilon[b]\big)\,\nabla_{z}\,\ell_l ,
+\]
+that is, the component of the level-$l$ learning signal lying along the directions
+that move the higher levels' scores is removed before it reaches the shared
+parameters. The LH-projection is an intervention on the update direction and not
+on the predictive map, and it has no effect at inference.
+
+This places it beside lexicographic mode, and the two admit a direct comparison,
+which is one reason both are studied here:
+
+\begin{itemize}
+    \item \textbf{Reference directions.} Lexicographic mode orthogonalises against
+    the \emph{gradients} of the higher-priority objectives, which change at every
+    step and depend on the current sample group. The LH-projection orthogonalises against
+    the rows of the higher heads' \emph{Jacobian at the branch point}, a geometric
+    object that varies slowly through the weights and per sample through the
+    activation mask. The former asks in which direction the coarse loss wants to
+    move; the latter asks which part of the representation the coarse level
+    currently reads.
+    \item \textbf{Granularity.} The LH-projection is defined per sample before
+    gradients are aggregated; lexicographic mode acts on the aggregated gradient,
+    on parameter blocks determined by gradient support
+    (\S\ref{ssec:lex_blocks}).
+    \item \textbf{Locus.} The LH-projection filters the signal at a single point,
+    the branch point of the shared trunk, and therefore cannot control how the
+    level objectives interact in parameters upstream of it beyond what that filter
+    removes. Lexicographic mode acts directly on the parameters of every shared
+    block.
+    \item \textbf{Cost.} The LH-projection requires $L-1$ linear solves of size
+    $R_l$ per sample while obtaining the gradient of a single scalarised
+    objective; lexicographic mode requires $L$ separate objective gradients but
+    no linear solves.
+\end{itemize}
+
+\subsection{Representation width and advantage parameterisation}
+\label{ssec:lhproj_ablations}
+
+Given the three requirements of \S\ref{ssec:lhproj_hiercos}, the following are
+genuine ablation axes, varied in the experimental chapter and not constitutive of
+the method: the placement of the projection relative to the transformation layer,
+that is, whether the projected representation is the full residual transform, a
+batch-norm-plus-linear reduction, or the backbone output itself; the
+representation width, subject to \cref{prop:lhproj_rank}; and the \emph{advantage}
+parameterisation, in which the logits of level $l$ are expressed as a residual on
+top of the parent logit, treated as constant for differentiation,
+\[
+z_l \leftarrow z_l + z_{l-1}[\pi_{l-1}(\cdot)] ,
+\]
+so that the head predicts a correction to its parent rather than an absolute
+score. The composition of the reserved subspace is \emph{not} on this list: by
+\cref{prop:lhproj_rho} the activation Jacobian is part of the operator, not a
+variant of it.
+
+\subsection{Guarantee and scope}
 \label{ssec:lhproj_limits}
 
 The guarantee attaching to the LH-projection in \cite{fiaschi2024informed} is
@@ -1305,9 +1007,8 @@ carried into the interpretation of the results. They parallel those of
     parameters. It guarantees that the level-$l$ signal reaching the trunk carries
     no component along the reserved subspace at that point; it does not guarantee
     that the higher-priority objectives do not increase after the step, and says
-    nothing about the limit of the trajectory. As with HCC and with lexicographic
-    mode, this is lexicographic \emph{structure} without lexicographic
-    \emph{sequential optimality}.
+    nothing about the limit of the trajectory. This is again lexicographic
+    \emph{structure} without lexicographic \emph{sequential optimality}.
     \item \textbf{Per-sample and branch-point-local.} The projection is applied at
     the branch point, on the representation each head reads. Interactions between
     level objectives that are mediated by parameters upstream of the branch point,
@@ -1318,12 +1019,12 @@ carried into the interpretation of the results. They parallel those of
     $\operatorname{diag}(\rho'(k_b))$ is idempotent, that is, when every entry of
     $\rho'$ is $0$ or $1$. This is exact for the ReLU of the published
     formulation. The Hier-COS instantiation uses a shared PReLU with a learned
-    negative slope $a$, taken detached, for which the condition fails unless $a$
+    negative slope $a$, treated as fixed in the projection derivative, for which the condition fails unless $a$
     happens to reach $0$ or $1$; the guarantee is then approximate, with an error
     governed by $a$ and by the fraction of coordinates in the negative branch.
     The slope is a learned parameter, so this is a property to be checked on the
     trained model rather than assumed, and it is one of the reasons a projected
-    Hier-COS run is not simply LH-DNN with a different backbone.
+    Hier-COS model is not simply LH-DNN with a different backbone.
     \item \textbf{Approximate, and least accurate where it matters most.} By
     \cref{prop:lhproj_operator} the removal leaves a residual
     $\varepsilon/(\sigma_i^2+\varepsilon)$ along the $i$-th singular direction of
@@ -1333,15 +1034,362 @@ carried into the interpretation of the results. They parallel those of
     separated.
 \end{enumerate}
 
+\section{Hierarchical Constraint Cascade}
+\label{sec:methodology_hcc}
+
+The third mechanism acts on the outputs. The \emph{Hierarchical Constraint
+Cascade} (HCC) enforces hierarchical relations among the scores of a multi-level
+classifier by a recursive affine correction of the model outputs, and is therefore
+the only one of the three that is present at inference. It is presented
+last for that reason and because its construction is the most specific: it
+requires a complete taxonomy and one projection per level transition. The method
+builds on the \textsc{HardNet} framework for imposing hard constraints on neural
+networks \cite{min2024hardnet}, of which it is the equality-only case applied
+recursively along a taxonomy.
+
+\subsection{Setting and requirements}
+\label{ssec:hcc_setting}
+
+HCC is defined on the level-wise scores of the classifier rather than on its
+internal structure. Three conditions are required:
+
+\begin{enumerate}
+    \item a vector of differentiable scores for each level of the hierarchy;
+    \item a complete taxonomy, with a unique parent for every non-root class and
+    no parent class without children (the condition required by
+    \cref{lemma:diag});
+    \item a consistent ordering of the levels from coarsest to finest.
+\end{enumerate}
+
+The same cascade can therefore be attached to models with transformer,
+convolutional, capsule-based or taxonomic-frame backbones, provided their outputs
+can be expressed in this common form, and it supports an arbitrary number of
+levels by repetition of the same operation. This concerns applicability only: the
+effect of the constraint, and its interaction with the fixed-gradient anchor introduced
+below, must be verified experimentally for each combination of model, dataset and
+decoding strategy.
+
+\paragraph{Why a hard constraint.} Prior knowledge about the input--output
+relations of a model is usually imposed either by penalising violations in the
+objective, which offers no guarantee of satisfaction, or by an \emph{ad hoc}
+parameterisation that satisfies the constraint by construction at the price of
+representational capacity \cite{min2024hardnet}. HardNet resolves this trade-off:
+it constructs networks satisfying input-dependent hard constraints by
+construction, without sacrificing capacity, while retaining unconstrained
+parameter optimisation. Relative to soft penalties and to iterative correction
+procedures such as DC3, HardNet-Aff provides a closed-form transformation, exact
+satisfaction and no proven loss of expressivity, which is why it is adopted here.
+
+\paragraph{The HardNet-Aff projection.} Let
+$f_\theta:\mathcal{X}\to\mathbb{R}^{n_{\mathrm{out}}}$ be a network. HardNet
+enforces the input-dependent affine constraint
+$b^l(x)\le A(x)f(x)\le b^u(x)$, with $A(x)\in\mathbb{R}^{n_c\times
+n_{\mathrm{out}}}$, through a differentiable projection. Under
+feasibility and full row rank of $A(x)$, the closed-form solution is
+\cite{min2024hardnet}
+\[
+\mathcal{P}(f_\theta)(x)
+=
+f_\theta(x)
++
+A(x)^{+}
+\Big[
+\operatorname{ReLU}\!\big(b^l(x)-A(x)f_\theta(x)\big)
+-
+\operatorname{ReLU}\!\big(A(x)f_\theta(x)-b^u(x)\big)
+\Big],
+\]
+with $A(x)^{+}:=A(x)^{\top}\big(A(x)A(x)^{\top}\big)^{-1}$ the Moore--Penrose
+pseudoinverse. Two properties established in \cite{min2024hardnet} are used here:
+the projected output satisfies each violated constraint exactly and leaves the
+others unchanged (Proposition 4.4); and if $f_\theta$ universally approximates a
+class $\mathcal{F}$, the projected class universally approximates the subset of
+$\mathcal{F}$ satisfying the constraint (Theorem 4.6), so enforcing the constraint
+does not, in the limit, reduce representational capacity.
+
+The notation of \S\ref{sec:methodology_problem} is used throughout: $z_l$ denotes
+the level-$l$ scores, levels are ordered coarse to fine, and
+$M_{l,l+1}\in\{0,1\}^{C_l\times C_{l+1}}$ is the incidence matrix of the
+parent--child relation, with exactly one non-zero entry per column. Only the two
+structural assumptions of \S\ref{ssec:problem_taxonomy} are required by the
+derivation that follows.
+
+\subsection{The hierarchical cascade}
+\label{ssec:hardnet_to_hcc}
+\label{ssec:hcc_extensions}
+
+HCC instantiates HardNet-Aff separately for each level transition $l\to l+1$,
+setting $A(x)\equiv M_{l,l+1}$ --- a \emph{fixed} matrix, not input-dependent,
+since it encodes the structure of the taxonomy rather than the input --- and
+imposing an equality-only constraint, $b^l=b^u=\hat z_l$:
+\[
+M_{l,l+1}\hat z_{l+1}=\hat z_l .
+\]
+An equality constraint is the degenerate case of the box constraint obtained by
+setting $b^l=b^u$ (Remark 4.1 in \cite{min2024hardnet}). The constraint is imposed
+in \emph{logit space}, and in general it does not imply
+$\operatorname{softmax}(\hat z_l)=M_{l,l+1}\operatorname{softmax}(\hat z_{l+1})$.
+HCC must therefore not be read as a normalisation of probability mass between
+parent and children, but as a structural affine constraint on the representations
+fed to the objective.
+
+\begin{proposition}
+For $b^l=b^u=b$, the HardNet-Aff projection reduces to
+\[
+\mathcal{P}(f_\theta)(x)=f_\theta(x)-A(x)^{+}\big(A(x)f_\theta(x)-b(x)\big).
+\]
+\end{proposition}
+\begin{proof}
+Let $v:=b-Af_\theta(x)$. For every scalar $v$ the identity $\operatorname{ReLU}(v)-\operatorname{ReLU}(-v)=v$ holds, as verified by cases: if $v\ge 0$ then $\operatorname{ReLU}(v)-\operatorname{ReLU}(-v)=v-0=v$; if $v<0$ then $=0-(-v)=v$. The identity extends componentwise to the vector case. Substituting into the general HardNet-Aff expression with $b^l=b^u=b$ yields $\operatorname{ReLU}(b-Af_\theta)-\operatorname{ReLU}(Af_\theta-b)=b-Af_\theta$, from which the claim follows.
+\end{proof}
+
+Applying this with $A=M_{l,l+1}$, $f_\theta(x)=z_{l+1}$ and $b=\hat z_l$ recovers
+the Euclidean projection onto the affine subspace $\{q:M_{l,l+1}q=\hat z_l\}$:
+\[
+\hat z_{l+1}
+=
+z_{l+1}
+-
+M_{l,l+1}^{\top}
+\left(
+M_{l,l+1}M_{l,l+1}^{\top}
+\right)^{-1}
+\left(
+M_{l,l+1}z_{l+1}-\hat z_l
+\right).
+\]
+By Proposition 4.4 in \cite{min2024hardnet}, specialised to $b^l=b^u$, this
+projection satisfies the constraint \emph{exactly} for any $z_{l+1}$, whether or
+not the constraint was initially violated.
+
+\paragraph{A structural property specific to taxonomies.} In the general case
+$A(x)$ may vary with the input and the invertibility of $A(x)A(x)^{\top}$ must be
+verified pointwise. In HCC the matrix is fixed, and its single-parent structure
+admits a closed form.
+
+\begin{lemma}
+\label{lemma:diag}
+If every column of $M_{l,l+1}$ contains exactly one non-zero entry, then $M_{l,l+1}M_{l,l+1}^{\top}$ is diagonal, with $i$-th diagonal entry equal to the number of child classes of class $i$ at level $l$.
+\end{lemma}
+\begin{proof}
+Write $M:=M_{l,l+1}$. For $i=i'$ we have $(MM^\top)_{i,i}=\sum_j M[i,j]^2=\sum_j M[i,j]$, since $M$ is binary, which equals the number $n_i$ of children of class $i$. For $i\ne i'$ we have $(MM^\top)_{i,i'}=\sum_j M[i,j]M[i',j]$; by hypothesis, for each column $j$ at most one of $M[i,j]$ and $M[i',j]$ is non-zero, so every summand vanishes and the entry is zero.
+\end{proof}
+
+It follows that $M_{l,l+1}M_{l,l+1}^{\top}=\operatorname{diag}(n_1,\dots,n_{C_l})$,
+which is invertible if and only if every class at level $l$ has at least one child
+--- a structural condition that can be verified once for the taxonomy rather
+than for every $x$. The regularised term
+$M_{l,l+1}M_{l,l+1}^{\top}+\varepsilon I$ stays diagonal, so the linear system
+is diagonal and costs $O(C_l)$ per sample. Note further that, for
+equality-only constraints, feasibility (Assumption 4.3-i in \cite{min2024hardnet})
+is implied by full row rank (Assumption 4.3-ii), since a surjective linear map
+admits a solution for any right-hand side. The only condition to be verified on
+the taxonomy is therefore the absence of parent classes without children.
+
+\paragraph{Recursive cascade.} Setting $\hat z_1=z_1$ and applying the projection
+recursively, with the stop-gradient operator $\operatorname{sg}(\cdot)$ on the
+right-hand side, yields
+
+\begin{align}
+\hat z_1 &= z_1,\\
+\hat z_2 &= P_{1,2}\big(z_2;\operatorname{sg}(\hat z_1)\big),\\
+&\;\vdots\\
+\hat z_L &= P_{L-1,L}\big(z_L;\operatorname{sg}(\hat z_{L-1})\big),
+\end{align}
+
+where each $P_{l,l+1}$ is an instance of equality-only HardNet-Aff applied to the
+level pair $(l,l+1)$. The coarsest level is left unchanged and acts as the
+reference; each subsequent level is projected onto the affine set determined by
+the level above it, producing a coarse-to-fine cascade.
+
+\medskip
+
+Two choices in this construction are not part of HardNet-Aff and should not be
+attributed to its authors. The framework in \cite{min2024hardnet} imposes a
+constraint at a single output point, with a right-hand side given by a known
+function of the problem; here the right-hand side is the projected output of the
+previous step of the same network, and the projections are chained.
+
+\paragraph{The fixed-gradient anchor.} In the original formulation $b(x)$ does not
+depend on $\theta$, so derivative coupling between $b$ and the projection does not
+arise. In HCC, $\hat z_l$ is itself differentiable with respect to $\theta$.
+Without further provision, the derivative of the level-$(l+1)$ objective would
+also modify $\hat z_l$ through the projection, mixing the two objectives along
+that path. The operator $\operatorname{sg}(\cdot)$ treats $\hat z_l$ as fixed for
+this derivative while preserving its value. Influence is consequently directed
+from coarse to fine in both the score transformation and optimisation. The
+stabilised form used throughout is therefore
+\[
+\hat z_{l+1}
+=
+z_{l+1}
+-
+M_{l,l+1}^{\top}
+\left(
+M_{l,l+1}M_{l,l+1}^{\top}
++
+\varepsilon I
+\right)^{-1}
+\left(
+M_{l,l+1}z_{l+1}-\operatorname{sg}(\hat z_l)
+\right).
+\]
+For $\varepsilon=0$ and full row rank the constraints hold exactly; for
+$\varepsilon>0$ they hold up to the numerical precision set by the stabilisation
+term.
+
+\paragraph{Composition over several transitions.} HardNet-Aff is applied and
+evaluated as a single terminal layer in \cite{min2024hardnet}, whereas HCC applies
+it recursively across $L-1$ successive transitions. The guarantees of exact
+satisfaction (Proposition 4.4) and preservation of universal approximation
+(Theorem 4.6) concern a single application; their extension by induction over
+levels to the full cascade with $L>2$ is not proved in this work and remains an
+open question. Exact satisfaction between two consecutive levels is guaranteed by
+each projection taken individually, while the effect of composing the projections
+with the fixed-gradient anchor on the overall representational capacity must be assessed
+empirically.
+
+\paragraph{Activation.} The projection is active throughout optimisation and
+evaluation: $\hat z_l$ replaces $z_l$ from the first parameter update, with no
+unconstrained warm start or gradual interpolation between raw and projected
+scores.
+
+\paragraph{Objective.} HCC introduces no new loss: it changes the arguments on
+which the existing level objectives are evaluated,
+\[
+\mathcal{L}_{\mathrm{HCC}}
+=
+\sum_{l=1}^{L}
+w_l\,\ell_l\big(\hat z_l,y_l\big)
++
+\lambda\,\mathcal{R}\big(\hat z_1,\dots,\hat z_L\big),
+\]
+with $w_l$ the coefficients of \S\ref{ssec:problem_objective}. Because the
+projection is differentiable, the model is not merely corrected after the fact: it
+is trained on the corrected scores from the first step, and adapts its raw scores
+to the correction that will be applied to them.
+
+\subsection{Guarantee and scope}
+\label{ssec:hcc_guarantee}
+
+The cascade realises in output space the level-set restriction of
+\S\ref{ssec:problem_priority}. The projection can be written as
+\[
+\hat z_{l+1}
+=
+\arg\min_{q\in\mathbb{R}^{C_{l+1}}}
+\tfrac{1}{2}\lVert q-z_{l+1}\rVert_2^2
+\quad\text{subject to}\quad
+M_{l,l+1}q=\hat z_l ,
+\]
+so the coarse level contributes an equality constraint --- a level set --- inside
+which the fine level is resolved in the minimum-perturbation sense. Three
+properties follow. The dominance is one-directional: the coarse level determines
+the feasible set for the fine level, and the fixed-gradient anchor extends that
+asymmetry to the gradient. The constraint is non-negotiable: being an equality
+enforced exactly, coarse-level consistency is not traded against fine-level
+accuracy at any finite value of the coefficients $w_l$. And the restriction is
+available in closed form by \cref{lemma:diag}, at the cost of a diagonal
+rescaling, where a lexicographic optimisation procedure would solve a constrained
+subproblem.
+
+Two differences from lexicographic optimisation are substantive. First,
+lexicographic optimisation prioritises \emph{objectives} and requires the
+higher-priority problem to be solved to optimality before the next is considered.
+HCC constrains \emph{outputs}, and its anchor $\hat z_1=z_1$ is the network's
+current coarse prediction, not the coarse-optimal one; all levels continue to
+train jointly. As with the two gradient-space mechanisms, this is lexicographic
+\emph{structure} without lexicographic \emph{sequential optimality}. Second, the
+protection afforded by the fixed-gradient anchor is partial: it removes the influence of
+the fine-level loss on the coarse scores along the projection branch, but the
+level losses still interact through the shared backbone, so parameter-space
+priority is not enforced.
+
+\paragraph{What the constraint costs the gradient.} Enforcing the constraint from
+the first step is not free, and the price is best stated exactly, since
+\cite{min2024hardnet} raises it as a hazard: its Appendix~C reports that an
+enforcement layer can produce a vanishing gradient when the loss gradient with
+respect to the projected output lies in the span of the active constraint vectors,
+a condition that becomes more likely as the number of constraints approaches the
+output dimension. Under equality constraints every constraint is active at every
+step, so the condition is structural rather than occasional, and in the taxonomic
+case it takes a closed form.
+
+\begin{proposition}
+\label{prop:hcc_backward}
+Let $\varepsilon=0$ and write $Q:=M_{l,l+1}^{\top}(M_{l,l+1}M_{l,l+1}^{\top})^{-1}
+M_{l,l+1}$. Then $\partial\hat z_{l+1}/\partial z_{l+1}=I-Q$, where $Q$ is the
+orthogonal projector onto $\operatorname{row}(M_{l,l+1})$, of rank $C_l$.
+Consequently the gradient reaching the raw level-$(l+1)$ scores is confined to a
+subspace of dimension $C_{l+1}-C_l$, and $Q$ replaces each coordinate by the mean
+of its sibling group, so $I-Q$ centres each sibling group to zero mean.
+\end{proposition}
+\begin{proof}
+The anchor is treated as fixed, so differentiating the stabilised form at $\varepsilon=0$
+gives $I-M^{\top}(MM^{\top})^{-1}M=I-Q$. $Q$ is symmetric and idempotent with range
+$\operatorname{row}(M)$, hence the orthogonal projector onto it, and its rank is the
+rank $C_l$ of $M$. By \cref{lemma:diag}, $(MM^{\top})^{-1}=\operatorname{diag}(1/n_i)$,
+and row $i$ of $M$ is the indicator of the children of parent $i$; therefore
+$(Qv)_j$ is the average of $v$ over the siblings of $j$.
+\end{proof}
+
+The fine head therefore never receives the component of its own learning signal
+that would raise or lower a whole sibling group together: that degree of freedom
+has been delegated to the level above, which is the priority the mechanism exists
+to impose. The score correction has the matching structure.
+
+\begin{corollary}
+\label{cor:hcc_sibling_shift}
+The HCC correction adds to every child of a fixed parent the same scalar. It
+therefore never reorders two classes sharing a parent, and whenever predictions
+are read off the corrected scores directly, any change it produces in an
+independently decoded prediction --- and hence in
+$\mathrm{TICE}_{\text{independent}}$ --- arises exclusively from the reordering of
+classes belonging to \emph{different} parents.
+\end{corollary}
+\begin{proof}
+By \cref{lemma:diag} the matrix inverted in the correction is diagonal, so the
+vector $M^{\top}(MM^{\top}+\varepsilon I)^{-1}(Mz_{l+1}-\hat z_l)$ has, in the
+coordinate of child $j$, the value of the coefficient of its parent $\pi_l(j)$
+alone. Two children of the same parent therefore receive an identical additive
+term, which cancels in their difference and preserves their relative order.
+Independent decoding is an unrestricted argmax over the whole level, so the only
+comparisons whose outcome the correction can alter are those between classes with
+distinct parents, whose additive terms differ.
+\end{proof}
+
+\Cref{prop:hcc_backward} and \cref{cor:hcc_sibling_shift} are the same fact seen
+from either side of the projection: a common additive shift per sibling group in
+the scores, and the removal of that same degree of freedom from their derivatives.
+Two consequences follow for the interpretation of the results.
+
+First, the fraction of directions removed from level $l+1$ is $C_l/C_{l+1}$, the
+reciprocal of the average fan-out at that transition, so the constraint bites
+hardest wherever the taxonomy branches least --- and which transition that is
+depends on the dataset, not on the depth. It is the coarse-to-middle transition on
+CIFAR-100 ($8/20$ against $20/100$) and on CUB-200 ($13/38$ against $38/200$), but
+the middle-to-fine one on FGVC-Aircraft ($70/100$ against $30/70$), whose taxonomy
+is nearly flat at its last level. Any level-wise reading of an HCC result should be
+made against the fan-out of the corresponding transition rather than against its
+depth. Second, because the constraint is active from the first step, this is a
+permanent feature of the optimisation trajectory rather than a transient of early
+training. Whether it is
+damaging is an empirical question that the algebra does not settle: the removed
+component is exactly the one the constraint declares the finer level has no
+authority over.
+
+Finally, the cascade constrains consistency in logit space and does not by itself
+deliver consistent predictions; \S\ref{ssec:inference_interaction} states what it
+does and does not guarantee once a decoder is applied.
 
 \section{Hierarchical inference strategies}
 \label{sec:methodology_inference}
 
-The preceding sections described how a network is trained. Turning the trained
-network into a predicted path is a separate decision, and one that materially
-changes every reported number: the same checkpoint read out and decoded in two
-different ways yields different accuracies, a different full-path accuracy and,
-in particular, a different measured inconsistency.
+The preceding sections described how a network is trained. Turning its scores
+into a predicted path is a separate methodological decision: the same trained
+parameter state read out and decoded in two different ways yields different
+accuracies, a different full-path accuracy and, in particular, a different
+measured inconsistency.
 
 The decision factorises into two independent choices, and the section is
 organised accordingly:
@@ -1354,14 +1402,14 @@ organised accordingly:
     scores into a path (\S\ref{ssec:inference_decoding}).
 \end{enumerate}
 
-Both are properties of the evaluation, not of the trained model. Neither touches
-the parameters, so both can be replaced after training on a frozen checkpoint ---
-which is what makes the grid of \S\ref{ssec:inference_grid} an instrument rather
-than a convention. The section then states the checkpoint-selection rule that
-keeps decoder comparisons honest (\S\ref{ssec:inference_selection}), and closes by
-recording exactly which of the training-time mechanisms can and cannot move which
-reported quantity (\S\ref{ssec:inference_interaction}). The metrics computed on
-top of a chosen cell of the grid are defined with the experimental setup, in
+Both are properties of evaluation rather than of the trained model. They can
+therefore be varied while the parameter state is held fixed, which makes the grid
+of \S\ref{ssec:inference_grid} an analytical instrument rather than a convention.
+The section then states the model-selection rule that keeps decoder comparisons
+valid (\S\ref{ssec:inference_selection}), and closes by recording which of the
+training-time mechanisms can and cannot affect each reported quantity
+(\S\ref{ssec:inference_interaction}). The metrics computed for a chosen cell of
+the grid are defined with the experimental setup, in
 \cref{ssec:inference_metrics}, and are referred to here by name.
 
 \subsection{Readout rules}
@@ -1404,8 +1452,8 @@ this readout is expected to behave differently on the two kinds of family.
 
 \paragraph{Each model's native rule is one readout, not a separate case.} The
 readouts above are defined for every family, and each family's own inference
-procedure is recovered as one of them: \texttt{node\_score} for the
-classifier-head families, \texttt{subspace\_norm} for native Hier-COS.
+procedure is recovered as one of them: node-score readout for the classifier-head
+families and subspace-norm readout for native Hier-COS.
 Reproduction is exact for H-CAST and Hier-COS, which recompute the same quantity,
 and metric-exact for HRN and the remaining classifier heads, where the readout
 reads raw logits rather than the sigmoid or softmax the model applies: those maps
@@ -1436,7 +1484,7 @@ subsequent level is restricted to the children of the level above:
 \quad l=2,\dots,L .
 \]
 Should a predicted parent have no children --- which the ``no childless parent''
-assumption of \S\ref{sec:methodology_problem} excludes, but which is guarded
+assumption of \S\ref{ssec:problem_taxonomy} excludes, but which is guarded
 against nonetheless --- the level falls back to an unrestricted argmax for the
 affected samples.
 
@@ -1462,7 +1510,7 @@ guarantee. Consequently top-down decoding cannot change the level-$1$ prediction
 can only alter levels $l\ge2$, and may lower fine-level accuracy relative to
 independent decoding while lowering the inconsistency rate to zero.
 
-\subsection{The inference grid and its post-hoc use}
+\subsection{The inference grid and post-hoc evaluation}
 \label{ssec:inference_grid}
 
 The readout of \S\ref{ssec:inference_readout} may be preceded by a
@@ -1471,144 +1519,85 @@ HCC affine hierarchy projection of \S\ref{sec:methodology_hcc}, applied to $u$
 before the readout consumes it. Crossing the two readouts with the presence or
 absence of that transform gives four inference rules,
 \[
-\big\{\texttt{node\_score},\ \texttt{subspace\_norm}\big\}
+\big\{\text{node score},\ \text{subspace norm}\big\}
 \times
 \big\{\text{none},\ \text{HCC}\big\},
 \]
 and crossing those with the two decoders of \S\ref{ssec:inference_decoding} gives
-the eight cells under which a checkpoint can be scored. Every cell is defined for
-every family --- no combination is rejected --- and all of them are computed from
-a single shared forward pass, since they differ only in what is done to $u$
-afterwards.
+the eight evaluation conditions. Every condition is defined for every family and
+uses the same underlying model outputs, differing only in the subsequent
+transformation, readout and decoding rule.
 
-\paragraph{Why this is an instrument and not a convention.} Nothing in the grid
-trains or modifies a parameter: it is applied to an already-selected checkpoint,
-with no loss, optimiser or training loop constructed. That is precisely what makes
-it useful. A training-time mechanism that improves the reported metrics admits two
-readings --- it changed the representation, or it supplied a better rule for
-reading an unchanged representation --- and the grid separates them by
-construction. Applying the HCC transform post-hoc to a checkpoint trained
-\emph{without} HCC isolates what the constraint is worth as a pure output
-correction; comparing that against a checkpoint trained \emph{with} HCC isolates
-what the constraint is worth as a training signal. The difference between the two
-is the part of HCC's effect that is genuinely representational, and it cannot be
-obtained from either run alone. The same logic applies to the frame question of
-\S\ref{ssec:design_substrate}: whether Hier-COS's advantage lives in its
-subspace-norm readout can be tested by giving that readout to a model that was
-never trained with one.
+\paragraph{Why this is an instrument and not a convention.} The grid leaves the
+trained parameters fixed. A mechanism that improves the reported metrics admits
+two readings --- it changed the learned representation, or it supplied a better
+rule for reading an unchanged representation --- and the grid separates them.
+Applying HCC after training to a model learned without it isolates the value of
+the constraint as an output correction; comparing this with a model trained under
+HCC isolates the contribution of the constraint to representation learning. The
+same logic applies to the frame question of \S\ref{ssec:design_substrate}:
+whether the Hier-COS advantage lies in its subspace-norm readout can be tested by
+applying that readout to a model trained without it.
 
-Two properties of the grid follow from the rules themselves, and should not be
-mistaken for empirical findings when the results are read.
+One property of the grid follows from the rules themselves, and should not be
+mistaken for an empirical finding when the results are read.
 
 \begin{proposition}
 \label{prop:posthoc_hcc_topdown}
-Let the readout be \texttt{node\_score} with $\phi$ the identity, and let the
+Let the readout be the node score with $\phi$ the identity, and let the
 transform be the HCC projection. Then the transform cannot change any metric
 computed under top-down decoding.
 \end{proposition}
 \begin{proof}
-By \S\ref{ssec:hardnet_to_hcc} the correction is
-$\hat z_{l+1} = z_{l+1} - M^{\top}(MM^{\top}+\varepsilon I)^{-1}(Mz_{l+1}-\hat z_l)$.
-By \cref{lemma:diag} the inverted matrix is diagonal, so the vector
-subtracted from $z_{l+1}$ assigns to every child the same value, namely the
-coefficient of its parent; within the children of a fixed parent the correction is
-therefore a common additive shift, which preserves their ordering. Top-down
-decoding evaluates an argmax restricted to exactly such a sibling set
+By \cref{cor:hcc_sibling_shift} the correction adds a common scalar to the
+children of a fixed parent, which preserves their ordering. Top-down decoding
+evaluates an argmax restricted to exactly such a sibling set
 (\S\ref{ssec:inference_decoding}). The coarsest level is anchored, $\hat z_1=z_1$,
 so $\hat y_1$ is unchanged; inductively, each subsequent masked argmax is taken
 over a set whose internal ordering the correction preserves, so $\hat y_l$ is
 unchanged for every $l$.
 \end{proof}
 
-The argument establishes slightly more than the statement, and the surplus is
-worth extracting, because it identifies the only route by which HCC can change an
-independently decoded prediction at all.
-
-\begin{corollary}
-\label{cor:hcc_sibling_shift}
-Under the hypotheses of \cref{prop:posthoc_hcc_topdown}, the HCC
-correction adds to every child of a fixed parent the same scalar. Consequently it
-never reorders two classes sharing a parent, and any change it produces in an
-independently decoded prediction, and hence in
-$\mathrm{TICE}_{\text{independent}}$, arises exclusively from the reordering of
-classes belonging to \emph{different} parents.
-\end{corollary}
-\begin{proof}
-By \cref{lemma:diag} the matrix inverted in the correction is diagonal, so
-the vector $M^{\top}(MM^{\top}+\varepsilon I)^{-1}(Mz_{l+1}-\hat z_l)$ has, in the
-coordinate of child $j$, the value of the coefficient of its parent $\pi_l(j)$
-alone. Two children of the same parent therefore receive an identical additive
-term, which cancels in their difference and preserves their relative order.
-Independent decoding is an unrestricted argmax over the whole level, so the only
-comparisons whose outcome the correction can alter are those between classes with
-distinct parents, whose additive terms differ.
-\end{proof}
-
-This is the mechanistic content of the claim, made in
-\S\ref{ssec:inference_interaction}, that HCC should be expected to reduce rather
-than to eliminate the independent-decoding inconsistency: the correction can move
-probability mass between sibling groups, which is what a consistency gain
-requires, but it is structurally incapable of resolving a competition inside one.
-
 The proposition fails for the magnitude convention $\phi=\lvert\cdot\rvert$ used
 by Hier-COS, where a common additive shift is not order-preserving, and it fails
 for the subspace-norm readout, whose subspaces span several levels: there the
-transform moves both decoders for every family. The practical consequence is a
-check rather than a result --- a post-hoc HCC row differing from its
-untransformed counterpart under top-down decoding on a classifier-head model
-indicates a defect in the evaluation, not an effect.
+transform can alter both decoders for every family. For HRN, the post-training
+transform acts on the auxiliary leaf cross-entropy scores rather than on the
+sigmoid tree branch constrained during HCC training. Its post-training HCC
+condition is therefore an output-space analysis, not a reconstruction of the
+training-time transformation.
 
-\paragraph{Three qualifications on the post-hoc HCC cells.} First, the transform is
-a faithful reproduction of the training-time projection only in that it applies the
-same operator to the same coordinates; it reuses the taxonomy of the run under
-evaluation, and any mismatch between that taxonomy and the one the checkpoint was
-trained on would surface here rather than being caught elsewhere.
-Second, the transform acts on whatever
-coordinates the readout consumes, which for HRN is its auxiliary leaf
-cross-entropy head rather than the sigmoid tree branch that HCC corrects during
-training; the HRN cells are therefore not a reconstruction of that family's
-training-time HCC path and are not reported as one. Third, the grid inherits the
-hazards of any re-evaluation of an already completed run: if the test split a run
-was scored on cannot be reconstructed exactly and a substitute is used, the
-rebuilt label space may differ from the one the checkpoint trained on, which
-surfaces as plausible but meaningless parent-level metrics while leaf accuracy
-still matches. Every reported cell is therefore checked against the run's own
-test metrics on its native cell before any other row from that run is used.
-
-\subsection{Checkpoint selection}
+\subsection{Model-state selection}
 \label{ssec:inference_selection}
 
-Because the two decoders induce different orderings of the epochs, a single
-``best'' checkpoint would silently favour whichever decoder the selection metric
-happened to reward. Every run therefore maintains \emph{two} checkpoints, one per
-decoding mode, each selected on the validation split by the mode's own metrics.
+Because the two decoders can rank candidate parameter states differently, using
+one selected state for both would favour the decoder used during selection.
+Model-state selection is therefore performed separately for each decoder on the
+validation split, using that decoder's own metrics.
 
-The selection criterion is itself lexicographic, which is convenient given the
-subject of this thesis. Epochs are ranked by the tuple
+The selection criterion is itself lexicographic. Candidate states are ranked by
+the tuple
 \[
 \Big(\;\mathrm{FPA}_{\text{mode}},\;\; -\mathrm{TICE}_{\text{mode}},\;\;
 \mathrm{wAP}_{\text{mode}}\;\Big)
 \]
 under the usual lexicographic order on tuples, so that full-path accuracy
 dominates, consistency breaks ties, and weighted accuracy breaks any remaining
-tie. Missing or non-finite entries rank below every finite value; when none of the
-three hierarchy metrics is available the deepest-level accuracy is used as the
-sole criterion.
+tie. When the hierarchy metrics are unavailable, deepest-level accuracy is used
+as the sole criterion.
 
-The reporting rule that follows is applied without exception in the experimental
-chapters: \textbf{a top-down result is read from the top-down-selected checkpoint
-and an independent result from the independent-selected checkpoint}. The two rows
-of a table may therefore come from different epochs of the same run, and mixing
-them --- reporting, for instance, the independent-decoded metrics of the
-top-down-selected checkpoint --- would confound the decoder comparison with a
-checkpoint comparison.
+The reporting rule follows directly: a top-down result is obtained from the state
+selected under top-down decoding, and an independent result from the state
+selected under independent decoding. The two results may therefore correspond to
+different stages of the same optimisation trajectory. Evaluating one decoder on
+the state selected for the other would confound the decoder comparison with a
+model-selection effect.
 
 \subsection{Interaction with the training-time mechanisms}
 \label{ssec:inference_interaction}
 
-The results established above, read together with the derivation of each of the
-three training-time mechanisms, yield a clean division, which is worth stating
-because it is easy to assume otherwise.
+The results established above, read together with the derivation of each
+mechanism, yield a clean division.
 
 \begin{itemize}
     \item \textbf{Lexicographic mode and the LH-projection have no effect at
@@ -1617,20 +1606,18 @@ because it is easy to assume otherwise.
     parameters reached by training, and neither changes the function computed by a
     given parameter vector. Any difference they produce in the metrics above is
     entirely mediated by the learned parameters.
-    \item \textbf{HCC does act at inference}, since it modifies the logits
+    \item \textbf{HCC does act at inference}, since it modifies the scores
     themselves and the same projection is applied in evaluation as in training.
-    \item \textbf{HCC does not by itself guarantee consistency.} This is the point
-    most easily misread. The cascade enforces $M_{l,l+1}\hat z_{l+1}=\hat z_l$, an
-    equality in \emph{logit space} between the parent logit and the sum of its
-    children's logits, as emphasised in \S\ref{ssec:hardnet_to_hcc}. It does not
-    imply
-    $\pi_l\big(\arg\max_j \hat z_{l+1}[j]\big)=\arg\max_i \hat z_l[i]$: a parent
-    may hold the largest logit while the largest child logit overall belongs to a
-    different parent whose children sum to less. \cref{cor:hcc_sibling_shift}
+    \item \textbf{HCC does not by itself guarantee consistency.} The cascade
+    enforces $M_{l,l+1}\hat z_{l+1}=\hat z_l$, an equality in \emph{logit space}
+    between the parent score and the sum of its children's scores. It does not
+    imply $\pi_l\big(\arg\max_j \hat z_{l+1}[j]\big)=\arg\max_i \hat z_l[i]$: a
+    parent may hold the largest score while the largest child score overall belongs
+    to a different parent whose children sum to less. \Cref{cor:hcc_sibling_shift}
     sharpens this: since the correction shifts every sibling group by a single
     scalar, it can only reorder classes across parents, so whatever consistency it
-    buys is bought there and nowhere else. HCC should therefore be expected
-    to \emph{reduce} $\mathrm{TICE}_{\text{independent}}$, not to zero it, and any
+    buys is bought there and nowhere else. HCC should therefore be expected to
+    \emph{reduce} $\mathrm{TICE}_{\text{independent}}$, not to zero it, and any
     claim that it produces consistent predictions must be supported by the measured
     independent-decoding TICE rather than deduced from the constraint. Exact
     consistency at inference is delivered by top-down decoding alone.
@@ -1643,33 +1630,27 @@ representational, and no post-hoc analysis can either reproduce or explain it
 away. Because HCC \emph{can} act at inference, the same is not true of it: an
 improvement under HCC is a priori compatible with a purely corrective reading,
 and separating the two requires the post-hoc grid of
-\S\ref{ssec:inference_grid}. The asymmetry is not a nuisance but the reason the
-three mechanisms cannot be compared on their headline numbers alone.
+\S\ref{ssec:inference_grid}. The asymmetry is the reason the three mechanisms
+cannot be compared on their headline numbers alone.
 
-
-
-
-\section{The mechanism axis and its admissible configurations}
+\section{Comparing the mechanisms}
 \label{sec:methodology_axis}
 
 The chapter has so far introduced the three mechanisms one at a time, each in the
-terms of its own construction, and has deferred every comparison between them.
-This section collects them. It asks what the three are \emph{relative to each
-other}, and which of their combinations exist at all --- questions that belong
-here, with the derivations, because they are settled by the structure of the
-mechanisms rather than by any measurement.
+terms of its own construction. This section collects them. It asks what the three
+are \emph{relative to each other}, and which of their combinations exist at all
+--- questions settled by the structure of the mechanisms rather than by any
+measurement.
 
-The answers turn out to be more restrictive than the three independent
-configuration switches suggest, and the restriction is itself a result. The
-section first classifies the mechanisms by the point of the computation at which
-they act (\S\ref{ssec:design_mechanisms}); it then shows that no two of them are
-used together, so that the mechanism choice is a four-way alternative rather than
-a factorial, and distinguishes carefully between the two pairs that cannot be
-composed and the one pair that could be but is not
-(\S\ref{ssec:design_axis}); it records which families admit which mechanism, and
-why the exclusions are arguments rather than gaps (\S\ref{ssec:design_support});
-and it closes with the structural constraints that cut the nominal configuration
-space to a tractable one (\S\ref{ssec:design_space}).
+The answers are more restrictive than three independent factors would suggest,
+and the restriction is itself a result. The section first
+classifies the mechanisms by the point of the computation at which they act
+(\S\ref{ssec:design_mechanisms}); it then shows that no two of them are used
+together, so that the mechanism choice is a four-way alternative rather than a
+factorial (\S\ref{ssec:design_axis}); it records which families admit which
+mechanism (\S\ref{ssec:design_support}); and it closes with the structural
+constraints that cut the nominal design space to a tractable one
+(\S\ref{ssec:design_space}).
 
 What this section does \emph{not} do is state the experiments. The research
 questions, the falsification arms, the controlled variables and the reporting
@@ -1687,9 +1668,9 @@ protocol depend on the datasets, metrics and seed counts that
 \toprule
 \textbf{Intervention} & \textbf{Acts on} & \textbf{Granularity} & \textbf{Guarantee} & \textbf{At inference} \\
 \midrule
-HCC & logits & per sample & exact (affine equality) & yes \\
-LH-projection & update direction & per sample & first order, at the branch point & no \\
 Lexicographic mode & update direction & per batch & first order, per block & no \\
+LH-projection & update direction & per sample & first order, at the branch point & no \\
+HCC & logits & per sample & exact (affine equality) & yes \\
 \midrule
 Readout rule & level scores & per sample & --- & yes, only \\
 Top-down decoding & decoded path & per sample & exact (path consistency) & yes, only \\
@@ -1703,17 +1684,36 @@ mechanisms act solely through the parameters that training reaches.}
 \label{tab:framework_mechanisms}
 \end{table}
 
-The three priority mechanisms form the axis announced in
-\S\ref{ssec:lexicographic}: priority imposed on the output contract by
-construction (HCC), priority imposed on the learning signal at a structural
-bottleneck (the LH-projection), and priority imposed on the assembled update in
-parameter space (lexicographic mode). None of them achieves sequential
-lexicographic optimality; all three realise lexicographic \emph{structure} at a
-different locus. Whether the locus matters is the question the design exists to
-answer.
+The three mechanisms form a single axis: priority imposed on the assembled update
+in parameter space (lexicographic mode), on the learning signal at a structural
+bottleneck (the LH-projection), and on the output contract by construction (HCC).
+None of them achieves sequential lexicographic optimality; all three realise
+lexicographic \emph{structure} at a different locus. Whether the locus matters is
+the question the design exists to answer.
 
-The lower block of the table is what makes that question answerable. Because the
-readout and the decoder can be varied on a frozen checkpoint
+Two of the contrasts deserve to be stated in full. Lexicographic mode and the
+LH-projection differ in reference direction, granularity, locus and cost, as set
+out in \S\ref{ssec:lhproj_forward}; they are two realisations of one principle.
+Lexicographic mode and HCC differ more sharply. HCC constrains the logits: the
+restriction is exact, holds per sample, and holds at inference as well as during
+training, but it governs only what the heads emit and leaves the shared parameters
+free to be pulled in incompatible directions by the level losses. Lexicographic
+mode constrains the assembled update: the restriction is first-order and holds per
+batch, it says nothing about the scores a given parameter vector produces, and it
+has no effect at inference.
+
+One qualification is due on HCC's side. Because the projection is
+differentiable, its Jacobian also filters the derivative: by
+\cref{prop:hcc_backward}, the level-$(l+1)$ signal reaching the raw scores is
+mean-centred within each sibling group. HCC therefore does act in gradient space,
+but only as a consequence of what it does in output space, and only on the level
+heads' own scores rather than on the shared parameters. It is an output-space
+method with a gradient-space side effect, not a second gradient-space method; the
+distinction matters because the side effect is not something the design chose, and
+it cannot be varied independently of the constraint.
+
+The lower block of the table is what makes the locus question answerable. Because
+the readout and the decoder can be varied while holding the parameter state fixed
 (\S\ref{ssec:inference_grid}), the contribution of a mechanism to the learned
 representation can be distinguished from its contribution to the readout, which
 for HCC --- the one mechanism active at inference --- is not otherwise separable.
@@ -1721,7 +1721,7 @@ for HCC --- the one mechanism active at inference --- is not otherwise separable
 \subsection{The mechanism axis is a single choice, not a factorial}
 \label{ssec:design_axis}
 
-It is natural to expect three independently configurable mechanisms to yield a
+It is natural to expect three independently variable mechanisms to yield a
 $2\times2\times2$ design. They do not: no two of the three are ever used together.
 The three exclusions are not, however, of the same kind, and conflating them would
 overstate what the design establishes. Two of the pairs cannot be composed at all;
@@ -1734,43 +1734,41 @@ the third could be, and is excluded by decision.
     anchored on the level above. Under HCC the head weights whose row space the
     LH-projection reserves no longer describe the map that produces the logits the
     objective sees, so the reserved subspace would be built from a Jacobian that is
-    no longer the Jacobian of anything the objective evaluates. The pair is
-    rejected at construction, for the reason given in
-    \S\ref{ssec:lhproj_hiercos}, and the configuration validator refuses it.
+    no longer the Jacobian of the scores evaluated by the objective. The pair is
+    therefore excluded as methodologically undefined.
     \item \textbf{The LH-projection and lexicographic mode} are, by the analysis
     of \S\ref{ssec:lhproj_forward}, two realisations of one principle: both
     remove from a lower-priority level's learning signal the component lying in a
-    subspace claimed by the higher levels, one inside the computational graph and
+    subspace claimed by the higher levels, one at the representation branch and
     one on the assembled gradient. Composing them would apply the same principle
     twice by two routes, and the resulting ordering would not be attributable to
-    either. The pair is likewise rejected at construction, and the configuration
-    validator refuses it.
+    either. The pair is therefore excluded from the design.
     \item \textbf{HCC and lexicographic mode} \emph{can} be composed, and the
     reason is worth stating precisely, because the obvious argument against the
     combination does not survive inspection. One might expect HCC to destroy the
     separability of the three level objectives that \S\ref{ssec:lex_setting}
-    presupposes, since each $\hat z_l$ depends on the raw logits of every level at
-    or above $l$. It does not, and the stop-gradient is exactly why: each anchor is
-    detached, so $\nabla_\theta\,\ell_l(\hat z_l)$ still flows through the level-$l$
-    path alone, and three independently computable gradients remain available for
-    the ordering to act upon. Nothing in either construction breaks, and the
-    configuration validator permits the pair.
+    presupposes, since each $\hat z_l$ depends on the raw scores of every level at
+    or above $l$. It does not, because the fixed-gradient anchor ensures that
+    $\nabla_\theta\,\ell_l(\hat z_l)$ follows the level-$l$ path alone, leaving
+    three independently defined gradients on which the ordering can act. The pair
+    is therefore mathematically admissible.
 
     The objection is instead one of attribution. Under HCC the coarse-to-fine
-    ordering is already imposed in the forward pass and the reverse influence
-    already blocked in the backward pass; adding lexicographic mode would impose
-    the same ordering a second time, on gradients of objectives that HCC has made
+    ordering is already imposed on the scores and the reverse derivative influence
+    is blocked; adding lexicographic mode would impose the same ordering a second
+    time, on gradients of objectives that HCC has made
     hierarchically dependent in their arguments. \Cref{prop:lex_firstorder} would
     continue to hold as algebra, but its reading would change: the quantity it
     protects would no longer be the level-$l$ objective but the level-$l$ objective
-    \emph{as evaluated on constrained logits}, and no observed effect could be
+    \emph{as evaluated on constrained scores}, and no observed effect could be
     assigned to one locus rather than the other. The combination is therefore not
-    run in this thesis, and this is a design decision rather than an impossibility.
+    evaluated in this thesis, and this is a design decision rather than an
+    impossibility.
 \end{itemize}
 
 The mechanism axis is therefore a four-way single choice,
 \[
-\big\{\,\text{none},\ \text{HCC},\ \text{LH-projection},\ \text{lexicographic mode}\,\big\},
+\big\{\,\text{none},\ \text{lexicographic mode},\ \text{LH-projection},\ \text{HCC}\,\big\},
 \]
 and every comparison among the three is a between-arms comparison against the
 shared \emph{none} baseline.
@@ -1780,11 +1778,10 @@ of the design but one of its results, and they share a cause: both concern what
 determines the per-level logits. HCC and the LH-projection both claim that role and
 give incompatible answers; the LH-projection and lexicographic mode give the same
 answer twice. Second, and by contrast, the HCC--lexicographic exclusion rests on
-what was actually run rather than on what could be. No run in this thesis combines
-them, and a study of the combination --- which the framework would support without
-modification --- is left as an avenue this design deliberately does not take.
+the scope of the present design rather than on mathematical compatibility. Their
+combination is left as an avenue this design deliberately does not take.
 
-\subsection{Which families support which mechanism}
+\subsection{Supported model families}
 \label{ssec:design_support}
 
 \begin{table}[htbp]
@@ -1792,19 +1789,19 @@ modification --- is left as an avenue this design deliberately does not take.
 \small
 \begin{tabular}{@{}lccc l@{}}
 \toprule
-\textbf{Family} & \textbf{HCC} & \textbf{Lex.\ mode} & \textbf{LH-proj.} & \textbf{Condition} \\
+\textbf{Family} & \textbf{Lex.\ mode} & \textbf{LH-proj.} & \textbf{HCC} & \textbf{Condition} \\
 \midrule
-H-CAST   & yes & yes & no  & three levels; no global KL term for lex.\ mode \\
+H-CAST   & yes & no  & yes & three levels; no global KL term for lex.\ mode \\
 Hier-COS & yes & yes & yes & decomposed loss for lex.; level softmax and identity frame for LH-proj. \\
-HRN      & yes & yes & no  & exactly three levels; decomposed level-marginal loss \\
-HT-CapsNet & yes & yes & no & three capsule margin losses \\
-LH-DNN   & no  & no  & built in & no three independent level objectives \\
+HRN      & yes & no  & yes & exactly three levels; decomposed level-marginal loss \\
+HT-CapsNet & yes & no & yes & three capsule margin losses \\
+LH-DNN   & no  & built in & no & no three independent level objectives \\
 \bottomrule
 \end{tabular}
 \caption{Support matrix. ``Built in'' indicates that the mechanism is constitutive
 of the family rather than optional. ``Yes'' records that a family admits a
 mechanism, not that the mechanisms may be combined: by \S\ref{ssec:design_axis}
-each run carries at most one.}
+each experimental condition contains at most one.}
 \label{tab:framework_support}
 \end{table}
 
@@ -1816,7 +1813,7 @@ gap.} Every mechanism in this thesis acts on the part of the network where a
 shared representation is distributed to level-specific heads --- which is
 precisely the part that constitutes LH-DNN's contribution. Enabling lexicographic
 mode on it would apply, by explicit gradient surgery, the same principle its
-branch-point projection already applies inside the graph; imposing HCC on it would
+branch-point projection already applies to the shared representation; imposing HCC on it would
 overwrite the structure it exists to demonstrate. Any arm applied to LH-DNN
 therefore either duplicates what it already does or replaces it, and a result from
 such an arm could not be attributed to LH-DNN. It is retained as a baseline and as
@@ -1827,30 +1824,31 @@ architecture'' fixed while the other four families vary.
 \paragraph{Hier-COS is the only family supporting all three mechanisms}, which is
 why it carries the structural ablations of \S\ref{ssec:lhproj_hiercos} and serves
 as the common substrate on which the loci can be compared at matched backbone,
-frame, loss and weights. The head-to-head between the LH-projection and
-lexicographic mode --- the two realisations of one principle --- is therefore
-available \emph{within} a single family, holding everything but the mechanism
-fixed, which is a cleaner contrast than a cross-family comparison could have been.
+frame, loss and per-level learning rates. The head-to-head between the
+LH-projection and lexicographic mode --- the two realisations of one principle ---
+is therefore available \emph{within} a single family, holding everything but the
+mechanism fixed, which is a cleaner contrast than a cross-family comparison could
+have been.
 
 \paragraph{HRN's three-level restriction} is a property of the method as published,
-not of the hierarchy, and coincides here with the three-level restriction that HCC and
-lexicographic mode impose for their own reasons.
+not of the hierarchy, and coincides here with the three-level formulation of
+lexicographic mode. HCC and the LH-projection themselves extend to arbitrary $L$.
 
 \subsection{The design space and what prunes it}
 \label{ssec:design_space}
 
 Enumerated as a factorial, the space is intractable and uninformative. On Hier-COS
-alone the frame ($3$), the loss scope ($3$), the level weighting ($5$), the
-placement of the learnable transform ($3$), the mechanism choice ($8$, counting
-the two composition modes crossed with the two removal rules of
-\S\ref{ssec:lex_projection} as distinct arms) and the dataset ($3$) already give
-$3\times3\times5\times3\times8\times3 = 3240$ configurations per seed, before any
-backbone or head variant, and at three seeds each. The factorial is not the plan.
+alone the frame ($3$), the loss scope ($3$), the per-level learning rate setting
+($5$), the placement of the learnable transform ($3$), the mechanism choice ($5$,
+counting the two composition modes as distinct lexicographic arms) and the dataset
+($3$) already give $3\times3\times5\times3\times5\times3 = 2025$ experimental
+conditions per replicate, before any backbone or head variant, and three
+replicates are considered.
 
-What cuts it to the order of a few dozen configurations that carry information is
-a set of structural constraints, each of which rules a region of the space out
-rather than merely making it unattractive. They are worth stating because several
-of them are themselves substantive:
+What cuts this to the order of a few dozen experimental conditions that carry information
+is a set of structural constraints, each of which rules out a region of the space
+rather than merely making it unattractive. Several of them are themselves
+substantive:
 
 \begin{enumerate}
     \item \textbf{Gradient-space ordering requires separable level objectives, and
@@ -1868,8 +1866,9 @@ of them are themselves substantive:
     \item \textbf{The LH-projection requires independent level heads}, hence an
     identity or per-level block-diagonal frame, and a representation wider than
     the total number of non-leaf classes (\cref{prop:lhproj_rank}).
-    \item \textbf{HCC requires exactly three levels}, as do the three-objective
-    constructions of lexicographic mode.
+    \item \textbf{Lexicographic mode as formulated here requires exactly three
+    levels.} HCC and the LH-projection are defined for arbitrary $L$; their use on
+    three-level taxonomies is a property of the experimental setting.
     \item \textbf{Family-specific decompositions}, recorded in
     Table~\ref{tab:framework_support}: H-CAST without its global KL term, the
     level-marginal objective on HRN, the three capsule margin losses on
@@ -1879,18 +1878,17 @@ of them are themselves substantive:
 The pruning is therefore not a convenience. The constraints trace the boundary of
 where each mechanism is definable at all, and that boundary is treated in
 \cref{ch:experiments} as an object of study rather than as a precondition to be
-satisfied silently: the identity frame and the per-level softmax are not
-housekeeping that precedes the LH-projection, they are settings whose cost
-is measured before any projection is applied to them.
+satisfied silently: the identity frame and the per-level softmax are structural
+model adaptations whose effects are measured before any projection is applied.
 
 \medskip
 
 This completes the apparatus. The chapter has fixed a formal setting and a
 priority ordering (\S\ref{sec:methodology_problem}), derived three mechanisms that
-realise that ordering on the forward map, on the assembled update and at the
-branch points of a shared trunk (\S\ref{sec:methodology_hcc}--%
-\S\ref{sec:methodology_lhproj}), specified the readout, decoder and
-checkpoint-selection rules under which any of them is scored
+realise that ordering on the assembled update, at the branch points of a shared
+trunk and on the model outputs (\S\ref{sec:methodology_lex}--%
+\S\ref{sec:methodology_hcc}), specified the readout, decoder and
+model-selection rules under which any of them is scored
 (\S\ref{sec:methodology_inference}), and established that the three mechanisms
 form a four-way alternative rather than a factorial
 (\S\ref{sec:methodology_axis}).
@@ -1901,4 +1899,3 @@ to, the data they are compared on, the quantities they are compared with, and th
 rules under which a difference counts as evidence. \Cref{ch:experiments} supplies
 those in that order, and then states the design that turns this apparatus into
 answerable questions.
-

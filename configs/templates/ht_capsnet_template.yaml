@@ -7,6 +7,7 @@ model:
   # Capsule dimensions
   caps_dim: 8                      # Primary capsule dimension
   secondary_dims: [64, 32, 16]      # Secondary capsule dims per hierarchy level (length = hierarchy depth)
+  primary_capsule_mode: paper_independent # paper Eq. 4 | source_reuse: released TensorFlow reshape
 
   # Dynamic routing
   routing_iters: 3                 # Number of routing-by-agreement iterations per level
@@ -15,7 +16,7 @@ model:
   backbone_net: efficientnet_b7    # Supported: custom | efficientnet_b7
   backbone_net_weights: imagenet   # Supported: imagenet | none
   backbone_variant: tf_efficientnet_b7.aa_in1k # Keras ImageNet weight conversion; avoid untagged timm alias
-  backbone_preprocessing: keras    # keras: embedded Rescaling+Normalization parity | timm: native timm normalization
+  backbone_preprocessing: keras    # keras: released standardized-input path | keras_unit_range: raw-input diagnostic | timm: native timm normalization
   backbone_bn_momentum: 0.01       # PyTorch equivalent of Keras BatchNorm momentum=0.99
   backbone_drop_path: 0.2          # Keras EfficientNet progressive drop-connect maximum
   num_blocks: 4                    # Used only for backbone_net=custom: number of conv blocks
@@ -28,6 +29,7 @@ model:
   mask_threshold_low: 0.1          # Lower bound of soft taxonomy mask range
   mask_temperature: 0.5            # Temperature applied before routing softmax
   mask_center: 0.5                 # Sigmoid center for taxonomy mask transformation
+  routing_parent_activation: norm  # norm: paper Eq. 13 | softmax_norm: released source
 
   # Cross-level attention controls
   attn_heads: 16                   # Requested number of attention heads per level
@@ -44,3 +46,4 @@ model:
     # Per-level loss weighting
     weight_mode: dynamic           # dynamic | static | none
     dynamic_weight: 0.0            # Decay factor for dynamic level weighting formula
+    dynamic_weight_formula: paper  # paper Eq. 21 | released_source callback

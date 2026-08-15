@@ -7,7 +7,6 @@ from .types import GradTuple, LevelGradMap, LexicographicUpdateState, TrunkGradS
 _GRAD_EPS = 1e-12
 _GRAD_LEVEL_NAMES = ("coarse", "mid", "fine")
 _LEX_PROJECTION_MODES = ("coarse_first", "fine_first")
-_LEX_PROJECTION_RULES = ("orthogonalize_all", "conflict_only")
 
 # Internal projection-flag key -> logged metric name. Flags are produced as
 # on-device 0-dim tensors and reduced to floats in the batched metric transfer.
@@ -339,7 +338,6 @@ def _project_onto_reference(
     reference_grads: Sequence[Optional[torch.Tensor]],
     include_mask: Sequence[bool],
     eps: float,
-    projection_rule: str = "orthogonalize_all",
 ) -> Tuple[GradTuple, torch.Tensor, torch.Tensor]:
     """Project ``target_grads`` off ``reference_grads`` without host synchronization.
 
@@ -347,16 +345,8 @@ def _project_onto_reference(
     on the gradient device, so the projection never blocks on ``.item()``. A
     projection that does not apply resolves to a zero coefficient, and
     ``grad_target - 0 * grad_ref`` is bitwise equal to ``grad_target`` for finite
-    references. The trade-off is that a non-applied projection now allocates a
-    tuple instead of aliasing ``target_grads``; this matters mainly for
-    ``conflict_only``, where non-application is the common case.
+    references.
     """
-    if projection_rule not in _LEX_PROJECTION_RULES:
-        raise ValueError(
-            f"Unsupported lex projection rule '{projection_rule}'. "
-            f"Expected one of {list(_LEX_PROJECTION_RULES)}."
-        )
-
     eps_value = float(eps)
     denom = _dot_from_autograd_grads(reference_grads, reference_grads, include_mask)
     # Both dots skip the same entries, but an empty reduction falls back to a CPU
@@ -367,8 +357,6 @@ def _project_onto_reference(
     )
 
     applied = denom > eps_value
-    if projection_rule == "conflict_only":
-        applied = applied & (numer < -eps_value)
     coeff = torch.where(
         applied,
         numer / denom.clamp_min(eps_value),
@@ -523,7 +511,6 @@ def _build_lexicographic_grads(
     fine_grads: Sequence[Optional[torch.Tensor]],
     trunk_masks: Mapping[str, Sequence[bool]],
     projection_mode: str = "coarse_first",
-    projection_rule: str = "orthogonalize_all",
     eps: float = _GRAD_EPS,
     include_metrics: bool = True,
 ) -> Tuple[Dict[str, GradTuple], Dict[str, float]]:
@@ -532,12 +519,6 @@ def _build_lexicographic_grads(
             f"Unsupported lex projection mode '{projection_mode}'. "
             f"Expected one of {list(_LEX_PROJECTION_MODES)}."
         )
-    if projection_rule not in _LEX_PROJECTION_RULES:
-        raise ValueError(
-            f"Unsupported lex projection rule '{projection_rule}'. "
-            f"Expected one of {list(_LEX_PROJECTION_RULES)}."
-        )
-
     t1_mask = list(trunk_masks.get("t1", []))
     t2_mask = list(trunk_masks.get("t2", []))
 
@@ -553,14 +534,12 @@ def _build_lexicographic_grads(
             reference_grads=coarse_grads,
             include_mask=t2_mask,
             eps=eps,
-            projection_rule=projection_rule,
         )
         mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
             target_grads=mid_grads,
             reference_grads=coarse_grads,
             include_mask=t1_mask,
             eps=eps,
-            projection_rule=projection_rule,
         )
         mid_projected = _compose_mid_projected_grads(
             mid_grads=mid_grads,
@@ -579,7 +558,6 @@ def _build_lexicographic_grads(
             reference_grads=higher_t1,
             include_mask=t1_mask,
             eps=eps,
-            projection_rule=projection_rule,
         )
         coarse_projected = tuple(coarse_grads)
         projection_flags["mid_off_coarse_t2"] = mid_applied_t2
@@ -591,7 +569,6 @@ def _build_lexicographic_grads(
             reference_grads=fine_grads,
             include_mask=t1_mask,
             eps=eps,
-            projection_rule=projection_rule,
         )
         mid_projected = _compose_mid_projected_grads(
             mid_grads=mid_grads,
@@ -606,7 +583,6 @@ def _build_lexicographic_grads(
             reference_grads=mid_grads,
             include_mask=t2_mask,
             eps=eps,
-            projection_rule=projection_rule,
         )
         higher_t1 = _sum_grad_tuples(
             fine_grads,
@@ -618,7 +594,6 @@ def _build_lexicographic_grads(
             reference_grads=higher_t1,
             include_mask=t1_mask,
             eps=eps,
-            projection_rule=projection_rule,
         )
         coarse_projected = _compose_coarse_projected_grads(
             coarse_grads=coarse_grads,
@@ -726,7 +701,6 @@ def prepare_lexicographic_update(
     include_metrics: bool = True,
     grad_scale: float = 1.0,
     projection_mode: str = "coarse_first",
-    projection_rule: str = "orthogonalize_all",
     precomputed_level_grad_map: Optional[Any] = None,
 ) -> Tuple[Optional[LexicographicUpdateState], Dict[str, float]]:
     """Build lexicographic grads in unscaled units, optionally scaling returned grads.
@@ -766,7 +740,6 @@ def prepare_lexicographic_update(
         fine_grads=fine_grads,
         trunk_masks=trunk_masks,
         projection_mode=projection_mode,
-        projection_rule=projection_rule,
         eps=eps,
         include_metrics=include_metrics,
     )

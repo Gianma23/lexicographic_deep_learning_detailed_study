@@ -113,6 +113,90 @@ class LexicographicProjectionReuseTests(unittest.TestCase):
         }
         self.level_losses = [torch.ones((), requires_grad=True) for _ in range(3)]
 
+    def test_projection_always_removes_the_reference_component(self):
+        projected, coefficient, applied = gradient_ops._project_onto_reference(
+            target_grads=(torch.tensor([2.0, 1.0]),),
+            reference_grads=(torch.tensor([1.0, 0.0]),),
+            include_mask=(True,),
+            eps=1.0e-12,
+        )
+
+        torch.testing.assert_close(projected[0], torch.tensor([0.0, 1.0]))
+        torch.testing.assert_close(coefficient, torch.tensor(2.0))
+        self.assertTrue(bool(applied))
+
+    def test_both_projection_orders_orthogonalize_aligned_gradients(self):
+        coarse = (torch.tensor([1.0, 0.0]), torch.tensor([1.0, 0.0]))
+        mid = (torch.tensor([1.0, 1.0]), torch.tensor([2.0, 1.0]))
+        fine = (torch.tensor([2.0, 1.0]), None)
+        trunk_masks = gradient_ops._resolve_trunk_masks(coarse, mid, fine)
+        zero = torch.zeros(())
+
+        for projection_mode in ("coarse_first", "fine_first"):
+            with self.subTest(mode=projection_mode):
+                projected, metrics = gradient_ops._build_lexicographic_grads(
+                    coarse_grads=coarse,
+                    mid_grads=mid,
+                    fine_grads=fine,
+                    trunk_masks=trunk_masks,
+                    projection_mode=projection_mode,
+                    include_metrics=True,
+                )
+
+                if projection_mode == "coarse_first":
+                    torch.testing.assert_close(
+                        torch.dot(projected["mid_projected"][0], coarse[0]),
+                        zero,
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
+                    torch.testing.assert_close(
+                        torch.dot(projected["mid_projected"][1], coarse[1]),
+                        zero,
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
+                    higher = coarse[0] + projected["mid_projected"][0]
+                    torch.testing.assert_close(
+                        torch.dot(projected["fine_projected"][0], higher),
+                        zero,
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
+                    applied_metrics = (
+                        "post_projection_applied_t2_mid_coarse",
+                        "post_projection_applied_t1_mid_coarse",
+                        "post_projection_applied_t1_fine_higher",
+                    )
+                else:
+                    torch.testing.assert_close(
+                        torch.dot(projected["mid_projected"][0], fine[0]),
+                        zero,
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
+                    torch.testing.assert_close(
+                        torch.dot(projected["coarse"][1], mid[1]),
+                        zero,
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
+                    higher = fine[0] + projected["mid_projected"][0]
+                    torch.testing.assert_close(
+                        torch.dot(projected["coarse"][0], higher),
+                        zero,
+                        rtol=0.0,
+                        atol=1.0e-6,
+                    )
+                    applied_metrics = (
+                        "post_projection_applied_t1_mid_fine",
+                        "post_projection_applied_t2_coarse_mid",
+                        "post_projection_applied_t1_coarse_higher",
+                    )
+
+                for metric_name in applied_metrics:
+                    self.assertEqual(metrics[metric_name], 1.0)
+
     def test_prepare_builds_projected_gradients_once_with_metrics(self):
         trunk_masks = gradient_ops._resolve_trunk_masks(
             self.level_grad_map["coarse"],
@@ -120,42 +204,39 @@ class LexicographicProjectionReuseTests(unittest.TestCase):
             self.level_grad_map["fine"],
         )
         for projection_mode in ("coarse_first", "fine_first"):
-            for projection_rule in ("orthogonalize_all", "conflict_only"):
-                with self.subTest(mode=projection_mode, rule=projection_rule):
-                    expected_grads, expected_metrics = gradient_ops._build_lexicographic_grads(
-                        coarse_grads=self.level_grad_map["coarse"],
-                        mid_grads=self.level_grad_map["mid"],
-                        fine_grads=self.level_grad_map["fine"],
-                        trunk_masks=trunk_masks,
+            with self.subTest(mode=projection_mode):
+                expected_grads, expected_metrics = gradient_ops._build_lexicographic_grads(
+                    coarse_grads=self.level_grad_map["coarse"],
+                    mid_grads=self.level_grad_map["mid"],
+                    fine_grads=self.level_grad_map["fine"],
+                    trunk_masks=trunk_masks,
+                    projection_mode=projection_mode,
+                    include_metrics=True,
+                )
+
+                with mock.patch.object(
+                    gradient_ops,
+                    "_build_lexicographic_grads",
+                    wraps=gradient_ops._build_lexicographic_grads,
+                ) as build_mock:
+                    state, metrics = gradient_ops.prepare_lexicographic_update(
+                        trainable_named_params=self.named_params,
+                        level_losses=self.level_losses,
+                        precomputed_level_grad_map=self.level_grad_map,
                         projection_mode=projection_mode,
-                        projection_rule=projection_rule,
                         include_metrics=True,
                     )
 
-                    with mock.patch.object(
-                        gradient_ops,
-                        "_build_lexicographic_grads",
-                        wraps=gradient_ops._build_lexicographic_grads,
-                    ) as build_mock:
-                        state, metrics = gradient_ops.prepare_lexicographic_update(
-                            trainable_named_params=self.named_params,
-                            level_losses=self.level_losses,
-                            precomputed_level_grad_map=self.level_grad_map,
-                            projection_mode=projection_mode,
-                            projection_rule=projection_rule,
-                            include_metrics=True,
-                        )
-
-                    self.assertEqual(build_mock.call_count, 1)
-                    self.assertIsNotNone(state)
-                    self.assertEqual(metrics, expected_metrics)
-                    for pack_name, expected_pack in expected_grads.items():
-                        actual_pack = state.projected_grads[pack_name]
-                        for actual_grad, expected_grad in zip(actual_pack, expected_pack):
-                            if expected_grad is None:
-                                self.assertIsNone(actual_grad)
-                            else:
-                                self.assertTrue(torch.equal(actual_grad, expected_grad))
+                self.assertEqual(build_mock.call_count, 1)
+                self.assertIsNotNone(state)
+                self.assertEqual(metrics, expected_metrics)
+                for pack_name, expected_pack in expected_grads.items():
+                    actual_pack = state.projected_grads[pack_name]
+                    for actual_grad, expected_grad in zip(actual_pack, expected_pack):
+                        if expected_grad is None:
+                            self.assertIsNone(actual_grad)
+                        else:
+                            self.assertTrue(torch.equal(actual_grad, expected_grad))
 
 
 if __name__ == "__main__":

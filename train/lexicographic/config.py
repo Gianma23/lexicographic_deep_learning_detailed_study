@@ -7,7 +7,6 @@ from ..runtime.common import section_to_dict
 
 
 _LEX_PROJECTION_MODES = ("coarse_first", "fine_first")
-_LEX_PROJECTION_RULES = ("orthogonalize_all", "conflict_only")
 
 
 def _parse_positive_float(value: Any, default: float) -> float:
@@ -56,21 +55,6 @@ def _resolve_lex_projection_mode(value: Any, default: str = "coarse_first") -> s
     return raw_mode
 
 
-def _resolve_lex_projection_rule(value: Any, default: str = "orthogonalize_all") -> str:
-    raw_rule = default if value is None else value
-    if not isinstance(raw_rule, str):
-        raise ValueError(
-            "train.lexicographic.projection_rule must be a string: one of "
-            f"{list(_LEX_PROJECTION_RULES)}."
-        )
-    if raw_rule not in _LEX_PROJECTION_RULES:
-        raise ValueError(
-            f"Unsupported train.lexicographic.projection_rule '{raw_rule}'. "
-            f"Expected one of {list(_LEX_PROJECTION_RULES)}."
-        )
-    return raw_rule
-
-
 def resolve_lexicographic_config(cfg: Any) -> LexicographicConfig:
     train_cfg = section_to_dict(getattr(cfg, "train", None))
     raw_lex_cfg = section_to_dict(train_cfg.get("lexicographic", None))
@@ -78,14 +62,12 @@ def resolve_lexicographic_config(cfg: Any) -> LexicographicConfig:
     eps = _parse_positive_float(raw_lex_cfg.get("eps", 1e-12), default=1e-12)
     log_metrics = bool(raw_lex_cfg.get("log_metrics", True))
     projection_mode = _resolve_lex_projection_mode(raw_lex_cfg.get("projection_mode", "coarse_first"))
-    projection_rule = _resolve_lex_projection_rule(raw_lex_cfg.get("projection_rule", "orthogonalize_all"))
 
     return LexicographicConfig(
         enabled=enabled,
         eps=eps,
         log_metrics=log_metrics,
         projection_mode=projection_mode,
-        projection_rule=projection_rule,
     )
 
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Runs native HT-CapsNet lexicographic training from the paper-baseline configs.
-# Defaults: all datasets, start@0, coarse-first, orthogonalize-all, and unit
+# Defaults: all datasets, start@0, coarse-first, and unit
 # per-level margin-loss weights (`model.loss.weight_mode=none`).
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,7 +19,6 @@ MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 LEX_PROJECTION_MODE="${LEX_PROJECTION_MODE:-coarse_first}"
-LEX_PROJECTION_RULE="${LEX_PROJECTION_RULE:-orthogonalize_all}"
 
 case "$LEX_PROJECTION_MODE" in
   coarse_first|fine_first) ;;
@@ -29,15 +28,6 @@ case "$LEX_PROJECTION_MODE" in
     exit 2
     ;;
 esac
-case "$LEX_PROJECTION_RULE" in
-  orthogonalize_all|conflict_only) ;;
-  *)
-    echo "Unsupported LEX_PROJECTION_RULE: $LEX_PROJECTION_RULE" >&2
-    echo "Expected orthogonalize_all or conflict_only." >&2
-    exit 2
-    ;;
-esac
-
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
 }
@@ -127,13 +117,12 @@ run_train() {
 
 run_output_dir() {
   local dataset="$1"
-  echo "$OUTPUTS_ROOT/ht_capsnet_${dataset}_lex_${LEX_PROJECTION_RULE}_${LEX_PROJECTION_MODE}"
+  echo "$OUTPUTS_ROOT/ht_capsnet_${dataset}_lex_${LEX_PROJECTION_MODE}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
-printf 'Lex projection rule: %s\n' "$LEX_PROJECTION_RULE"
 printf 'HT-CapsNet level weights: unit (weight_mode=none)\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
@@ -146,7 +135,6 @@ for dataset in "${DATASETS[@]}"; do
     "model.loss.weight_mode=none" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
-    "train.lexicographic.projection_rule=$LEX_PROJECTION_RULE" \
     "train.lexicographic.eps=1.0e-12" \
     "train.lexicographic.log_metrics=true"
 done

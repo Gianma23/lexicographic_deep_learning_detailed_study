@@ -3,6 +3,9 @@ model:
   caps_dim: 8
   secondary_dims: [64, 32, 16]
   routing_iters: 3
+  # Paper Eq. 4/Fig. 2 builds one primary-capsule tensor per hierarchy level.
+  # source_reuse reproduces the released file's reshape of squashed 8-D capsules.
+  primary_capsule_mode: paper_independent
 
   num_blocks: 4
   initial_filters: 64
@@ -23,6 +26,9 @@ model:
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
+  # Paper Eq. 13 uses the parent capsule norm directly. Use softmax_norm only
+  # to reproduce the contradictory released TensorFlow layer.
+  routing_parent_activation: norm
 
   # Cross-capsule attention
   attn_heads: 16
@@ -36,6 +42,9 @@ model:
     lambda_downweight: 0.5
     weight_mode: dynamic
     dynamic_weight: 0.0
+    # Paper Eq. 21: (1 - accuracy) * initial_weight. The released callback
+    # instead evaluates 1 - accuracy * initial_weight.
+    dynamic_weight_formula: paper
 
 dataset:
   name: cifar-100
@@ -74,6 +83,8 @@ dataloader:
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
+  # tf.data.padded_batch retains the final partial batch.
+  drop_last_train: false
 
 train:
   # run-HT-CapsNet.sh sets epochs=200.

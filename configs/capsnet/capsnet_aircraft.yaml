@@ -3,6 +3,7 @@ model:
   caps_dim: 8
   secondary_dims: [64, 32, 16]
   routing_iters: 3
+  primary_capsule_mode: paper_independent
 
   num_blocks: 4
   initial_filters: 64
@@ -20,6 +21,7 @@ model:
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
+  routing_parent_activation: norm
 
   # Cross-capsule attention
   attn_heads: 16
@@ -33,6 +35,7 @@ model:
     lambda_downweight: 0.5
     weight_mode: dynamic
     dynamic_weight: 0.0
+    dynamic_weight_formula: paper
 
 dataset:
   # Local extrapolation: HT-CapsNet reports Stanford Cars, not FGVC-Aircraft.
@@ -78,6 +81,7 @@ dataloader:
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
+  drop_last_train: false
 
 train:
   epochs: 200

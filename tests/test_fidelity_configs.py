@@ -3,6 +3,8 @@ from pathlib import Path
 
 import yaml
 
+from train.config_loader import load_config
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,12 +26,22 @@ class FidelityPresetTests(unittest.TestCase):
                 self.assertEqual(cfg["model"]["attn_heads"], 16)
                 self.assertEqual(cfg["model"]["attn_key_dim"], 32)
                 self.assertEqual(cfg["model"]["secondary_dims"], [64, 32, 16])
+                self.assertEqual(
+                    cfg["model"]["primary_capsule_mode"],
+                    "paper_independent",
+                )
+                self.assertEqual(cfg["model"]["routing_parent_activation"], "norm")
+                self.assertEqual(
+                    cfg["model"]["loss"]["dynamic_weight_formula"],
+                    "paper",
+                )
                 self.assertEqual(cfg["dataset"]["image_size"], image_size)
                 transforms = cfg["dataset"]["transforms"]
                 self.assertEqual(transforms["mixup"], 0.2)
                 self.assertEqual(transforms["mixup_mode"], "elem")
                 self.assertEqual(transforms["mixup_pairing"], "random")
                 self.assertEqual(cfg["dataloader"]["batch_size"], 32)
+                self.assertFalse(cfg["dataloader"]["drop_last_train"])
                 self.assertEqual(cfg["train"]["epochs"], 200)
                 self.assertFalse(cfg["train"]["amp"])
                 self.assertEqual(cfg["optim"]["name"], "keras_adam")
@@ -48,6 +60,23 @@ class FidelityPresetTests(unittest.TestCase):
                 self.assertEqual(cfg["scheduler"]["decay_rate"], 0.95)
                 expected_scope = "dataset" if image_size == 32 else "batch"
                 self.assertEqual(transforms["normalization_scope"], expected_scope)
+
+    def test_ht_capsnet_raw_input_diagnostic_requires_unscaled_images(self):
+        path = REPO_ROOT / "configs/capsnet/capsnet_cifar100.yaml"
+        cfg, _ = load_config(
+            str(path),
+            [
+                "dataset.transforms.normalization=none",
+                "dataset.transforms.normalization_scope=image",
+                "model.backbone_preprocessing=keras_unit_range",
+            ],
+        )
+        self.assertEqual(cfg.model.backbone_preprocessing, "keras_unit_range")
+        with self.assertRaisesRegex(ValueError, "normalization=none"):
+            load_config(
+                str(path),
+                ["model.backbone_preprocessing=keras_unit_range"],
+            )
 
     def test_hrn_presets(self):
         cifar = self._load("configs/hrn/hrn_cifar100.yaml")

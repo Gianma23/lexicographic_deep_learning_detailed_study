@@ -21,20 +21,19 @@ train:
   lexicographic:
     enabled: false                  # true enables projected gradient composition
     projection_mode: coarse_first   # coarse_first | fine_first
-    projection_rule: orthogonalize_all # orthogonalize_all | conflict_only
     eps: 1.0e-12                    # Numerical epsilon for projection denominators
     log_metrics: true               # Emit projection diagnostics in train metrics
 
-  # Optional capability-based direct supervision of taxonomy-subspace profiles.
+  # Optional capability-based direct supervision of taxonomy-subspace scores.
   # When enabled, this replaces the model's native loss. The model output must
-  # expose subspace_scores_per_level and subspace_target_profiles_by_level.
+  # expose subspace_scores_per_level. Cross-entropy uses the hard path labels
+  # and exactly the scores decoded at evaluation time. normalized_mse is retained
+  # only for reproducing the historical dense-profile regression experiment.
   # It is incompatible with mixup/cutmix, HCC, lexicographic training, and the
   # Hier-COS LH projection.
   subspace_supervision:
     enabled: false
-    target_mode: sqrt_path_weights
-    loss: normalized_mse
-    eps: 1.0e-12
+    loss: cross_entropy
 
 optim:
   name: adamw                       # adam | keras_adam (Keras 2.8 epsilon-hat) | adamw | sgd

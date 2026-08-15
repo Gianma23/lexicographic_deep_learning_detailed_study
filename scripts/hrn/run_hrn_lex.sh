@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Runs native HRN lexicographic training from the paper-baseline configs using
 # three taxonomy-state marginal objectives. Defaults: all datasets, start@0,
-# coarse-first, and orthogonalize-all.
+# and coarse-first.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -19,7 +19,6 @@ MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 LEX_PROJECTION_MODE="${LEX_PROJECTION_MODE:-coarse_first}"
-LEX_PROJECTION_RULE="${LEX_PROJECTION_RULE:-orthogonalize_all}"
 
 case "$LEX_PROJECTION_MODE" in
   coarse_first|fine_first) ;;
@@ -29,15 +28,6 @@ case "$LEX_PROJECTION_MODE" in
     exit 2
     ;;
 esac
-case "$LEX_PROJECTION_RULE" in
-  orthogonalize_all|conflict_only) ;;
-  *)
-    echo "Unsupported LEX_PROJECTION_RULE: $LEX_PROJECTION_RULE" >&2
-    echo "Expected orthogonalize_all or conflict_only." >&2
-    exit 2
-    ;;
-esac
-
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
 }
@@ -60,7 +50,7 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-parse_choice_list DATASETS "cub200 aircraft" DATASETS \
+parse_choice_list DATASETS "aircraft cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -136,14 +126,13 @@ hard_target_overrides=(
 
 run_output_dir() {
   local dataset="$1"
-  echo "$OUTPUTS_ROOT/hrn_${dataset}_level_marginal_lex_${LEX_PROJECTION_RULE}_${LEX_PROJECTION_MODE}"
+  echo "$OUTPUTS_ROOT/hrn_${dataset}_level_marginal_lex_${LEX_PROJECTION_MODE}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'HRN loss mode: level_marginal\n'
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
-printf 'Lex projection rule: %s\n' "$LEX_PROJECTION_RULE"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -156,7 +145,6 @@ for dataset in "${DATASETS[@]}"; do
     "model.loss=level_marginal" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
-    "train.lexicographic.projection_rule=$LEX_PROJECTION_RULE" \
     "train.lexicographic.eps=1.0e-12" \
     "train.lexicographic.log_metrics=true"
 done

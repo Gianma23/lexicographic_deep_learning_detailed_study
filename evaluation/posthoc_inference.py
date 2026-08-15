@@ -13,11 +13,26 @@ inference is one cell of the grid rather than a separate rule: `node_score` for
 classifier-head models such as H-CAST and HRN, `subspace_norm` for native
 Hier-COS, and the `hcc_`-prefixed cell of the same readout for a checkpoint
 trained with HCC. Nothing here trains or modifies parameters.
+
+`subspace_norm` additionally has a **score space**, because an L2 norm is not
+invariant to a monotone map: `||f(z)||` is not a monotone function of `||z||`.
+Summing squared *logits* is only meaningful when the training objective already
+constrains their magnitudes, which is true for Hier-COS — its regularizer drives
+the L2-normalized per-level `|node_logits|` toward a one-hot — and false for
+classifier heads. A softmax logit is shift-invariant, so its magnitude is
+arbitrary; a sigmoid/BCE logit is worse still, because BCE drives non-target
+logits to large negative values and squaring reads a confident rejection as
+strong support. `subspace_norm` therefore aggregates each model's own
+probabilities by default and falls back to raw coordinates only where that is
+the model's native semantics. `node_score` is untouched by this: every
+activation below is monotone, so it cannot change a per-level argmax, and
+leaving the raw values alone keeps the paired reference bit-exact.
 """
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import torch
+import torch.nn.functional as F
 
 from models.common.hcc import HierarchicalAffineProjector
 from models.common.subspace_supervision import subspace_norms
@@ -35,6 +50,66 @@ INFERENCE_RULES = (
     f"{HCC_PREFIX}{NODE_SCORE}",
     f"{HCC_PREFIX}{SUBSPACE_NORM}",
 )
+
+IDENTITY = "identity"
+SIGMOID = "sigmoid"
+SOFTMAX = "softmax"
+PROBABILITY_SPACE = "probability"
+COORDINATE_SPACE = "coordinate"
+SUBSPACE_SCORE_SPACES = (PROBABILITY_SPACE, COORDINATE_SPACE)
+
+# The activation each model's own head applies to one level of node coordinates.
+# A single entry means the same activation at every level. These mirror the loss
+# each model is trained under, so `subspace_norm` aggregates the quantities the
+# model itself treats as evidence, on a common non-negative scale.
+LEVEL_ACTIVATIONS: Dict[str, Sequence[str]] = {
+    # per-level softmax cross entropy
+    "hcast": (SOFTMAX,),
+    "lhdnn": (SOFTMAX,),
+    # capsule lengths read through a softmax; matches `effective_probs_per_level`
+    "ht_capsnet": (SOFTMAX,),
+    # sigmoid/BCE tree heads at levels 0-1 and a separate softmax leaf CE head at
+    # level 2; matches `effective_probs_per_level`
+    "hrn": (SIGMOID, SIGMOID, SOFTMAX),
+    # native inference is the norm over raw frame coordinates, and training
+    # already pins the non-target magnitudes near zero, so no squashing applies
+    "hiercos": (IDENTITY,),
+}
+DEFAULT_ACTIVATION = (SOFTMAX,)
+
+
+def _activate(scores: torch.Tensor, activation: str) -> torch.Tensor:
+    if activation == IDENTITY:
+        return scores
+    if activation == SIGMOID:
+        return torch.sigmoid(scores)
+    if activation == SOFTMAX:
+        return F.softmax(scores, dim=-1)
+    raise ValueError(f"Unknown activation `{activation}`.")
+
+
+def resolve_level_activations(
+    model_name: str,
+    depth: int,
+    score_space: str = PROBABILITY_SPACE,
+) -> List[str]:
+    """Return the per-level activation `subspace_norm` applies for this model."""
+    if score_space not in SUBSPACE_SCORE_SPACES:
+        raise ValueError(
+            f"Unknown subspace score space `{score_space}`; expected one of "
+            f"{list(SUBSPACE_SCORE_SPACES)}."
+        )
+    if score_space == COORDINATE_SPACE:
+        return [IDENTITY] * depth
+    activations = LEVEL_ACTIVATIONS.get(str(model_name), DEFAULT_ACTIVATION)
+    if len(activations) == 1:
+        return [activations[0]] * depth
+    if len(activations) != depth:
+        raise ValueError(
+            f"Model `{model_name}` declares {len(activations)} level activations "
+            f"but the hierarchy has depth {depth}."
+        )
+    return list(activations)
 
 
 def split_rule_name(rule: str) -> tuple:
@@ -106,9 +181,16 @@ class PosthocInferenceRule:
     The node coordinates are the tensor the model's own readout consumes: the
     fixed-layer node logits for native Hier-COS, and the native per-level scores
     for classifier-head models. For the latter, `subspace_norm` treats those
-    per-level scores as coordinates in an identity taxonomy frame. That is an
-    inference-only assumption, and because an L2 norm squares its inputs it also
-    discards the sign of a signed logit.
+    per-level scores as coordinates in an identity taxonomy frame, which is an
+    inference-only assumption.
+
+    Because an L2 norm squares its inputs, it discards the sign of whatever it
+    aggregates. In the default `probability` score space that is harmless: each
+    level is mapped through its own head's activation first, so the aggregated
+    quantities are already non-negative evidence and a confidently rejected class
+    contributes ~0. In the `coordinate` space the norm is taken on raw logits, and
+    the sign is genuinely lost — which for a sigmoid/BCE head inverts the evidence,
+    since BCE drives non-target logits to large negative values.
 
     `hcc_`-prefixed rules apply `HierarchicalAffineProjector` to the coordinates
     first. The projector is parameter-free, so this is equivalent to a fully
@@ -123,6 +205,7 @@ class PosthocInferenceRule:
         taxonomy: Mapping[str, Any],
         model_name: str,
         owner: str = "Post-hoc inference",
+        subspace_score_space: str = PROBABILITY_SPACE,
     ) -> None:
         self.rule = str(rule)
         self.readout, self.applies_hcc = split_rule_name(self.rule)
@@ -130,6 +213,12 @@ class PosthocInferenceRule:
         self.model_name = str(model_name)
         self.owner = f"{owner} `{self.rule}`"
         self.magnitude = uses_coordinate_magnitude(self.model_name)
+        self.subspace_score_space = str(subspace_score_space)
+        self.level_activations = resolve_level_activations(
+            self.model_name,
+            len(self.num_classes_per_level),
+            self.subspace_score_space,
+        )
 
         self.projector: Optional[HierarchicalAffineProjector] = None
         if self.applies_hcc:
@@ -193,9 +282,16 @@ class PosthocInferenceRule:
                 return list(coordinates)
             return [coordinate.abs() for coordinate in coordinates]
 
+        # The HCC projection is an affine constraint on logits, so it is applied
+        # in coordinate space above; only then are the coordinates mapped into
+        # the space the norm aggregates.
+        activated = [
+            _activate(coordinate, activation)
+            for coordinate, activation in zip(coordinates, self.level_activations)
+        ]
         assert self.level_subspace_masks is not None
         return subspace_norms(
-            torch.cat(coordinates, dim=1),
+            torch.cat(activated, dim=1),
             self.level_subspace_masks,
         )
 
@@ -222,8 +318,11 @@ class PosthocInferenceRule:
             "prediction": "raw_score_argmax",
             "training": False,
         }
-        if self.readout == SUBSPACE_NORM and self.model_name != "hiercos":
-            description["fixed_frame"] = "identity"
+        if self.readout == SUBSPACE_NORM:
+            description["subspace_score_space"] = self.subspace_score_space
+            description["level_activations"] = list(self.level_activations)
+            if self.model_name != "hiercos":
+                description["fixed_frame"] = "identity"
         if self.applies_hcc:
             description["projection"] = "hcc_affine_least_squares_children_sum_to_parent"
             description["staging"] = "coarse_to_fine_with_detached_anchors"

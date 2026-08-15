@@ -195,11 +195,15 @@ presets remain local extrapolations.
 - `configs/capsnet/capsnet_cub200.yaml`
 - `configs/capsnet/capsnet_aircraft.yaml`
 
-The presets use the upstream runner’s 200-epoch horizon, taxonomy temperature
-`0.5`, 16×32 Keras-shaped attention with rank-three Keras Glorot initialization,
-per-example MixUp, the paper-reported epoch schedule, Keras 2.8 Adam update,
-deterministic execution, capsule margin loss, and next-batch dynamic level
-weights. The EfficientNet preset pins the Keras-compatible
+The presets use the paper’s independent per-level primary capsules, direct
+parent-length taxonomy mask, and dynamic-weight equation. They retain the
+upstream runner’s 200-epoch horizon, taxonomy temperature `0.5`, 16×32
+Keras-shaped attention with rank-three Keras Glorot initialization, per-example
+MixUp, the paper-reported epoch schedule, Keras 2.8 Adam update, deterministic
+execution, capsule margin loss, and next-batch dynamic level weights.
+Checkpointing follows the same FPA/TICE/weighted-AP policy as the other models,
+and the last partial training batch is retained. The EfficientNet preset pins
+the Keras-compatible
 `tf_efficientnet_b7.aa_in1k` conversion and restores Keras BatchNorm/drop-connect
 training semantics. CIFAR uses native 32 px inputs and split-wide scalar
 standardization; CUB and Aircraft use 64 px.
@@ -207,9 +211,13 @@ The CUB preset deliberately retains this repository's 13/38/200 taxonomy, so
 it is not an exact reproduction of the paper's 39/123/200 run. Aircraft is a
 64 px extrapolation from the paper datasets. `train.resume` is empty by
 default; runs never silently reuse an old checkpoint.
-Older local HT-CapsNet checkpoints predate the corrected attention
-initialization, backbone semantics, optimizer, and loss-weight buffer and must
-not be resumed for these fidelity runs.
+Older local HT-CapsNet checkpoints predate the paper-aligned primary-capsule,
+routing-mask, and dynamic-weight choices as well as corrected attention
+initialization, backbone semantics, optimizer, and loss-weight buffering. They
+must not be resumed for these fidelity runs. The paper and released TensorFlow
+file contain material contradictions; the exact source-reproduction
+alternatives and preprocessing/LayerNorm diagnostics are recorded in
+`docs/model_repo_differences.md`.
 Native lexicographic HT-CapsNet uses the same three capsule margin losses. The
 lex launcher selects `model.loss.weight_mode: none`, which is the existing
 unit-weight mode; the paper-baseline configs retain their dynamic weighting.
@@ -276,28 +284,30 @@ detached parent-class logits as LH-DNN advantage baselines. This path requires
 
 Direct subspace-norm supervision is enabled with
 `train.subspace_supervision.enabled: true`. It replaces the model's native
-loss with an equal average of per-level squared errors between L2-normalized
-predicted and target subspace profiles. Hier-COS precomputes one dense target
-profile per leaf: the true path coordinates contain the square roots of its
-native path probabilities, so the true class has score `1` and other classes
-are scored by shared ancestry. The trained tensors are the same
-`logits_per_level` tensors used by evaluation.
+loss with an equal average of hard-label cross-entropies over the per-level
+taxonomy-subspace norms. Cross-entropy consumes `subspace_scores_per_level`
+directly; evaluation ranks the same scores, so the training objective is aligned
+with the deployed subspace-norm argmax. Ground truth is the dataset's hard
+coarse-to-fine path, not a dense shared-ancestry profile.
 
 The loss dispatch is capability-based rather than tied to `model.name`. A model
-using it must return `subspace_scores_per_level` (`[B, C_l]`) and
-`subspace_target_profiles_by_level` (`[num_leaf, C_l]`). The mechanism rejects
-soft targets, mixup/cutmix, HCC, lexicographic training, and the Hier-COS LH
-projection. Its loss log includes raw and equally weighted level errors plus
-unnormalized score norms for collapse detection. The accepted config block is:
+using cross-entropy must return `subspace_scores_per_level` (`[B, C_l]`). The
+mechanism rejects soft targets, mixup/cutmix, HCC, lexicographic training, and
+the Hier-COS LH projection. Its loss log includes raw and equally weighted
+per-level cross-entropies and unnormalized score norms. The accepted config
+block is:
 
 ```yaml
 train:
   subspace_supervision:
     enabled: true
-    target_mode: sqrt_path_weights
-    loss: normalized_mse
-    eps: 1.0e-12
+    loss: cross_entropy
 ```
+
+The historical `normalized_mse` mode remains accepted for reproducing existing
+dense square-root-path profile runs. It additionally requires
+`subspace_target_profiles_by_level`, `target_mode: sqrt_path_weights`, and
+`eps`; it is not the default for new direct-subspace runs.
 
 ## Dataset behavior
 
@@ -434,7 +444,6 @@ Matrix variables are whitespace-separated and validated:
 
 ```bash
 DATASETS="cifar100 aircraft" \
-LEX_PROJECTION_RULE=conflict_only \
 LEX_PROJECTION_MODE=fine_first \
 DRY_RUN=1 \
 scripts/hcast/run_hcast_lex.sh
@@ -452,9 +461,11 @@ DATASETS=cifar100 BASE_SEED=0 NUM_RUNS=1 \
 scripts/hiercos/run_hiercos_subspace.sh
 ```
 
-The launcher sets `alpha=0`, enables direct profile supervision, and forces the
-Hier-COS LH projection, HCC, mixup/cutmix, label smoothing, and lexicographic
-training off. Run directories are named `hiercos_<dataset>_subspace`.
+The launcher sets `alpha=0`, enables hard-label cross-entropy directly on the
+subspace scores, and forces the Hier-COS LH projection, HCC, mixup/cutmix, label
+smoothing, and lexicographic training off. Run directories are named
+`hiercos_<dataset>_subspace_cross_entropy`, keeping them separate from the
+historical normalized-profile runs.
 
 Run native HT-CapsNet baselines on the three dataset configurations with:
 
@@ -462,10 +473,11 @@ Run native HT-CapsNet baselines on the three dataset configurations with:
 NUM_RUNS=3 scripts/capsnet/run_ht_capsnet_baselines.sh
 ```
 
-The runner preserves each config's native dynamic margin-loss weighting.
-CIFAR-100 is paper/source aligned; CUB uses this repository's unified taxonomy,
-and Aircraft is a local extrapolation. Use `DATASETS`, `NUM_RUNS`, `BASE_SEED`,
-or `SPLIT_SEED` to select a reproducible subset.
+The runner preserves each config's dynamic margin-loss weighting. CIFAR-100
+selects the published equations where they contradict the released TensorFlow
+file; CUB uses this repository's unified taxonomy, and Aircraft is a local
+extrapolation. Use `DATASETS`, `NUM_RUNS`, `BASE_SEED`, or `SPLIT_SEED` to select
+a reproducible subset.
 
 Run native HT-CapsNet and HRN lexicographic training on the three baseline
 dataset configurations with:
@@ -475,10 +487,10 @@ scripts/capsnet/run_ht_capsnet_lex.sh
 scripts/hrn/run_hrn_lex.sh
 ```
 
-Both default to coarse-first and orthogonalize-all. Lexicographic projection is
-always active for the whole run. Override `DATASETS`, `LEX_PROJECTION_MODE`, or
-`LEX_PROJECTION_RULE` to select another validated run without adding a dataset
-config. The HRN launcher also enforces hard targets.
+Both default to coarse-first. Lexicographic projection is always active for the
+whole run. Override `DATASETS` or `LEX_PROJECTION_MODE` to select another
+validated run without adding a dataset config. The HRN launcher also enforces
+hard targets.
 
 Run the paper-aligned LH-DNN CIFAR-100 preset and the two explicitly
 extrapolated large-image presets with:

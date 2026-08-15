@@ -1,6 +1,6 @@
 # Model fidelity and upstream delta log
 
-Audit date: 1 August 2026
+Audit date: 14 August 2026
 
 This document records which behavior is source-aligned and which behavior is a
 framework adaptation, verified correction, unified-protocol choice, local
@@ -102,12 +102,11 @@ samples, or choose models on test data.
 
 ## HT-CapsNet
 
-### Source-aligned
+### Shared paper/source core
 
-- Primary capsules, per-level secondary capsules, hierarchical skip input,
-  routing-by-agreement, taxonomy masking, cross-capsule attention, capsule
-  lengths, margin loss, and dynamic level weighting were ported from the
-  TensorFlow source.
+- Per-level secondary capsules, hierarchical skip input, routing-by-agreement,
+  taxonomy masking, hierarchical agreement, cross-capsule attention, capsule
+  lengths, and margin loss are present in both the paper and TensorFlow source.
 - The local taxonomy temperature `0.5` is supported by the upstream saved run
   arguments even though upstream constructor defaults are internally
   inconsistent.
@@ -151,7 +150,10 @@ samples, or choose models on test data.
   supplies the final spatial `forward_features` map. The explicit
   `tf_efficientnet_b7.aa_in1k` tag is used rather than timm's version-dependent
   untagged alias; its stem convolution matches the Keras
-  `efficientnetb7_notop.h5` tensor exactly. PyTorch BatchNorm momentum is `0.01`
+  `efficientnetb7_notop.h5` tensor exactly. A mechanical audit of all 1,035
+  weight-bearing arrays (all MBConv, SE, convolution, and BatchNorm tensors)
+  found bit-for-bit equality after the required layout transposes. PyTorch
+  BatchNorm momentum is `0.01`
   (the equivalent of Keras `0.99`) and progressive drop path reaches `0.2`,
   matching the Keras application. The Keras
   `EfficientNetB7` stem is reproduced in full: `Rescaling(1/255)` followed by
@@ -161,9 +163,7 @@ samples, or choose models on test data.
   divides by `sqrt(variance)`).
 - Dynamic loss weights are checkpointed model buffers: each batch uses the
   weights produced after the preceding batch, matching the Keras callback.
-  Where the paper's written weighting equation and callback differ, the port
-  follows the source callback: `tau_i = 1 - acc_i * initial_i`, then
-  `(1 - dynamic_weight) * tau_i / sum(tau)`. The source callback runs in
+  The source callback runs in
   `on_train_batch_end` and reads `acc_i` from the Keras `logs` dict, which
   carries the metric accumulated since the start of the epoch; the port
   therefore keeps epoch-to-date accuracy accumulators that reset on each
@@ -179,6 +179,73 @@ samples, or choose models on test data.
 - The shipped horizon is 200 epochs, matching the upstream launcher rather
   than the shorter README example.
 
+### Paper/source contradictions and selected behavior
+
+The public paper and its released TensorFlow file are not one executable
+specification. The baseline presets now select the published equations where
+the two materially disagree, while the released behavior remains available by
+an explicit config value:
+
+- `primary_capsule_mode: paper_independent` implements Eq. 4/Fig. 2: each
+  hierarchy level independently reshapes the shared backbone feature map to its
+  own primary-capsule dimension and then applies squash. The released file's
+  `source_reuse` mode builds one squashed 8-D tensor and reinterprets its memory
+  as 64-D and 32-D capsules at later levels.
+- `routing_parent_activation: norm` implements Eq. 13's direct parent capsule
+  length. `softmax_norm` reproduces the released layer, where nearly equal
+  LayerNorm capsule lengths become an almost uniform parent vector and greatly
+  weaken the taxonomy mask.
+- `dynamic_weight_formula: paper` implements Eq. 21,
+  `(1 - accuracy_i) * initial_i`. `released_source` implements the callback's
+  different parentheses, `1 - accuracy_i * initial_i`.
+- `drop_last_train: false` retains the last partial batch as `padded_batch`
+  does. Checkpoint ranking deliberately remains the same repository-wide
+  FPA/TICE/weighted-AP policy used for all models. The local run also keeps a
+  genuine validation split and a fixed 200-epoch horizon: it does not reuse
+  CIFAR test labels as validation data or enable the source's undocumented
+  early stopping.
+
+Two high-impact upstream reproducibility defects are exposed as diagnostics
+rather than silently changed. First, public preprocessing applies a
+split-wide StandardScaler and then EfficientNet's embedded `/255`, reducing
+CIFAR image variation by roughly 60x. To test the plausible
+raw-input recipe, override `dataset.transforms.normalization=none`,
+`dataset.transforms.normalization_scope=image`, and
+`model.backbone_preprocessing=keras_unit_range`. Second, both Eq. 18 and the
+released layer compute capsule lengths after a per-capsule LayerNorm. At its
+initial affine parameters those lengths are almost constant at `sqrt(D)` and
+outside the margin loss's `[0, 1]` design range. The existing
+`attn_postprocess: squash` option is therefore a useful ablation, but is not the
+paper/source default and is not presented as a verified correction.
+
+The paper also says the hierarchical-agreement gate and transform are
+taxonomy-biased at initialization, but supplies no edge/non-edge values; the
+released code initializes every gate to `0.5` and the transform from a normal
+distribution. The port retains those executable values instead of inventing an
+unpublished initialization. Likewise, the source cyclically tiles semantic
+taxonomy rows over primary as well as previous-level capsules, while the paper
+does not specify that mapping. This remains source-aligned and explicitly
+unresolved rather than adding another unsupported routing mode.
+
+Other released-recipe contradictions were audited but do not justify silent
+changes: the shell launcher inherits `mask_threshold_high=0.9` and learning-rate
+decay `0.9`, whereas the paper/notebook use `0.99` and `0.95`; the notebook adds
+fine-accuracy early stopping despite the paper's fixed 200 epochs; CIFAR's
+default zero validation split reuses the official test set for validation; and
+the published multi-seed launcher contains malformed dataset/variable
+arguments. The presets retain the paper values and an honest validation split,
+so published-table equivalence cannot be guaranteed from the public artifacts.
+
+The locally supplied `HierarchicalClassification-main` student archive is not
+an independent HT-CapsNet port. Its capsule model is the older HD-CapsNet
+family: a custom convolutional encoder with ordinary routing and none of
+HT-CapsNet's EfficientNet, taxonomy mask, hierarchical-agreement, or
+cross-capsule-attention components. Moreover, its default CIFAR runner selects a
+non-capsule three-head projection network. That archive also contains material
+input-conversion, MixUp, dynamic-weight, optimizer, and schedule defects, so it
+is useful for confirming the 8/20/100 label taxonomy but not as a numerical
+oracle for this model.
+
 ### Framework adaptations and limits
 
 - Keras/TensorFlow layers and callbacks are represented by native PyTorch
@@ -192,8 +259,10 @@ samples, or choose models on test data.
   construction, so it is a protocol adaptation rather than an exact paper run.
 - Requested ImageNet backbones are mandatory. Missing weights fail clearly and
   never silently produce a random-initialized paper-labeled run.
-- Corrected attention initialization, backbone training semantics, and optimizer
-  state intentionally make older local HT-CapsNet training checkpoints
+- Paper-aligned primary capsules, routing activation, dynamic weighting, plus
+  corrected attention initialization, backbone training semantics, optimizer
+  state, and loss-weight buffering intentionally make older local HT-CapsNet
+  training checkpoints
   incompatible; fidelity runs must start from fresh initialization.
 
 ## HRN

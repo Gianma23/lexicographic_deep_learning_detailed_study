@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS orthogonalize-all lexicographic variants:
+# Runs Hier-COS lexicographic variants:
 # - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.transform_mode=full
 # - train.lexicographic.enabled=true
 # - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
-# - train.lexicographic.projection_rule=orthogonalize_all
 # Defaults: aircraft/cub200/cifar100 with coarse_first. Environment matrices
 # can opt into the other supported projection modes.
 
@@ -79,13 +78,15 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Example:
-#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
+#   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_lex.sh
 #   LOSS_MODE=level_softmax_ce_reg WEIGHT_MODE=kl_leaf FIXED_FRAME_MODE=identity \
-#     ./scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh
+#     ./scripts/hiercos/run_hiercos_lex.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100 aircraft cub200)
-LEX_PROJECTION_MODES=(coarse_first)
+parse_choice_list DATASETS "cifar100 aircraft cub200" DATASETS \
+  cifar100 cub200 aircraft
+parse_choice_list LEX_PROJECTION_MODES "coarse_first" LEX_PROJECTION_MODES \
+  coarse_first fine_first
 
 config_for_dataset() {
   case "$1" in
@@ -160,7 +161,7 @@ run_output_dir() {
   if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_orthogonalize_all_${projection_mode}${weight_suffix}${frame_suffix}"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_${projection_mode}${weight_suffix}${frame_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -170,7 +171,6 @@ printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
 printf 'Transform mode: full\n'
-printf 'Projection rule: orthogonalize_all\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -186,8 +186,7 @@ for ds in "${DATASETS[@]}"; do
       "model.transform_mode=full" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.projection_mode=$lex_mode" \
-      "train.lexicographic.projection_rule=orthogonalize_all"
+      "train.lexicographic.projection_mode=$lex_mode"
   done
 done
 
@@ -202,4 +201,4 @@ if [[ "$DRY_RUN" != "1" ]]; then
   done
 fi
 
-printf 'Completed all requested Hier-COS orthogonalize-all lex runs.\n'
+printf 'Completed all requested Hier-COS lex runs.\n'

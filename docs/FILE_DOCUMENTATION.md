@@ -81,8 +81,8 @@ fatal errors.
 - `models/common/hcc.py` — HCC affine hierarchy projection and the shared
   on/off controller used by every HCC-capable model.
 - `models/common/subspace_supervision.py` — mixed-precision-safe taxonomy
-  subspace norms, dense square-root-path target construction, capability
-  validation, and the model-agnostic normalized profile loss override.
+  subspace norms, decoder-aligned hard-label cross-entropy, historical dense
+  square-root-path target/profile regression, and capability validation.
 - `models/hcast/internal/` — vendored CAST/H-CAST backbone implementation.
 
 ### LH-DNN
@@ -155,7 +155,7 @@ fatal errors.
 
 Lexicographic modules:
 
-- `train/lexicographic/config.py` — projection-mode/rule resolution and
+- `train/lexicographic/config.py` — projection-mode resolution and
   compatibility checks.
 - `train/lexicographic/gradients.py` — trunk detection, raw gradient
   diagnostics, projection, and custom gradient assignment.
@@ -196,16 +196,16 @@ Runtime modules:
 - `scripts/capsnet/` — native HT-CapsNet baselines with dynamic level weights
   and lexicographic studies with unit level weights.
 - `scripts/hrn/` — base and native level-marginal lexicographic studies.
-- `scripts/hiercos/` — decomposed-loss baselines, two lexicographic rules,
+- `scripts/hiercos/` — decomposed-loss baselines, lexicographic priority modes,
   transform ablation, the LH-projected learnable-head study, and the
   direct-subspace supervision launcher.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
   nesting migration.
 
-Runner matrices are overridable using `DATASETS`, `LEX_PROJECTION_MODE(S)`,
-`LEX_PROJECTION_RULE`, and `TRANSFORM_MODES`, depending on the script. Current
+Runner matrices are overridable using `DATASETS`, `LEX_PROJECTION_MODE(S)`, and
+`TRANSFORM_MODES`, depending on the script. Current
 narrow defaults are printed during `DRY_RUN`. Lexicographic run directories are
-named `<model>_<dataset>[_<loss>]_lex_<rule>_<mode>[...]`.
+named `<model>_<dataset>[_<loss>]_lex_<mode>[...]`.
 
 ## Grid search
 

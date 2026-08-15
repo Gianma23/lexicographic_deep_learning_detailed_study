@@ -31,14 +31,18 @@ TAXONOMY = {
 }
 
 
-def _supervision_cfg(enabled: bool = True, model_name: str = "synthetic"):
+def _supervision_cfg(
+    enabled: bool = True,
+    model_name: str = "synthetic",
+    loss: str = "cross_entropy",
+):
     return SimpleNamespace(
         model={"name": model_name},
         train={
             "subspace_supervision": {
                 "enabled": enabled,
                 "target_mode": "sqrt_path_weights",
-                "loss": "normalized_mse",
+                "loss": loss,
                 "eps": 1e-12,
             }
         },
@@ -92,6 +96,38 @@ class SubspaceTargetProfileTests(unittest.TestCase):
 
 
 class SharedSubspaceLossTests(unittest.TestCase):
+    def test_cross_entropy_uses_hard_level_labels_and_raw_scores(self):
+        scores = [
+            torch.tensor([[2.0, 0.0], [0.0, 3.0]], requires_grad=True),
+            torch.tensor([[0.0, 1.0, 2.0], [3.0, 1.0, 0.0]], requires_grad=True),
+            torch.tensor(
+                [[0.0, 1.0, 4.0, 2.0, 0.0], [1.0, 0.0, 2.0, 0.0, 5.0]],
+                requires_grad=True,
+            ),
+        ]
+        hard_targets = torch.tensor([[0, 2, 2], [1, 0, 4]], dtype=torch.long)
+        expected_raw = [
+            torch.nn.functional.cross_entropy(score, hard_targets[:, level])
+            for level, score in enumerate(scores)
+        ]
+
+        loss, metrics, aux = compute_subspace_supervision_loss(
+            {SUBSPACE_SCORES_KEY: scores},
+            hard_targets,
+            _supervision_cfg(),
+            return_aux=True,
+        )
+
+        expected_total = torch.stack(expected_raw).mean()
+        torch.testing.assert_close(loss, expected_total)
+        self.assertAlmostEqual(metrics["subspace_cross_entropy"], float(expected_total.item()))
+        for level, raw_loss in enumerate(expected_raw):
+            self.assertAlmostEqual(
+                metrics[f"subspace_cross_entropy_level_{level}"],
+                float(raw_loss.item()),
+            )
+            torch.testing.assert_close(aux["level_losses"][level], raw_loss / 3.0)
+
     def test_normalized_mse_is_scale_invariant_for_synthetic_model(self):
         topology, profiles = _toy_profiles()
         leaf_targets = torch.tensor([0, 1, 4], dtype=torch.long)
@@ -109,8 +145,9 @@ class SharedSubspaceLossTests(unittest.TestCase):
             ],
             SUBSPACE_TARGET_PROFILES_KEY: profiles,
         }
-        loss_a, _ = compute_model_loss(_supervision_cfg(), output_a, hard_targets)
-        loss_b, _ = compute_model_loss(_supervision_cfg(), output_b, hard_targets)
+        mse_cfg = _supervision_cfg(loss="normalized_mse")
+        loss_a, _ = compute_model_loss(mse_cfg, output_a, hard_targets)
+        loss_b, _ = compute_model_loss(mse_cfg, output_b, hard_targets)
         torch.testing.assert_close(loss_a, loss_b, rtol=1e-6, atol=1e-7)
         self.assertLess(float(loss_a.item()), 1e-12)
 
@@ -128,7 +165,7 @@ class SharedSubspaceLossTests(unittest.TestCase):
         loss, metrics, aux = compute_subspace_supervision_loss(
             output,
             targets,
-            _supervision_cfg(),
+            _supervision_cfg(loss="normalized_mse"),
             return_aux=True,
         )
         expected_raw = [0.0, 2.0, 2.0 - 2.0**0.5]
@@ -187,7 +224,7 @@ class SharedSubspaceLossTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "width mismatch"):
             compute_model_loss(
-                _supervision_cfg(),
+                _supervision_cfg(loss="normalized_mse"),
                 malformed,
                 torch.tensor([[0]], dtype=torch.long),
             )
@@ -292,9 +329,7 @@ class SubspaceSupervisionConfigTests(unittest.TestCase):
         cfg["model"]["projection"] = {"enabled": False}
         cfg["train"]["subspace_supervision"] = {
             "enabled": True,
-            "target_mode": "sqrt_path_weights",
-            "loss": "normalized_mse",
-            "eps": 1e-12,
+            "loss": "cross_entropy",
         }
         return cfg
 
@@ -334,6 +369,20 @@ class SubspaceSupervisionConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, f"subspace_supervision.{key}"):
                     validate_config(cfg)
 
+    def test_rejects_removed_temperature_key(self):
+        cfg = self._enabled()
+        cfg["train"]["subspace_supervision"]["temperature"] = 1.0
+        with self.assertRaisesRegex(ValueError, "temperature"):
+            validate_config(cfg)
+
+    def test_historical_normalized_mse_mode_remains_valid(self):
+        cfg = self._enabled()
+        cfg["train"]["subspace_supervision"].update(
+            loss="normalized_mse",
+            target_mode="sqrt_path_weights",
+            eps=1e-12,
+        )
+        validate_config(cfg)
 
 if __name__ == "__main__":
     unittest.main()

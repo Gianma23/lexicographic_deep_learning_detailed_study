@@ -11,7 +11,12 @@ from torchvision import transforms as torchvision_transforms
 from datasets.cifar100 import CIFAR100Dataset
 from datasets.loaders import _collate_fn
 from datasets.transforms import build_batch_normalizer, build_transforms
-from models.ht_capsnet.losses import _initial_level_weights, _margin_loss, compute_loss
+from models.ht_capsnet.losses import (
+    _dynamic_level_weights,
+    _initial_level_weights,
+    _margin_loss,
+    compute_loss,
+)
 from models.ht_capsnet.model import (
     HTCapsNet,
     KerasMultiHeadAttention,
@@ -160,6 +165,71 @@ class RoutingAndLossTests(unittest.TestCase):
         short_expected = torch.softmax(raw[:, :1] * short_soft[:1].unsqueeze(0) * 0.5, dim=-1)
         torch.testing.assert_close(short_actual, short_expected)
 
+    def test_paper_parent_norm_preserves_a_stronger_taxonomy_mask(self):
+        raw = torch.full((1, 2, 3), 2.0)
+        taxonomy = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        previous = torch.zeros(1, 2, 4)
+        previous[:, :, 0] = 8.0
+
+        paper = taxonomy_guided_routing_weights(
+            raw,
+            level=1,
+            taxonomy_matrix=taxonomy,
+            prev_predictions=previous,
+            mask_threshold_high=0.99,
+            parent_activation="norm",
+        )
+        released = taxonomy_guided_routing_weights(
+            raw,
+            level=1,
+            taxonomy_matrix=taxonomy,
+            prev_predictions=previous,
+            mask_threshold_high=0.99,
+            parent_activation="softmax_norm",
+        )
+
+        paper_edge_contrast = paper[0, 0, 0] - paper[0, 0, 1]
+        released_edge_contrast = released[0, 0, 0] - released[0, 0, 1]
+        self.assertGreater(float(paper_edge_contrast), float(released_edge_contrast))
+
+    def test_paper_and_released_dynamic_weight_equations_are_explicit(self):
+        logits = [
+            torch.tensor([[2.0, 0.0], [2.0, 0.0]]),
+            torch.tensor([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
+            torch.tensor([[0.0, 2.0, 0.0, 0.0], [0.0, 2.0, 0.0, 0.0]]),
+        ]
+        targets = [torch.zeros(2, dtype=torch.long) for _ in logits]
+        initial = _initial_level_weights([2, 3, 4])
+
+        paper, _, _ = _dynamic_level_weights(
+            logits,
+            targets,
+            decay=0.0,
+            formula="paper",
+        )
+        released, _, _ = _dynamic_level_weights(
+            logits,
+            targets,
+            decay=0.0,
+            formula="released_source",
+        )
+
+        paper_terms = [0.0, 0.5 * initial[1], initial[2]]
+        released_terms = [
+            1.0 - initial[0],
+            1.0 - 0.5 * initial[1],
+            1.0,
+        ]
+        torch.testing.assert_close(
+            torch.tensor(paper),
+            torch.tensor([value / sum(paper_terms) for value in paper_terms]),
+        )
+        torch.testing.assert_close(
+            torch.tensor(released),
+            torch.tensor([value / sum(released_terms) for value in released_terms]),
+        )
+        self.assertNotEqual(paper, released)
+
     def test_hierarchical_agreement_matches_explicit_gate(self):
         votes = torch.tensor([[[[1.0, 2.0], [2.0, 1.0]]]])
         previous = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
@@ -194,8 +264,8 @@ class RoutingAndLossTests(unittest.TestCase):
 
 
 class HTCapsNetStateTests(unittest.TestCase):
-    def _model(self):
-        return HTCapsNet(
+    def _model(self, **overrides):
+        kwargs = dict(
             num_classes_per_level=[2, 3, 4],
             taxonomy=_taxonomy(),
             primary_dim=8,
@@ -209,6 +279,8 @@ class HTCapsNetStateTests(unittest.TestCase):
             attn_key_dim=3,
             input_size=32,
         )
+        kwargs.update(overrides)
+        return HTCapsNet(**kwargs)
 
     def test_primary_capsules_follow_nhwc_flatten_order(self):
         model = self._model()
@@ -216,6 +288,28 @@ class HTCapsNetStateTests(unittest.TestCase):
         actual = model._build_primary_caps(feature)
         expected_flat = feature.permute(0, 2, 3, 1).contiguous().view(1, -1, 8)
         torch.testing.assert_close(actual, squash(expected_flat, dim=-1))
+
+    def test_paper_primary_capsules_are_independently_reshaped_then_squashed(self):
+        feature = torch.linspace(-2.0, 3.0, 8 * 16 * 16).view(1, 8, 16, 16)
+        paper_model = self._model(primary_capsule_mode="paper_independent")
+        source_model = self._model(primary_capsule_mode="source_reuse")
+        paper_primary = paper_model._build_primary_caps(feature)
+        source_primary = source_model._build_primary_caps(feature)
+
+        paper_level = paper_model._primary_caps_for_level(
+            feature,
+            paper_primary,
+            level=2,
+        )
+        source_level = source_model._primary_caps_for_level(
+            feature,
+            source_primary,
+            level=2,
+        )
+        flat = feature.permute(0, 2, 3, 1).contiguous().view(1, -1, 4)
+        torch.testing.assert_close(paper_level, squash(flat, dim=-1))
+        torch.testing.assert_close(source_level, source_primary.reshape(1, -1, 4))
+        self.assertGreater(float((paper_level - source_level).abs().max()), 1e-3)
 
     def test_custom_backbone_matches_keras_activation_bn_order_and_constants(self):
         backbone = _ConvBackbone(num_blocks=1, initial_filters=8)
@@ -264,6 +358,24 @@ class HTCapsNetStateTests(unittest.TestCase):
             output["margin_scores_per_level"],
         ):
             self.assertIs(raw, margin_scores)
+
+    def test_paper_equation_modes_complete_a_finite_backward_pass(self):
+        model = self._model(
+            primary_capsule_mode="paper_independent",
+            routing_parent_activation="norm",
+        ).train()
+        cfg = _loss_cfg()
+        cfg.model.loss["dynamic_weight_formula"] = "paper"
+        targets = torch.tensor([[0, 0, 0], [1, 2, 3]])
+
+        output = model(torch.randn(2, 3, 32, 32))
+        loss, _ = compute_loss(output, targets, cfg)
+        loss.backward()
+
+        self.assertTrue(torch.isfinite(loss))
+        gradients = [parameter.grad for parameter in model.parameters() if parameter.grad is not None]
+        self.assertTrue(gradients)
+        self.assertTrue(all(torch.isfinite(gradient).all() for gradient in gradients))
 
     def test_dynamic_weights_apply_to_next_batch_and_round_trip(self):
         model = self._model()
@@ -373,6 +485,24 @@ class HTCapsNetStateTests(unittest.TestCase):
         torch.testing.assert_close(
             model._prepare_backbone_input(images),
             (images - mean) / std,
+        )
+
+    def test_keras_unit_range_mode_represents_raw_keras_application_input(self):
+        diagnostic_backbone = _ConvBackbone(num_blocks=1, initial_filters=8)
+        with patch(
+            "models.ht_capsnet.model._build_backbone",
+            return_value=diagnostic_backbone,
+        ):
+            model = self._model(
+                backbone_name="efficientnet_b7",
+                backbone_preprocessing="keras_unit_range",
+            )
+        images = torch.rand(2, 3, 32, 32)
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        variance = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        torch.testing.assert_close(
+            model._prepare_backbone_input(images),
+            (images - mean) / torch.sqrt(variance),
         )
 
 

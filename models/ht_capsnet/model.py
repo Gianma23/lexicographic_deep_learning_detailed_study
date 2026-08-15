@@ -218,6 +218,25 @@ def _normalize_attn_postprocess(value: Optional[str]) -> str:
     )
 
 
+def _normalize_routing_parent_activation(value: Optional[str]) -> str:
+    text = "softmax_norm" if value is None else value
+    if not isinstance(text, str) or text not in {"norm", "softmax_norm"}:
+        raise ValueError(
+            "HT-CapsNet model.routing_parent_activation must be norm or softmax_norm."
+        )
+    return text
+
+
+def _normalize_primary_capsule_mode(value: Optional[str]) -> str:
+    text = "source_reuse" if value is None else value
+    if not isinstance(text, str) or text not in {"paper_independent", "source_reuse"}:
+        raise ValueError(
+            "HT-CapsNet model.primary_capsule_mode must be paper_independent "
+            "or source_reuse."
+        )
+    return text
+
+
 def _normalize_backbone_name(name: str) -> str:
     if not isinstance(name, str):
         raise ValueError("HT-CapsNet model.backbone_net must be a string.")
@@ -310,7 +329,7 @@ def _build_backbone(
 
 
 class HTCapsNet(nn.Module):
-    """PyTorch HT-CapsNet aligned with the original repo's TensorFlow architecture."""
+    """PyTorch HT-CapsNet with explicit paper/source contradiction modes."""
 
     def __init__(
         self,
@@ -333,6 +352,8 @@ class HTCapsNet(nn.Module):
         mask_threshold_low: float = 0.1,
         mask_temperature: float = 0.5,
         mask_center: float = 0.5,
+        routing_parent_activation: str = "softmax_norm",
+        primary_capsule_mode: str = "source_reuse",
         attn_heads: int = 16,
         attn_key_dim: int = 32,
         attn_dropout: float = 0.0,
@@ -347,12 +368,22 @@ class HTCapsNet(nn.Module):
         self.routing_iters = int(routing_iters)
         self.primary_dim = int(primary_dim)
         self.attn_postprocess = _normalize_attn_postprocess(attn_postprocess)
+        self.routing_parent_activation = _normalize_routing_parent_activation(
+            routing_parent_activation
+        )
+        self.primary_capsule_mode = _normalize_primary_capsule_mode(
+            primary_capsule_mode
+        )
         normalized_backbone_name = _normalize_backbone_name(backbone_name)
         if not isinstance(backbone_preprocessing, str) or backbone_preprocessing not in {
             "keras",
+            "keras_unit_range",
             "timm",
         }:
-            raise ValueError("HT-CapsNet backbone_preprocessing must be keras or timm.")
+            raise ValueError(
+                "HT-CapsNet backbone_preprocessing must be keras, "
+                "keras_unit_range, or timm."
+            )
         self.backbone_preprocessing = (
             backbone_preprocessing if normalized_backbone_name == "efficientnet_b7" else "none"
         )
@@ -558,6 +589,14 @@ class HTCapsNet(nn.Module):
             mean = self._keras_efficientnet_mean.to(device=x.device, dtype=x.dtype)
             variance = self._keras_efficientnet_variance.to(device=x.device, dtype=x.dtype)
             x = (x - mean) / torch.sqrt(variance).clamp_min(torch.finfo(x.dtype).eps)
+        elif self.backbone_preprocessing == "keras_unit_range":
+            # Diagnostic equivalent of passing raw 0..255 pixels to the Keras
+            # application when the local transform has already converted them
+            # to 0..1. This deliberately skips the public HT pipeline's
+            # split/batch StandardScaler and its subsequent extra attenuation.
+            mean = self._keras_efficientnet_mean.to(device=x.device, dtype=x.dtype)
+            variance = self._keras_efficientnet_variance.to(device=x.device, dtype=x.dtype)
+            x = (x - mean) / torch.sqrt(variance).clamp_min(torch.finfo(x.dtype).eps)
         elif self.backbone_preprocessing == "timm":
             mean = self._keras_efficientnet_mean.to(device=x.device, dtype=x.dtype)
             std = self._timm_efficientnet_std.to(device=x.device, dtype=x.dtype)
@@ -579,21 +618,49 @@ class HTCapsNet(nn.Module):
                 mat[parent, child] = 1.0
         return mat
 
-    def _build_primary_caps(self, feat: torch.Tensor) -> torch.Tensor:
+    def _build_primary_caps(
+        self,
+        feat: torch.Tensor,
+        target_dim: Optional[int] = None,
+    ) -> torch.Tensor:
         bsz = feat.size(0)
+        capsule_dim = self.primary_dim if target_dim is None else int(target_dim)
         # Keras feature maps are NHWC and are flattened in that memory order.
         flat = feat.permute(0, 2, 3, 1).contiguous().reshape(bsz, -1)
-        if flat.size(1) % self.primary_dim != 0:
+        if flat.size(1) % capsule_dim != 0:
             raise RuntimeError(
-                f"Flattened feature dim ({flat.size(1)}) is not divisible by primary_dim ({self.primary_dim})."
+                f"Flattened feature dim ({flat.size(1)}) is not divisible by "
+                f"capsule dim ({capsule_dim})."
             )
-        caps = flat.view(bsz, self.primary_caps_count, self.primary_dim)
+        caps = flat.view(
+            bsz,
+            self._primary_caps_count_for_target_dim(capsule_dim),
+            capsule_dim,
+        )
         return squash(caps, dim=-1)
 
     def _reshape_primary_for_level(self, primary_caps: torch.Tensor, target_dim: int) -> torch.Tensor:
         bsz = primary_caps.size(0)
         new_n_caps = self._primary_caps_count_for_target_dim(target_dim)
         return primary_caps.reshape(bsz, new_n_caps, target_dim)
+
+    def _primary_caps_for_level(
+        self,
+        feat: torch.Tensor,
+        primary_caps: torch.Tensor,
+        level: int,
+    ) -> torch.Tensor:
+        if level == 0:
+            return primary_caps
+        target_dim = self.secondary_dims[level - 1]
+        if self.primary_capsule_mode == "paper_independent":
+            # Paper Eq. 4/Fig. 2 derives every primary-capsule level
+            # independently from the shared feature map and squashes only
+            # after the level-specific reshape.
+            return self._build_primary_caps(feat, target_dim)
+        # The released TensorFlow file instead reshapes the one already-
+        # squashed 8-D primary tensor at later levels.
+        return self._reshape_primary_for_level(primary_caps, target_dim)
 
     @staticmethod
     def _predict_votes(x_caps: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
@@ -654,6 +721,7 @@ class HTCapsNet(nn.Module):
                 mask_threshold_low=self.mask_threshold_low,
                 mask_temperature=self.mask_temperature,
                 mask_center=self.mask_center,
+                parent_activation=self.routing_parent_activation,
             )
 
             weighted_sum = (routing_weights.unsqueeze(-1) * votes).sum(dim=1)
@@ -723,7 +791,7 @@ class HTCapsNet(nn.Module):
                 inp = primary_caps
                 prev_predictions = None
             else:
-                p_caps_lvl = self._reshape_primary_for_level(primary_caps, self.secondary_dims[level - 1])
+                p_caps_lvl = self._primary_caps_for_level(feat, primary_caps, level)
                 inp = torch.cat([p_caps_lvl, secondary_caps[-1]], dim=1)
                 prev_predictions = secondary_caps[-1]
 

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Runs the selected H-CAST lexicographic matrix. Lexicographic projection is
-# always active for the whole run. Override with whitespace-separated DATASETS,
-# or with LEX_PROJECTION_MODE / LEX_PROJECTION_RULE to select another arm.
+# always active for the whole run. Override with whitespace-separated DATASETS
+# or with LEX_PROJECTION_MODE to select another priority order.
 #
 # Starts from the plain H-CAST baseline config for each dataset and adds the
 # lexicographic block as CLI overrides, so `configs/hcast/` keeps only base
@@ -49,7 +49,6 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_lex.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 LEX_PROJECTION_MODE="${LEX_PROJECTION_MODE:-coarse_first}"
-LEX_PROJECTION_RULE="${LEX_PROJECTION_RULE:-orthogonalize_all}"
 
 case "$LEX_PROJECTION_MODE" in
   coarse_first|fine_first) ;;
@@ -59,15 +58,6 @@ case "$LEX_PROJECTION_MODE" in
     exit 2
     ;;
 esac
-case "$LEX_PROJECTION_RULE" in
-  orthogonalize_all|conflict_only) ;;
-  *)
-    echo "Unsupported LEX_PROJECTION_RULE: $LEX_PROJECTION_RULE" >&2
-    echo "Expected orthogonalize_all or conflict_only." >&2
-    exit 2
-    ;;
-esac
-
 parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -134,13 +124,12 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  echo "$OUTPUTS_ROOT/hcast_${ds}_lex_${LEX_PROJECTION_RULE}_${LEX_PROJECTION_MODE}"
+  echo "$OUTPUTS_ROOT/hcast_${ds}_lex_${LEX_PROJECTION_MODE}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
-printf 'Lex projection rule: %s\n' "$LEX_PROJECTION_RULE"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -153,7 +142,6 @@ for ds in "${DATASETS[@]}"; do
     "model.loss.globalkl=false" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
-    "train.lexicographic.projection_rule=$LEX_PROJECTION_RULE" \
     "train.lexicographic.eps=1.0e-12" \
     "train.lexicographic.log_metrics=true"
 done

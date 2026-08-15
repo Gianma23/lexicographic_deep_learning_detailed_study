@@ -137,7 +137,6 @@ def train_one_epoch(
                 include_metrics=bool(lex_cfg.log_metrics),
                 grad_scale=lex_grad_scale,
                 projection_mode=str(lex_cfg.projection_mode),
-                projection_rule=str(lex_cfg.projection_rule),
                 precomputed_level_grad_map=precomputed_level_grad_map,
             )
             if lex_state is None:

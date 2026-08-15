@@ -75,8 +75,8 @@ Notes:
 ## B) Lex-Only Additional Metrics (`train.lexicographic.enabled=true` and `log_metrics=true`)
 
 The expectations below describe the default
-`train.lexicographic.projection_rule: orthogonalize_all` +
-`train.lexicographic.projection_mode: coarse_first` behavior.
+`train.lexicographic.projection_mode: coarse_first` behavior. Applicable
+gradient pairs are orthogonalized unconditionally.
 
 Post-projection applied flags (`post_` prefix):
 
@@ -119,8 +119,7 @@ Semantics:
 - `post_*_mid`: projected mid component.
 - `post_*_fine`: projected fine component.
 - `post_projection_applied_*`: whether the corresponding projection step was applied (1) or
-  skipped (0). Skips happen for denominator safety (`denom <= eps`) and, when
-  `projection_rule: conflict_only`, for non-conflicting pairs (`dot >= -eps`).
+  skipped (0). Skips happen only for denominator safety (`denom <= eps`).
 - `cos_t2_mid_coarse`, `cos_t1_mid_coarse`, and `cos_t2t1_mid_coarse`
   measure the raw mid/coarse alignment before lex projection, block-wise and
   on the combined `t2t1` view.

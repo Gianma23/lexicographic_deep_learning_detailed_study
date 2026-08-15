@@ -27,7 +27,6 @@ Convention used below:
 | 4 | Learnable transform | `model.transform_mode` | `full`, `bn_linear`, `final_only` | [model.py:343-347](models/hiercos/model.py#L343-L347) |
 | 5 | Gradient-space lex | `train.lexicographic.enabled` | `false`, `true` | [config.py:106-123](train/lexicographic/config.py#L106-L123) |
 | 5a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first` | [config.py:9](train/lexicographic/config.py#L9) |
-| 5b | Lex projection rule | `.projection_rule` | `orthogonalize_all`, `conflict_only` | [config.py:10](train/lexicographic/config.py#L10) |
 | 6 | LH-style projection | `model.projection.enabled` | `false`, `true` | [model.py:270](models/hiercos/model.py#L270) |
 | 6b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:142-145](models/hiercos/model.py#L142-L145) |
 | 6c | Feature width | `.feature_dim` | `0` (= total nodes), `512`, … | [model.py:290-317](models/hiercos/model.py#L290-L317) |
@@ -42,7 +41,7 @@ only.
 | 9 | Dataset | `dataset.name` | `cifar-100`, `cub-200-2011`, `fgvc-aircraft` (iNat21 supported by the framework, no Hier-COS runs) | `configs/hiercos/` |
 | 10 | Seed | `train.seed` | 3 seeds default (`NUM_RUNS=3`) | `scripts/run_seed_utils.sh` |
 
-Taking only axes 1–5 and 9 as a full factorial gives 3 × 3 × 3 × 3 × 7 × 3 = **1 701
+Taking only axes 1–5 and 9 as a full factorial gives 3 × 3 × 3 × 3 × 3 × 3 = **729
 configurations per seed**, before any head variant. The factorial is not the plan; the
 constraints below and the research questions in Part B cut it to roughly 60–80 configs
 that actually carry information.
@@ -117,7 +116,7 @@ Grouped by the axis being varied. Each row is 3 seeds unless noted.
 **Frame ablation (identity vs. dense random)** — CIFAR-100, CUB, Aircraft, in both
 `global_softmax_ce_reg` and `level_softmax_ce_reg`, baseline and lex.
 Directories: `*_baseline_kl_leaf` vs `*_baseline_kl_leaf_identity`,
-`*_lex_orthogonalize_all_coarse_first` vs `*_..._coarse_first_identity`.
+`*_lex_coarse_first` vs `*_..._coarse_first_identity`.
 
 **Loss scope (global vs. level softmax)** — all three datasets, baseline and lex,
 crossed with frame. Plus one `hiercos_cifar100_per_level_kl_reg_baseline_equal`.
@@ -128,8 +127,7 @@ crossed with frame. Plus one `hiercos_cifar100_per_level_kl_reg_baseline_equal`.
 **Transform mode (`full` / `bn_linear` / `final_only`)** — all three datasets, mostly under
 lex; `run_hiercos_transform_ablation.sh`.
 
-**Lex variants** — `coarse_first` vs `fine_first` on all three datasets;
-`conflict_only` on CIFAR-100 only (`hiercos_cifar100_global_softmax_ce_reg_lex_conflict_only_coarse_first`).
+**Lex variants** — `coarse_first` vs `fine_first` on all three datasets.
 
 **LH projection** — the PReLU derivative is now part of the method and always applied, and
 `projection` is the only projection variant; the earlier batch-shared-`A` adapter-free
@@ -156,7 +154,6 @@ on CIFAR-100), `hiercos_aircraft_..._fromscratch_...` vs pretrained.
 | Gap | Why it matters |
 |---|---|
 | No order-free lex control | Axis 5a only offers ordered modes, so "coarse-first helps" cannot be separated from "any projection helps"; see RQ4 |
-| `conflict_only` on one dataset only | Cannot tell whether the conflict-gating result generalizes |
 | `kl_coarse` never run | Leaves the weight axis one-sided; see RQ3 |
 | HCC on Hier-COS not run | RQ7 currently has no Hier-COS arm at all |
 | `advantage_enabled` never run | One of the two LH-projection sub-variants is untested |
@@ -283,11 +280,9 @@ if the two orderings behave alike, the residual explanation (any decorrelation h
 untested. Treat that as a standing limitation of RQ4 rather than a gap that a currently
 available config could close.
 
-Axis 5b asks a different question: `orthogonalize_all` projects unconditionally,
-`conflict_only` projects only when gradients actually conflict. If `conflict_only` matches
-`orthogonalize_all`, the benefit is conflict resolution and the projection is inert most of
-the time — which is a much more mechanistic claim, and testable directly from the
-lexicographic diagnostics in `run_log.jsonl` (how often the conflict gate fires).
+The implementation orthogonalizes every applicable gradient pair. This behavior is fixed,
+not an experiment axis; an application can be skipped only when denominator safety makes
+the projection undefined.
 
 There is no lex-onset axis: gradient projection is active for the whole run whenever
 `train.lexicographic.enabled=true`, so lex is studied only as a training-dynamics
@@ -449,7 +444,7 @@ everything but the implementation fixed.
 
 Lex is the one mechanism that reaches four models, so it carries most of the
 cross-architecture weight. Each new model arm should carry at minimum the RQ4 core:
-`coarse_first` / `fine_first` × `orthogonalize_all` / `conflict_only`, at matched weights.
+`coarse_first` / `fine_first`, at matched weights.
 
 | Model | Status |
 |---|---|
@@ -494,7 +489,7 @@ Ranked by information gained per GPU-hour, not by convenience:
 4. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a
    cross-architecture claim.
 5. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.
-6. **`advantage_enabled`, `conflict_only` on remaining datasets** — completeness.
+6. **`advantage_enabled`** — completeness.
 
 ## C.5 Reporting rules to hold across the whole matrix
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Hier-COS training with direct taxonomy-subspace profile supervision.
+# Hier-COS training with hard-label CE on taxonomy-subspace scores.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -33,7 +33,7 @@ config_for_dataset() {
 
 run_output_dir() {
   local dataset="$1"
-  echo "$OUTPUTS_ROOT/hiercos_${dataset}_subspace"
+  echo "$OUTPUTS_ROOT/hiercos_${dataset}_subspace_cross_entropy"
 }
 
 kill_running_jobs() {
@@ -114,7 +114,7 @@ run_train() {
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
-printf 'Training: direct sqrt_path_weights profiles, normalized_mse, alpha=0\n'
+printf 'Training: hard-label cross-entropy on raw subspace scores, alpha=0\n'
 printf 'Hier-COS LH projection: disabled\n'
 printf 'HCC: disabled\n'
 printf 'Lexicographic training: disabled\n'
@@ -140,9 +140,7 @@ for dataset in "${DATASETS[@]}"; do
     "dataset.transforms.cutmix=0.0" \
     "dataset.transforms.cutmix_minmax=null" \
     "train.subspace_supervision.enabled=true" \
-    "train.subspace_supervision.target_mode=sqrt_path_weights" \
-    "train.subspace_supervision.loss=normalized_mse" \
-    "train.subspace_supervision.eps=1.0e-12"
+    "train.subspace_supervision.loss=cross_entropy"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

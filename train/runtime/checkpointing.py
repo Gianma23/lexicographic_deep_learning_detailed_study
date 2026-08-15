@@ -33,8 +33,12 @@ class ResumeInfo:
         return asdict(self)
 
 
-def _normalized_cfg_for_resume_compare(cfg_resolved: Mapping[str, Any]) -> Dict[str, Any]:
-    """Normalize config payload and strip run-control keys allowed to differ."""
+def _normalized_cfg_for_resume_compare(
+    cfg_resolved: Mapping[str, Any],
+    *,
+    checkpoint_side: bool = False,
+) -> Dict[str, Any]:
+    """Normalize config payload and strip compatible legacy/run-control keys."""
     normalized = to_plain_data(cfg_resolved)
     if not isinstance(normalized, dict):
         raise ValueError("Resolved config must be a mapping for strict resume validation.")
@@ -44,6 +48,17 @@ def _normalized_cfg_for_resume_compare(cfg_resolved: Mapping[str, Any]) -> Dict[
     if isinstance(train_cfg, dict):
         for key in _RESUME_ALLOWED_TRAIN_DIFF_KEYS:
             train_cfg.pop(key, None)
+        lex_cfg = train_cfg.get("lexicographic")
+        if (
+            checkpoint_side
+            and isinstance(lex_cfg, dict)
+            and lex_cfg.get("projection_rule") == "orthogonalize_all"
+        ):
+            # The projection-rule switch was removed once full orthogonalization
+            # became unconditional. This one-way tombstone keeps checkpoints
+            # saved with that equivalent legacy value resumable, while other
+            # historical values remain visible to the strict comparison.
+            lex_cfg.pop("projection_rule")
     return sanitized
 
 
@@ -91,7 +106,10 @@ def _validate_resume_config_or_raise(
             "cannot verify reproducible compatibility."
         )
 
-    checkpoint_cfg = _normalized_cfg_for_resume_compare(section_to_dict(checkpoint_cfg_resolved))
+    checkpoint_cfg = _normalized_cfg_for_resume_compare(
+        section_to_dict(checkpoint_cfg_resolved),
+        checkpoint_side=True,
+    )
     current_cfg = _normalized_cfg_for_resume_compare(section_to_dict(current_cfg_resolved))
 
     differences: List[str] = []

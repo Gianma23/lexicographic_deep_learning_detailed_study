@@ -899,12 +899,7 @@ implementation choice: \texttt{coarse\_first} is the hypothesis,
 \texttt{fine\_first} inverts the priority, and \texttt{pairwise\_orthogonal}
 decorrelates the level gradients while imposing the weakest ordering. Without the
 last two, an observed improvement is equally compatible with ``projecting
-gradients at all helps''. A separate axis asks whether the projection needs to be
-unconditional: gating it to fire only when the level gradients actually conflict
-would, if it matched unconditional projection, license a far more mechanistic
-claim --- that the benefit is conflict resolution and the operator is inert most
-of the time --- and that claim is checkable directly against the logged gate
-statistics of \S\ref{ssec:lex_implementation}. Finally, the activation epoch of
+gradients at all helps''. Finally, the activation epoch of
 \S\ref{ssec:lex_activation} asks whether ordering is a training-dynamics
 intervention or a late correction, and deliberately mirrors the HCC schedule so
 that the two families remain comparable on that axis.
@@ -1861,33 +1856,27 @@ scalarised objective with a coarse-heavy weight vector.}
 %                                                         ordering weakens sharply.
 % Any of the three is a reportable outcome; the third must not be softened.
 
-\subsection{Conditional projection and activation epoch}
-\label{ssec:results_lex_gating}
+\subsection{Activation epoch}
+\label{ssec:results_lex_activation}
 
-Two further axes refine the mechanism. Gating the projection so that it fires
-only when the level gradients actually conflict would, if it matched
-unconditional projection, license a considerably more mechanistic claim --- that
-the benefit is conflict resolution and that the operator is inert most of the
-time --- and that claim is checkable directly against the logged gate
-statistics. The activation epoch of \S\ref{ssec:lex_activation} mirrors the HCC
-schedule deliberately: because the transition is a step rather than a ramp, a
-run with \texttt{start\_epoch} $=k$ is exactly its baseline for the first $k$
-epochs, so the two arms share their early trajectory in expectation.
+The activation epoch of \S\ref{ssec:lex_activation} mirrors the HCC schedule
+deliberately: because the transition is a step rather than a ramp, a run with
+\texttt{start\_epoch} $=k$ is exactly its baseline for the first $k$ epochs, so
+the two arms share their early trajectory in expectation.
 
 \begin{table}[htbp]
 \centering
-\caption{Conditional projection and activation epoch. \emph{Fire rate} is the
-fraction of optimisation steps at which the projection was actually applied,
-read from the logged guard flags.}
-\label{tab:results_lex_gating}
+\caption{Activation-epoch comparison. \emph{Application rate} is the fraction
+of optimisation steps at which the projection was applied, read from the logged
+denominator-guard flags.}
+\label{tab:results_lex_activation}
 \fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llcccccc@{}}
+\begin{tabular}{@{}llccccc@{}}
 \toprule
-\textbf{Family / dataset} & \textbf{Arm} & \textbf{Fire rate} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
+\textbf{Family / dataset} & \textbf{Arm} & \textbf{Application rate} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
-\tbd & unconditional, \texttt{step@0}   & 1.00 & \tbd & \tbd & \tbd & \tbd \\
-\tbd & unconditional, \texttt{step@}$k$ & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\tbd & gated on conflict               & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\tbd & \texttt{step@0}   & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\tbd & \texttt{step@}$k$ & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
 \end{tabular}
 \end{table}

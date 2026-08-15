@@ -7,13 +7,13 @@ import yaml
 
 from train.config_validation import validate_config
 from train.lexicographic.config import validate_lexicographic_requirements
+from train.runtime.checkpointing import _validate_resume_config_or_raise
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEX_CFG = {
     "enabled": True,
     "projection_mode": "coarse_first",
-    "projection_rule": "orthogonalize_all",
     "eps": 1.0e-12,
     "log_metrics": True,
 }
@@ -53,6 +53,14 @@ class LexicographicModelSupportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "model.loss=level_marginal"):
             validate_config(hrn)
 
+    def test_removed_projection_rule_is_rejected_by_static_validation(self):
+        hcast = self._with_lex("configs/hcast/hcast_cifar100.yaml")
+        hcast["model"]["loss"]["globalkl"] = False
+        hcast["train"]["lexicographic"]["projection_rule"] = "orthogonalize_all"
+
+        with self.assertRaisesRegex(ValueError, "projection_rule"):
+            validate_config(hcast)
+
     def test_lhdnn_lex_is_rejected(self):
         lhdnn = self._with_lex("configs/lhdnn/lhdnn_cifar100.yaml")
         with self.assertRaisesRegex(ValueError, "not supported for LH-DNN"):
@@ -82,6 +90,53 @@ class LexicographicModelSupportTests(unittest.TestCase):
             validate_lexicographic_requirements(
                 Config({"name": "lhdnn"}),
                 level_losses,
+            )
+
+
+class LegacyProjectionRuleResumeTests(unittest.TestCase):
+    def _config(self):
+        return {
+            "model": {"name": "hcast"},
+            "train": {
+                "lexicographic": {
+                    "enabled": True,
+                    "projection_mode": "coarse_first",
+                }
+            },
+        }
+
+    def test_checkpoint_orthogonalize_all_rule_is_compatible(self):
+        checkpoint_cfg = self._config()
+        checkpoint_cfg["train"]["lexicographic"]["projection_rule"] = "orthogonalize_all"
+
+        _validate_resume_config_or_raise(
+            checkpoint_cfg_resolved=checkpoint_cfg,
+            current_cfg_resolved=self._config(),
+            resume_path="legacy.pt",
+        )
+
+    def test_other_checkpoint_projection_rules_remain_incompatible(self):
+        for legacy_rule in ("legacy_conditional", "unknown_rule"):
+            with self.subTest(projection_rule=legacy_rule):
+                checkpoint_cfg = self._config()
+                checkpoint_cfg["train"]["lexicographic"]["projection_rule"] = legacy_rule
+
+                with self.assertRaisesRegex(ValueError, "projection_rule"):
+                    _validate_resume_config_or_raise(
+                        checkpoint_cfg_resolved=checkpoint_cfg,
+                        current_cfg_resolved=self._config(),
+                        resume_path="legacy.pt",
+                    )
+
+    def test_current_side_projection_rule_is_not_tombstoned(self):
+        current_cfg = self._config()
+        current_cfg["train"]["lexicographic"]["projection_rule"] = "orthogonalize_all"
+
+        with self.assertRaisesRegex(ValueError, "projection_rule"):
+            _validate_resume_config_or_raise(
+                checkpoint_cfg_resolved=self._config(),
+                current_cfg_resolved=current_cfg,
+                resume_path="legacy.pt",
             )
 
 

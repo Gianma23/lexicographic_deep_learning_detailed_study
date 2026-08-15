@@ -29,7 +29,8 @@ Both readouts consume the same per-level node coordinates: the fixed-layer
 `node_logits` for native Hier-COS, and the native per-level scores for
 classifier-head models. For the latter, `subspace_norm` treats those per-level
 scores as coordinates in an identity taxonomy frame — an inference-only
-assumption.
+assumption. `subspace_norm` additionally aggregates each model's own
+probabilities rather than raw logits; see [score space](#subspace_norm-score-space).
 
 `--inference-mode all` evaluates all four cells; `both` evaluates the two
 untransformed readouts. Every cell is defined for every model, so no combination
@@ -65,8 +66,43 @@ the quantity that model's training objective drives up for the correct node.
 `coordinate_evidence` in the payload records which convention was used.
 
 `subspace_norm` has no such choice: an L2 norm squares its inputs, so it always
-discards the sign, including for signed classifier logits. That is the
-substantive content of the identity-frame assumption.
+discards the sign of whatever it aggregates. What that costs depends on the score
+space below.
+
+## `subspace_norm` score space
+
+Unlike `node_score`, the subspace readout depends on the space it aggregates: an
+L2 norm is **not** invariant to a monotone map, since `||f(z)||` is not a
+monotone function of `||z||`. Summing squared *logits* is only meaningful when
+training already constrains their magnitudes.
+
+- `--subspace-score-space probability` (**default**) maps each level through its
+  own head's activation before the norm, so it aggregates non-negative evidence
+  and a confidently rejected class contributes ~0.
+- `--subspace-score-space coordinate` norms the raw coordinates, reproducing the
+  earlier behaviour.
+
+| Model | Per-level activation | Why |
+|---|---|---|
+| H-CAST, LH-DNN | `softmax` ×3 | per-level softmax cross entropy |
+| HT-CapsNet | `softmax` ×3 | matches its own `effective_probs_per_level` |
+| HRN | `sigmoid`, `sigmoid`, `softmax` | BCE tree heads at levels 0-1, softmax leaf CE head at level 2; matches its own `effective_probs_per_level` |
+| Hier-COS | `identity` ×3 | native inference norms raw frame coordinates, and its regularizer already drives the L2-normalized per-level `\|node_logits\|` toward a one-hot, so non-target magnitudes are already ~0 |
+
+Hier-COS is therefore unaffected by the flag. For classifier heads the coordinate
+space is actively misleading: a softmax logit is shift-invariant, so its
+magnitude is arbitrary, and a sigmoid/BCE logit is worse still — BCE drives
+non-target logits to large negative values, so squaring reads a confident
+rejection as strong support and can invert the ranking outright.
+
+`node_score` is unaffected in either space: every activation is monotone, so it
+cannot change a per-level argmax, and the raw values are kept so the paired
+reference stays bit-exact.
+
+`subspace_score_space` in the payload records the setting, and
+`inference_rules.<cell>.level_activations` records exactly what was applied.
+Files written before this option existed have neither key and were computed in
+the coordinate space.
 
 ## Properties worth knowing before reading the deltas
 

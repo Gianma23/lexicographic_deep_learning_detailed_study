@@ -54,7 +54,6 @@ Validation runs in two places, both of which must pass:
 | `model.name: lhdnn` is rejected unconditionally | `config.py:132-133` |
 | Hier-COS `model.projection.enabled: true` is mutually exclusive with lex | `config_validation.py:903-907` |
 | `projection_mode` in `coarse_first`, `fine_first` | `config.py:9` |
-| `projection_rule` in `orthogonalize_all`, `conflict_only` | `config.py:10` |
 | `eps > 0` | `config_validation.py:925` |
 
 ## 3. Per-model adaptation
@@ -119,8 +118,7 @@ model:
     enabled: false              # mutually exclusive with lex
 ```
 
-Launchers: `scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh`,
-`scripts/hiercos/run_hiercos_lex_conflict_only.sh`.
+Launcher: `scripts/hiercos/run_hiercos_lex.sh`.
 
 **Why the loss mode is coerced.** The upstream-aligned default `kl_reg` produces
 a single KL over the whole node vector and exposes no per-level tensors

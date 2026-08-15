@@ -26,6 +26,7 @@ def taxonomy_guided_routing_weights(
     mask_threshold_low: float = 0.1,
     mask_temperature: float = 0.5,
     mask_center: float = 0.5,
+    parent_activation: str = "softmax_norm",
 ) -> torch.Tensor:
     """Compute routing weights with optional taxonomy-aware masking.
 
@@ -62,8 +63,16 @@ def taxonomy_guided_routing_weights(
 
     repeats = n_in // parent_classes
 
+    if parent_activation not in {"norm", "softmax_norm"}:
+        raise ValueError(
+            "HT-CapsNet parent_activation must be 'norm' (paper Eq. 13) or "
+            "'softmax_norm' (released TensorFlow source)."
+        )
+
     if prev_predictions is not None:
-        prev_activations = torch.softmax(safe_norm(prev_predictions, dim=-1), dim=-1)  # [B, N_parent]
+        prev_activations = safe_norm(prev_predictions, dim=-1)
+        if parent_activation == "softmax_norm":
+            prev_activations = torch.softmax(prev_activations, dim=-1)
         weighted_taxonomy = taxonomy_matrix.unsqueeze(0) * prev_activations.unsqueeze(2)  # [B, N_parent, N_out]
     else:
         weighted_taxonomy = taxonomy_matrix.unsqueeze(0).expand(bsz, -1, -1)

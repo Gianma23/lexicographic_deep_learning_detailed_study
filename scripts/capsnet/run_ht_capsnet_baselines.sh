@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # Runs native HT-CapsNet baselines on CIFAR-100, CUB-200-2011, and
-# FGVC-Aircraft. CIFAR-100 follows the paper/source protocol; CUB uses this
-# repository's unified 13/38/200 taxonomy, and Aircraft is a local
-# extrapolation. Select a subset with, for example:
+# FGVC-Aircraft. CIFAR-100 follows the published equations where they conflict
+# with the released TensorFlow file; CUB uses this repository's unified
+# 13/38/200 taxonomy, and Aircraft is a local extrapolation. Select a subset
+# with, for example:
 #   DATASETS="cub200 aircraft" NUM_RUNS=3 ./scripts/capsnet/run_ht_capsnet_baselines.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -123,7 +124,7 @@ printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Model: native HT-CapsNet\n'
 printf 'Loss weights: dynamic (from each baseline config)\n'
-printf 'CIFAR-100 protocol: paper/source aligned\n'
+printf 'CIFAR-100 protocol: published equations where paper/source conflict\n'
 printf 'CUB protocol: unified-taxonomy extrapolation\n'
 printf 'Aircraft protocol: local extrapolation\n'
 printf 'Lexicographic mode: disabled\n'

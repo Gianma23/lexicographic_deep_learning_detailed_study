@@ -15,7 +15,6 @@ class LexicographicConfig:
     eps: float = 1e-12
     log_metrics: bool = True
     projection_mode: str = "coarse_first"
-    projection_rule: str = "orthogonalize_all"
 
 
 @dataclass

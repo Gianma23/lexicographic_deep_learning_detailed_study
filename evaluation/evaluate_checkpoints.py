@@ -25,7 +25,9 @@ from .posthoc_inference import (
     HCC_PREFIX,
     INFERENCE_RULES,
     NODE_SCORE,
+    PROBABILITY_SPACE,
     SUBSPACE_NORM,
+    SUBSPACE_SCORE_SPACES,
     PosthocInferenceRule,
 )
 
@@ -99,6 +101,19 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Output YAML; defaults to RUN_DIR/posthoc_inference_test_metrics.yaml.",
+    )
+    parser.add_argument(
+        "--subspace-score-space",
+        choices=SUBSPACE_SCORE_SPACES,
+        default=PROBABILITY_SPACE,
+        help=(
+            "Space `subspace_norm` aggregates. `probability` (default) maps each "
+            "level through its own head's activation first, so the norm sums "
+            "non-negative evidence. `coordinate` norms the raw logits, which "
+            "reproduces the earlier behaviour and is only meaningful when "
+            "training already constrains the coordinate magnitudes, as it does "
+            "for Hier-COS. Hier-COS is unaffected by this flag."
+        ),
     )
     parser.add_argument(
         "--overwrite",
@@ -431,6 +446,7 @@ def main() -> None:
             num_classes_per_level=num_classes_per_level,
             taxonomy=taxonomy,
             model_name=model_name,
+            subspace_score_space=args.subspace_score_space,
         )
         for mode in inference_modes
     }
@@ -490,6 +506,7 @@ def main() -> None:
         "split": "test",
         "requested_inference_mode": args.inference_mode,
         "resolved_inference_modes": list(inference_modes),
+        "subspace_score_space": args.subspace_score_space,
         "native_inference_mode": native_mode,
         "paired_reference_mode": reference_mode,
         "hcc_trained_run": hcc_trained,
@@ -536,9 +553,25 @@ def main() -> None:
                 "magnitude."
             ),
             "subspace_norm_sign": (
-                "An L2 norm squares its inputs, so subspace_norm discards the "
-                "sign of a signed classifier logit. That is the substantive "
-                "content of the identity-frame assumption."
+                "An L2 norm squares its inputs, so it discards the sign of "
+                "whatever it aggregates. Under the default `probability` score "
+                "space each level is mapped through its own head's activation "
+                "first, so the aggregated values are non-negative evidence and a "
+                "confidently rejected class contributes ~0. Under `coordinate` "
+                "the norm is taken on raw logits and the sign is genuinely lost, "
+                "which inverts the evidence for a sigmoid/BCE head because BCE "
+                "drives non-target logits to large negative values."
+            ),
+            "subspace_score_space": (
+                "An L2 norm is not invariant to a monotone map, so unlike "
+                "node_score the subspace readout depends on the space it "
+                "aggregates. `probability` uses each model's own per-level "
+                "activation (softmax for H-CAST/LH-DNN/HT-CapsNet, "
+                "sigmoid/sigmoid/softmax for HRN, identity for Hier-COS, whose "
+                "training already pins non-target coordinate magnitudes near "
+                "zero). `coordinate` reproduces the earlier raw-logit behaviour. "
+                "See `inference_rules.<cell>.level_activations` for what was "
+                "applied here."
             ),
         },
         "checkpoints": results,

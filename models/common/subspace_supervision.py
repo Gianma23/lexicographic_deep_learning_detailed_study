@@ -1,8 +1,11 @@
-"""Shared subspace-norm scoring and direct-supervision loss.
+"""Shared subspace-norm scoring and direct-supervision losses.
 
 The loss is capability based: any model can opt in by exposing
-``subspace_scores_per_level`` and ``subspace_target_profiles_by_level`` in its
-forward output.  No model-family check is performed here.
+``subspace_scores_per_level`` in its forward output.  Hard-label cross-entropy
+is the default and trains the exact scores used for decoding.  The historical
+normalized-profile MSE remains available for old experiment configurations and
+additionally requires ``subspace_target_profiles_by_level``.  No model-family
+check is performed here.
 """
 
 from contextlib import nullcontext
@@ -17,7 +20,10 @@ import torch.nn.functional as F
 SUBSPACE_SCORES_KEY = "subspace_scores_per_level"
 SUBSPACE_TARGET_PROFILES_KEY = "subspace_target_profiles_by_level"
 TARGET_MODE = "sqrt_path_weights"
-LOSS_MODE = "normalized_mse"
+CROSS_ENTROPY_LOSS_MODE = "cross_entropy"
+NORMALIZED_MSE_LOSS_MODE = "normalized_mse"
+LOSS_MODES = (CROSS_ENTROPY_LOSS_MODE, NORMALIZED_MSE_LOSS_MODE)
+LOSS_MODE = CROSS_ENTROPY_LOSS_MODE
 
 
 @dataclass(frozen=True)
@@ -54,10 +60,10 @@ def resolve_subspace_supervision_config(cfg: Any) -> SubspaceSupervisionConfig:
             "train.subspace_supervision.target_mode must be "
             f"'{TARGET_MODE}', got {target_mode!r}."
         )
-    if not isinstance(loss_mode, str) or loss_mode != LOSS_MODE:
+    if not isinstance(loss_mode, str) or loss_mode not in LOSS_MODES:
         raise ValueError(
             "train.subspace_supervision.loss must be "
-            f"'{LOSS_MODE}', got {loss_mode!r}."
+            f"one of {list(LOSS_MODES)}, got {loss_mode!r}."
         )
     if isinstance(raw_eps, bool):
         raise ValueError("train.subspace_supervision.eps must be a finite number > 0.")
@@ -222,83 +228,138 @@ def _hard_targets(targets: Any, depth: int) -> torch.Tensor:
     return hard_targets.long()
 
 
-def _validate_contract(
-    output: Mapping[str, Any],
-) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+def _validate_scores(output: Mapping[str, Any]) -> List[torch.Tensor]:
     if not isinstance(output, Mapping):
         raise TypeError("Direct subspace supervision requires model output as a mapping.")
     scores = output.get(SUBSPACE_SCORES_KEY)
-    target_profiles = output.get(SUBSPACE_TARGET_PROFILES_KEY)
     if not isinstance(scores, (list, tuple)) or not scores:
         raise ValueError(
             "Enabled direct subspace supervision requires model output "
             f"`{SUBSPACE_SCORES_KEY}` as a non-empty level-aligned list."
         )
-    if not isinstance(target_profiles, (list, tuple)) or len(target_profiles) != len(scores):
-        raise ValueError(
-            "Enabled direct subspace supervision requires model output "
-            f"`{SUBSPACE_TARGET_PROFILES_KEY}` aligned with score levels."
-        )
 
     validated_scores: List[torch.Tensor] = []
-    validated_profiles: List[torch.Tensor] = []
     batch_size: Optional[int] = None
-    num_leaf: Optional[int] = None
-    for level, (level_scores, level_profiles) in enumerate(zip(scores, target_profiles)):
+    for level, level_scores in enumerate(scores):
         if not isinstance(level_scores, torch.Tensor) or level_scores.ndim != 2:
             raise ValueError(f"Subspace scores for level {level} must have shape [B, C].")
-        if not isinstance(level_profiles, torch.Tensor) or level_profiles.ndim != 2:
-            raise ValueError(
-                f"Subspace target profiles for level {level} must have shape [num_leaf, C]."
-            )
         if not level_scores.is_floating_point():
             raise ValueError(f"Subspace scores for level {level} must be floating point.")
-        if not level_profiles.is_floating_point():
-            raise ValueError(f"Subspace targets for level {level} must be floating point.")
         if int(level_scores.size(0)) <= 0 or int(level_scores.size(1)) <= 0:
             raise ValueError(f"Subspace scores for level {level} cannot be empty.")
-        if int(level_profiles.size(0)) <= 0 or int(level_profiles.size(1)) <= 0:
-            raise ValueError(f"Subspace target profiles for level {level} cannot be empty.")
-        if tuple(level_scores.shape[1:]) != tuple(level_profiles.shape[1:]):
-            raise ValueError(
-                f"Subspace score/target width mismatch at level {level}: "
-                f"{int(level_scores.size(1))} versus {int(level_profiles.size(1))}."
-            )
         if batch_size is None:
             batch_size = int(level_scores.size(0))
         elif int(level_scores.size(0)) != batch_size:
             raise ValueError("Subspace score levels must share one batch size.")
+        if not bool(torch.isfinite(level_scores).all()):
+            raise ValueError(f"Subspace scores for level {level} contain non-finite values.")
+        validated_scores.append(level_scores)
+    return validated_scores
+
+
+def _validate_profiles(
+    output: Mapping[str, Any],
+    scores: Sequence[torch.Tensor],
+) -> List[torch.Tensor]:
+    target_profiles = output.get(SUBSPACE_TARGET_PROFILES_KEY)
+    if not isinstance(target_profiles, (list, tuple)) or len(target_profiles) != len(scores):
+        raise ValueError(
+            "Normalized-MSE subspace supervision requires model output "
+            f"`{SUBSPACE_TARGET_PROFILES_KEY}` aligned with score levels."
+        )
+
+    validated_profiles: List[torch.Tensor] = []
+    num_leaf: Optional[int] = None
+    for level, (level_scores, level_profiles) in enumerate(zip(scores, target_profiles)):
+        if not isinstance(level_profiles, torch.Tensor) or level_profiles.ndim != 2:
+            raise ValueError(
+                f"Subspace target profiles for level {level} must have shape [num_leaf, C]."
+            )
+        if not level_profiles.is_floating_point():
+            raise ValueError(f"Subspace targets for level {level} must be floating point.")
+        if int(level_profiles.size(0)) <= 0 or int(level_profiles.size(1)) <= 0:
+            raise ValueError(f"Subspace target profiles for level {level} cannot be empty.")
+        if int(level_scores.size(1)) != int(level_profiles.size(1)):
+            raise ValueError(
+                f"Subspace score/target width mismatch at level {level}: "
+                f"{int(level_scores.size(1))} versus {int(level_profiles.size(1))}."
+            )
         if num_leaf is None:
             num_leaf = int(level_profiles.size(0))
         elif int(level_profiles.size(0)) != num_leaf:
             raise ValueError("Subspace target lookup tables must share one leaf dimension.")
-        if not bool(torch.isfinite(level_scores).all()):
-            raise ValueError(f"Subspace scores for level {level} contain non-finite values.")
         if not bool(torch.isfinite(level_profiles).all()):
             raise ValueError(f"Subspace targets for level {level} contain non-finite values.")
-        validated_scores.append(level_scores)
         validated_profiles.append(level_profiles)
-    return validated_scores, validated_profiles
+    return validated_profiles
 
 
-def compute_subspace_supervision_loss(
-    output: Mapping[str, Any],
-    targets: Any,
-    cfg: Any,
-    _taxonomy: Optional[Dict[str, Any]] = None,
-    return_aux: bool = False,
-) -> Union[
-    Tuple[torch.Tensor, Dict[str, float]],
-    Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
-]:
-    """Match predicted and ground-truth subspace profiles at every level."""
-    resolved = resolve_subspace_supervision_config(cfg)
-    if not resolved.enabled:
-        raise ValueError("Direct subspace supervision loss called while the mechanism is disabled.")
-
-    scores, profile_lookup = _validate_contract(output)
+def _compute_cross_entropy_loss(
+    scores: Sequence[torch.Tensor],
+    hard_targets: torch.Tensor,
+    return_aux: bool,
+):
     depth = len(scores)
-    hard_targets = _hard_targets(targets, depth=depth).to(device=scores[0].device)
+    raw_level_losses: List[torch.Tensor] = []
+    weighted_level_losses: List[torch.Tensor] = []
+    score_norm_means: List[torch.Tensor] = []
+    metrics: Dict[str, float] = {}
+
+    for level, level_scores in enumerate(scores):
+        level_targets = hard_targets[:, level].to(device=level_scores.device)
+        num_classes = int(level_scores.size(1))
+        if bool((level_targets < 0).any()) or bool((level_targets >= num_classes).any()):
+            raise ValueError(
+                f"Direct subspace targets for level {level} must be in [0, {num_classes})."
+            )
+        compute_dtype = (
+            torch.float32
+            if level_scores.dtype in {torch.float16, torch.bfloat16}
+            else level_scores.dtype
+        )
+        autocast_off = nullcontext()
+        if level_scores.device.type in {"cpu", "cuda", "xpu", "mps"}:
+            autocast_off = torch.autocast(
+                device_type=level_scores.device.type,
+                enabled=False,
+            )
+        with autocast_off:
+            score_work = level_scores.to(dtype=compute_dtype)
+            raw_loss = F.cross_entropy(score_work, level_targets)
+            score_norm_mean = score_work.norm(p=2, dim=1).mean()
+        weighted_loss = raw_loss / float(depth)
+        raw_level_losses.append(raw_loss)
+        weighted_level_losses.append(weighted_loss)
+        score_norm_means.append(score_norm_mean)
+
+        metrics[f"subspace_cross_entropy_level_{level}"] = float(raw_loss.detach().item())
+        metrics[f"loss_level_{level}"] = float(weighted_loss.detach().item())
+        metrics[f"subspace_score_l2_level_{level}"] = float(
+            score_norm_mean.detach().item()
+        )
+
+    total = torch.stack(weighted_level_losses).sum()
+    metrics["total"] = float(total.detach().item())
+    metrics["subspace_cross_entropy"] = float(total.detach().item())
+    metrics["subspace_score_l2"] = float(
+        torch.stack(score_norm_means).mean().detach().item()
+    )
+    if not return_aux:
+        return total, metrics
+    return total, metrics, {
+        "level_losses": weighted_level_losses,
+        "subspace_cross_entropy_losses": raw_level_losses,
+    }
+
+
+def _compute_normalized_profile_mse_loss(
+    scores: Sequence[torch.Tensor],
+    profile_lookup: Sequence[torch.Tensor],
+    hard_targets: torch.Tensor,
+    resolved: SubspaceSupervisionConfig,
+    return_aux: bool,
+):
+    depth = len(scores)
     leaf_targets = hard_targets[:, -1]
     num_leaf = int(profile_lookup[0].size(0))
     if bool((leaf_targets < 0).any()) or bool((leaf_targets >= num_leaf).any()):
@@ -375,8 +436,50 @@ def compute_subspace_supervision_loss(
     }
 
 
+def compute_subspace_supervision_loss(
+    output: Mapping[str, Any],
+    targets: Any,
+    cfg: Any,
+    _taxonomy: Optional[Dict[str, Any]] = None,
+    return_aux: bool = False,
+) -> Union[
+    Tuple[torch.Tensor, Dict[str, float]],
+    Tuple[torch.Tensor, Dict[str, float], Dict[str, Any]],
+]:
+    """Train the model's per-level taxonomy-subspace scores directly."""
+    resolved = resolve_subspace_supervision_config(cfg)
+    if not resolved.enabled:
+        raise ValueError("Direct subspace supervision loss called while the mechanism is disabled.")
+
+    scores = _validate_scores(output)
+    depth = len(scores)
+    hard_targets = _hard_targets(targets, depth=depth).to(device=scores[0].device)
+    if int(hard_targets.size(0)) != int(scores[0].size(0)):
+        raise ValueError(
+            "Direct subspace supervision target batch size must match the score batch size."
+        )
+
+    if resolved.loss == CROSS_ENTROPY_LOSS_MODE:
+        return _compute_cross_entropy_loss(
+            scores=scores,
+            hard_targets=hard_targets,
+            return_aux=return_aux,
+        )
+    profile_lookup = _validate_profiles(output, scores=scores)
+    return _compute_normalized_profile_mse_loss(
+        scores=scores,
+        profile_lookup=profile_lookup,
+        hard_targets=hard_targets,
+        resolved=resolved,
+        return_aux=return_aux,
+    )
+
+
 __all__ = [
+    "CROSS_ENTROPY_LOSS_MODE",
     "LOSS_MODE",
+    "LOSS_MODES",
+    "NORMALIZED_MSE_LOSS_MODE",
     "SUBSPACE_SCORES_KEY",
     "SUBSPACE_TARGET_PROFILES_KEY",
     "TARGET_MODE",

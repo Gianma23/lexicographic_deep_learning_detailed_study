@@ -93,6 +93,14 @@ def build_model(cfg: Any, num_classes_per_level: List[int], taxonomy: Optional[D
         mask_threshold_low=float(cfg.model.get("mask_threshold_low", 0.1)),
         mask_temperature=float(cfg.model.get("mask_temperature", 0.5)),
         mask_center=float(cfg.model.get("mask_center", 0.5)),
+        routing_parent_activation=cfg.model.get(
+            "routing_parent_activation",
+            "softmax_norm",
+        ),
+        primary_capsule_mode=cfg.model.get(
+            "primary_capsule_mode",
+            "source_reuse",
+        ),
         attn_heads=int(cfg.model.get("attn_heads", 16)),
         attn_key_dim=int(cfg.model.get("attn_key_dim", 32)),
         attn_dropout=float(cfg.model.get("attn_dropout", 0.0)),

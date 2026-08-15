@@ -8,10 +8,9 @@ set -euo pipefail
 # - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
 # - train.lexicographic.enabled=true
 # - train.lexicographic.projection_mode=coarse_first
-# - train.lexicographic.projection_rule=orthogonalize_all
 # - model.transform_mode selected by TRANSFORM_MODES
 # The matching full-transform reference is produced by
-# scripts/hiercos/run_hiercos_lex_orthogonalize_all.sh.
+# scripts/hiercos/run_hiercos_lex.sh.
 # Defaults: cub200/aircraft/cifar100 with final_only.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -178,7 +177,7 @@ run_output_dir() {
   elif [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_orthogonalize_all_coarse_first_${transform_mode}${weight_suffix}${frame_suffix}"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_coarse_first_${transform_mode}${weight_suffix}${frame_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -189,7 +188,6 @@ printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
 printf 'Fixed frame per level: %s\n' "$FIXED_FRAME_PER_LEVEL"
 printf 'Projection mode: coarse_first\n'
-printf 'Projection rule: orthogonalize_all\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -206,8 +204,7 @@ for ds in "${DATASETS[@]}"; do
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.projection_mode=coarse_first" \
-      "train.lexicographic.projection_rule=orthogonalize_all"
+      "train.lexicographic.projection_mode=coarse_first"
   done
 done
 

@@ -12,7 +12,13 @@ from evaluation.evaluate_checkpoints import (
     legacy_mode_name,
     native_inference_rule,
 )
-from evaluation.posthoc_inference import PosthocInferenceRule
+from evaluation.posthoc_inference import (
+    COORDINATE_SPACE,
+    PROBABILITY_SPACE,
+    PosthocInferenceRule,
+    resolve_level_activations,
+)
+from models.common.subspace_supervision import subspace_norms
 from models.hiercos.model import HierCosModel
 
 
@@ -25,12 +31,17 @@ TAXONOMY = {
 }
 
 
-def _rule(mode: str, model_name: str = "hcast") -> PosthocInferenceRule:
+def _rule(
+    mode: str,
+    model_name: str = "hcast",
+    subspace_score_space: str = PROBABILITY_SPACE,
+) -> PosthocInferenceRule:
     return PosthocInferenceRule(
         rule=mode,
         num_classes_per_level=NUM_CLASSES,
         taxonomy=TAXONOMY,
         model_name=model_name,
+        subspace_score_space=subspace_score_space,
     )
 
 
@@ -62,6 +73,100 @@ class NodeScoreReadoutTests(unittest.TestCase):
         for reference, actual in zip(expected, scores):
             self.assertTrue(torch.equal(reference, actual))
         self.assertTrue(all(float(score.min()) >= 0.0 for score in scores))
+
+
+class SubspaceScoreSpaceTests(unittest.TestCase):
+    """`subspace_norm` aggregates each model's own probabilities by default.
+
+    An L2 norm is not invariant to a monotone map, so unlike `node_score` this
+    readout genuinely depends on the space it sums over.
+    """
+
+    def test_each_model_declares_the_activation_its_own_head_applies(self):
+        self.assertEqual(resolve_level_activations("hcast", 3), ["softmax"] * 3)
+        self.assertEqual(resolve_level_activations("lhdnn", 3), ["softmax"] * 3)
+        self.assertEqual(resolve_level_activations("ht_capsnet", 3), ["softmax"] * 3)
+        # HRN mixes two loss families: BCE tree heads then a softmax leaf CE head.
+        self.assertEqual(
+            resolve_level_activations("hrn", 3), ["sigmoid", "sigmoid", "softmax"]
+        )
+        # Hier-COS norms raw frame coordinates natively; nothing is applied.
+        self.assertEqual(resolve_level_activations("hiercos", 3), ["identity"] * 3)
+
+    def test_coordinate_space_restores_the_raw_logit_behaviour(self):
+        self.assertEqual(
+            resolve_level_activations("hrn", 3, COORDINATE_SPACE), ["identity"] * 3
+        )
+        output = _classifier_output()
+        raw = _rule("subspace_norm", "hrn", COORDINATE_SPACE).scores_from_output(output)
+        expected = subspace_norms(
+            torch.cat(output["logits_per_level"], dim=1),
+            _rule("subspace_norm", "hrn").level_subspace_masks,
+        )
+        for reference, actual in zip(expected, raw):
+            self.assertTrue(torch.allclose(reference, actual))
+
+    def test_hrn_subspace_norm_aggregates_sigmoid_then_softmax(self):
+        output = _classifier_output()
+        rule = _rule("subspace_norm", "hrn")
+        levels = output["logits_per_level"]
+        expected = subspace_norms(
+            torch.cat(
+                [
+                    torch.sigmoid(levels[0]),
+                    torch.sigmoid(levels[1]),
+                    torch.softmax(levels[2], dim=-1),
+                ],
+                dim=1,
+            ),
+            rule.level_subspace_masks,
+        )
+        for reference, actual in zip(expected, rule.scores_from_output(output)):
+            self.assertTrue(torch.allclose(reference, actual))
+
+    def test_node_score_is_unaffected_by_the_score_space(self):
+        # Every activation is monotone, so it cannot change a per-level argmax.
+        # node_score keeps the raw values so the paired reference stays bit-exact.
+        output = _classifier_output()
+        for model_name in ("hcast", "hrn"):
+            probability = _rule("node_score", model_name).scores_from_output(output)
+            coordinate = _rule(
+                "node_score", model_name, COORDINATE_SPACE
+            ).scores_from_output(output)
+            for expected, actual in zip(output["logits_per_level"], probability):
+                self.assertTrue(torch.equal(expected, actual))
+            for expected, actual in zip(coordinate, probability):
+                self.assertTrue(torch.equal(expected, actual))
+
+    def test_probability_space_kills_the_bce_sign_inversion(self):
+        # A BCE head drives non-target logits to large negative values, so in
+        # coordinate space the norm reads a confident rejection as strong
+        # support. Level 0 here says "class 1", emphatically.
+        levels = [
+            torch.tensor([[-9.0, 3.0]]),
+            torch.tensor([[-9.0, -9.0, 2.0]]),
+            torch.tensor([[-9.0, -9.0, -9.0, 1.0]]),
+        ]
+        output = {"logits_per_level": levels}
+        coordinate = _rule("subspace_norm", "hrn", COORDINATE_SPACE).scores_from_output(
+            output
+        )
+        probability = _rule("subspace_norm", "hrn").scores_from_output(output)
+        self.assertEqual(int(coordinate[0].argmax()), 0)     # inverted
+        self.assertEqual(int(probability[0].argmax()), 1)    # correct
+
+    def test_score_space_is_recorded_for_auditing(self):
+        described = _rule("subspace_norm", "hrn").describe()
+        self.assertEqual(described["subspace_score_space"], PROBABILITY_SPACE)
+        self.assertEqual(
+            described["level_activations"], ["sigmoid", "sigmoid", "softmax"]
+        )
+        # node_score does not aggregate, so it carries no score-space fields.
+        self.assertNotIn("subspace_score_space", _rule("node_score", "hrn").describe())
+
+    def test_unknown_score_space_is_rejected(self):
+        with self.assertRaises(ValueError):
+            _rule("subspace_norm", "hrn", "probabilities")
 
 
 class HccTransformTests(unittest.TestCase):
