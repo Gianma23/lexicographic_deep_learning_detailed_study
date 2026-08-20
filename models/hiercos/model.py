@@ -8,9 +8,8 @@ import torch.nn as nn
 from models.common.hcc import HccController
 from models.common.cifar_wide_resnet import CifarWideResNetFeatures
 from models.common.subspace_supervision import (
+    SUBSPACE_PATH_OVERLAP_KEY,
     SUBSPACE_SCORES_KEY,
-    SUBSPACE_TARGET_PROFILES_KEY,
-    build_sqrt_path_target_profiles,
     subspace_norms,
 )
 from .config import parse_bool
@@ -190,27 +189,24 @@ class HierCosModel(nn.Module):
 
         self.level_node_id_names: List[str] = []
         self.level_subspace_mask_names: List[str] = []
-        self.subspace_target_profile_names: List[str] = []
-        subspace_target_profiles = build_sqrt_path_target_profiles(
-            level_node_ids=topology["level_node_ids"],
-            level_subspace_masks=topology["level_subspace_masks"],
-            leaf_to_level_local=topology["leaf_to_level_local"],
-            path_weights=topology["node_prob_weights"],
-        )
+        self.subspace_path_overlap_names: List[str] = []
         for level in range(self.depth):
             node_ids_name = f"level_node_ids_{level}"
             mask_name = f"level_subspace_mask_{level}"
-            target_profile_name = f"subspace_target_profile_{level}"
+            path_overlap_name = f"subspace_path_overlap_{level}"
             self.register_buffer(node_ids_name, topology["level_node_ids"][level], persistent=False)
             self.register_buffer(mask_name, topology["level_subspace_masks"][level], persistent=False)
+            # Taxonomy-only half of the direct-subspace target: how much of a
+            # leaf's path each class subspace contains. The level energies are
+            # supplied by the loss, so this stays valid for any weighting.
             self.register_buffer(
-                target_profile_name,
-                subspace_target_profiles[level],
+                path_overlap_name,
+                topology["level_path_overlap"][level],
                 persistent=False,
             )
             self.level_node_id_names.append(node_ids_name)
             self.level_subspace_mask_names.append(mask_name)
-            self.subspace_target_profile_names.append(target_profile_name)
+            self.subspace_path_overlap_names.append(path_overlap_name)
 
         self.register_buffer("leaf_to_level_local", topology["leaf_to_level_local"], persistent=False)
         self.register_buffer("node_prob_weights", topology["node_prob_weights"], persistent=False)
@@ -372,8 +368,8 @@ class HierCosModel(nn.Module):
     def _level_subspace_masks(self) -> List[torch.Tensor]:
         return [getattr(self, name) for name in self.level_subspace_mask_names]
 
-    def _subspace_target_profiles(self) -> List[torch.Tensor]:
-        return [getattr(self, name) for name in self.subspace_target_profile_names]
+    def _subspace_path_overlap(self) -> List[torch.Tensor]:
+        return [getattr(self, name) for name in self.subspace_path_overlap_names]
 
     def _parent_baseline(self, level: int, previous_logits: torch.Tensor) -> torch.Tensor:
         if level <= 0:
@@ -524,7 +520,7 @@ class HierCosModel(nn.Module):
         return {
             "logits_per_level": logits_per_level,
             SUBSPACE_SCORES_KEY: logits_per_level,
-            SUBSPACE_TARGET_PROFILES_KEY: self._subspace_target_profiles(),
+            SUBSPACE_PATH_OVERLAP_KEY: self._subspace_path_overlap(),
             "effective_logits_per_level": effective_logits_per_level,
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,

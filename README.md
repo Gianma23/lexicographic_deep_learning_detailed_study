@@ -162,7 +162,7 @@ fields. They are not standalone runnable experiments.
 The HCC and lexicographic variants are not separate configs. Their launchers
 start from these base presets and add the whole variant block as CLI overrides:
 
-- HCC: `scripts/hcast/run_hcast_hcc_grid.sh` adds the `hcc.*` block
+- HCC: `scripts/hcast/run_hcast_hcc.sh` adds the `hcc.*` block
   (`enabled`, `eps`). HCC is a binary switch: when `hcc.enabled: true` the
   projection is fully applied from the first batch onwards, with no onset,
   alpha-schedule, or temperature knobs.
@@ -174,6 +174,11 @@ logits but does not explicitly project parameter gradients. Explicit
 lexicographic training is enabled by `train.lexicographic.enabled` and projects
 lower-priority gradients. Native lexicographic training is supported for
 H-CAST, HT-CapsNet, HRN, and decomposed-loss Hier-COS. LH-DNN is excluded.
+`train.gradient_blocks` selects the exact gradient-support blocks used by
+both diagnostics and projection. Blocks use compact support names (`p123`,
+`p12`, `p23`, `p1`, and so on); omitting the field preserves the historical
+`[p123, p12, p1]` behavior. HT-CapsNet launchers select
+`[p123, p23, p3]` for its coarse-to-fine capsule cascade.
 
 ### LH-DNN
 
@@ -195,24 +200,30 @@ presets remain local extrapolations.
 - `configs/capsnet/capsnet_cub200.yaml`
 - `configs/capsnet/capsnet_aircraft.yaml`
 
-The presets use the paper’s independent per-level primary capsules, direct
-parent-length taxonomy mask, and dynamic-weight equation. They retain the
-upstream runner’s 200-epoch horizon, taxonomy temperature `0.5`, 16×32
+The presets port the released TensorFlow architecture and callback behavior:
+one squashed primary-capsule tensor is reshaped at later levels, parent capsule
+lengths are softmaxed before taxonomy masking, and dynamic loss weights use the
+released callback's parentheses. Experimental hyperparameters follow the paper:
+the 200-epoch horizon, taxonomy temperature `0.5`, 16×32
 Keras-shaped attention with rank-three Keras Glorot initialization, per-example
 MixUp, the paper-reported epoch schedule, Keras 2.8 Adam update, deterministic
 execution, capsule margin loss, and next-batch dynamic level weights.
-Checkpointing follows the same FPA/TICE/weighted-AP policy as the other models,
-and the last partial training batch is retained. The EfficientNet preset pins
+Checkpointing uses deepest-level validation accuracy; this exactly matches the
+released finest-output monitor for independent decoding, with the analogous
+per-decoder metric used for top-down evaluation. The last partial training
+batch is retained. The EfficientNet preset pins
 the Keras-compatible
 `tf_efficientnet_b7.aa_in1k` conversion and restores Keras BatchNorm/drop-connect
 training semantics. CIFAR uses native 32 px inputs and split-wide scalar
-standardization; CUB and Aircraft use 64 px.
+standardization; CUB uses the source path-loader sequence (resize to 512 px,
+then to the paper's 64 px input) and batch-wide scalar standardization. Aircraft
+uses the same path preprocessing as an explicit local extrapolation.
 The CUB preset deliberately retains this repository's 13/38/200 taxonomy, so
 it is not an exact reproduction of the paper's 39/123/200 run. Aircraft is a
 64 px extrapolation from the paper datasets. `train.resume` is empty by
 default; runs never silently reuse an old checkpoint.
-Older local HT-CapsNet checkpoints predate the paper-aligned primary-capsule,
-routing-mask, and dynamic-weight choices as well as corrected attention
+Older local HT-CapsNet checkpoints predate the source-aligned primary-capsule,
+routing-mask, and dynamic-weight behavior as well as corrected attention
 initialization, backbone semantics, optimizer, and loss-weight buffering. They
 must not be resumed for these fidelity runs. The paper and released TensorFlow
 file contain material contradictions; the exact source-reproduction
@@ -283,31 +294,73 @@ detached parent-class logits as LH-DNN advantage baselines. This path requires
 `model.loss: level_softmax_ce_reg`.
 
 Direct subspace-norm supervision is enabled with
-`train.subspace_supervision.enabled: true`. It replaces the model's native
-loss with an equal average of hard-label cross-entropies over the per-level
-taxonomy-subspace norms. Cross-entropy consumes `subspace_scores_per_level`
-directly; evaluation ranks the same scores, so the training objective is aligned
-with the deployed subspace-norm argmax. Ground truth is the dataset's hard
-coarse-to-fine path, not a dense shared-ancestry profile.
+`train.subspace_supervision.enabled: true`. It replaces the model's native loss
+with the mean of the per-level soft cross-entropies over the taxonomy-subspace
+norms. Training consumes `subspace_scores_per_level` directly and evaluation
+ranks the same scores, so the objective is aligned with the deployed
+subspace-norm argmax.
+
+Ground truth is **not** a one-hot label. A subspace spans a node's ancestors,
+itself and its descendants, so two classes sharing an ancestor share those
+coordinates: the score of a sibling of the correct class is bounded below by the
+energy on the shared ancestors and a one-hot target is unreachable. Pushing
+toward it is minimized by putting all energy on the leaf coordinate, which
+collapses the coarse node coordinates the readout is supposed to accumulate.
+The target used instead is the profile that the intended geometry induces --
+unit energy spread evenly over the ground-truth path, pushed through the same
+subspace masks -- so class `c` is targeted at the square root of the fraction of
+that path its subspace contains. It depends on the taxonomy alone and is read
+off by the leaf label.
+
+`model.weight_mode` is spent where the native Hier-COS softmax losses spend it:
+on the **scalarisation**. Its level weights, normalized to sum to one, are the
+per-level coefficients of the total, and the target geometry carries no
+weighting at all. Separating the two roles leaves `tau` as the only control over
+the target's margins and keeps `model.weight_mode` meaning the same thing here
+as in the baseline the arm is measured against; under `equal` the scalarisation
+is the uniform mean, so the loss stays on the scale of the Hier-COS baselines'
+convex combination and learning rates transfer. `loss_weight_level_*` logs the
+coefficients in use and `loss_level_*` each level's contribution to the total;
+the `subspace_*_level_*` diagnostics stay unweighted, so the geometry is
+comparable across weight modes.
+
+Score and target are compared through `softmax(./tau)` on each side after the
+scores are divided by the norm of the node coordinate vector -- **one scale
+shared by every level**, not one per level. Under the intended geometry the
+correct class scores `||u||` at every level and the target is already 1 there,
+so the shared scale puts both sides in the same units while giving up only the
+single global degree of freedom the score map is homogeneous in. Normalizing per
+level instead frees one scale per level and leaves the node energies
+unidentified: the recovered geometry then drifts off the ground-truth path
+whenever the target is not sharply peaked. `tau -> 0` recovers the unreachable
+one-hot target; larger values flatten it.
 
 The loss dispatch is capability-based rather than tied to `model.name`. A model
-using cross-entropy must return `subspace_scores_per_level` (`[B, C_l]`). The
-mechanism rejects soft targets, mixup/cutmix, HCC, lexicographic training, and
-the Hier-COS LH projection. Its loss log includes raw and equally weighted
-per-level cross-entropies and unnormalized score norms. The accepted config
-block is:
+opting in must return `subspace_scores_per_level` (`[B, C_l]`),
+`subspace_path_overlap_by_level` (`[num_leaf, C_l]` integer counts of how many
+levels of a leaf's path each class subspace contains), `node_logits` (`[B, N]`)
+for the shared scale, and the fields the level-weight resolution needs. The
+mechanism rejects soft targets, mixup/cutmix, HCC, lexicographic training, and the
+Hier-COS LH projection. Its loss log includes the per-level soft
+cross-entropies, the level coefficients, unnormalized score norms,
+and `subspace_target_kl*` -- the residual above the target entropy, which is
+zero at the intended geometry and is the part the optimizer can remove. The
+accepted config block is:
 
 ```yaml
 train:
   subspace_supervision:
     enabled: true
-    loss: cross_entropy
+    tau: 0.25                 # > 0; target/prediction temperature
+    eps: 1.0e-12              # numerical epsilon for the shared scale
 ```
 
-The historical `normalized_mse` mode remains accepted for reproducing existing
-dense square-root-path profile runs. It additionally requires
-`subspace_target_profiles_by_level`, `target_mode: sqrt_path_weights`, and
-`eps`; it is not the default for new direct-subspace runs.
+There is no loss selector and no level-weight setting in this block. Enabling
+the mechanism always selects the tempered soft cross-entropy against the induced
+profile, and the level weights come from **`model.weight_mode`**, which the arm
+spends on the target geometry alone. The target is rebuilt from those weights
+each step rather than tabulated, so any `model.weight_mode` gives a target the
+uniformly averaged level losses are consistent with.
 
 ## Dataset behavior
 
@@ -449,6 +502,21 @@ DRY_RUN=1 \
 scripts/hcast/run_hcast_lex.sh
 ```
 
+The always-on HCC launchers are:
+
+```bash
+scripts/hcast/run_hcast_hcc.sh
+scripts/capsnet/run_ht_capsnet_hcc.sh
+scripts/hrn/run_hrn_hcc.sh
+scripts/hiercos/run_hiercos_hcc.sh
+```
+
+Each defaults to all three datasets. HCC output directories use
+`<model>_<dataset>[_<special-setting>]_hcc`; for example,
+`hcast_cifar100_hcc`, `capsnet_cub200_hcc`,
+`hrn_aircraft_level_marginal_hcc`, and
+`hiercos_cifar100_global_softmax_ce_reg_hcc`.
+
 Hier-COS launchers similarly accept `LEX_PROJECTION_MODES` and
 `TRANSFORM_MODES`. Each launcher prints the selected matrix. Narrow defaults
 remain narrow so invoking a script cannot unexpectedly start the full
@@ -461,11 +529,13 @@ DATASETS=cifar100 BASE_SEED=0 NUM_RUNS=1 \
 scripts/hiercos/run_hiercos_subspace.sh
 ```
 
-The launcher sets `alpha=0`, enables hard-label cross-entropy directly on the
-subspace scores, and forces the Hier-COS LH projection, HCC, mixup/cutmix, label
-smoothing, and lexicographic training off. Run directories are named
-`hiercos_<dataset>_subspace_cross_entropy`, keeping them separate from the
-historical normalized-profile runs.
+The launcher sets `alpha=0`, enables the tempered soft cross-entropy against the
+induced path-energy profile, and forces the Hier-COS LH projection, HCC,
+mixup/cutmix, label smoothing, and lexicographic training off. Override
+`SUBSPACE_TAU` (default `0.25`) to sweep the temperature; level weights follow
+`model.weight_mode`. Run directories are named
+`hiercos_<dataset>_subspace`; earlier runs under that name used the hard-label
+or normalized-profile objectives and are not comparable.
 
 Run native HT-CapsNet baselines on the three dataset configurations with:
 
@@ -473,9 +543,9 @@ Run native HT-CapsNet baselines on the three dataset configurations with:
 NUM_RUNS=3 scripts/capsnet/run_ht_capsnet_baselines.sh
 ```
 
-The runner preserves each config's dynamic margin-loss weighting. CIFAR-100
-selects the published equations where they contradict the released TensorFlow
-file; CUB uses this repository's unified taxonomy, and Aircraft is a local
+The runner preserves each config's dynamic margin-loss weighting. The model
+follows the released TensorFlow behavior and the experiment values follow the
+paper; CUB uses this repository's unified taxonomy, and Aircraft is a local
 extrapolation. Use `DATASETS`, `NUM_RUNS`, `BASE_SEED`, or `SPLIT_SEED` to select
 a reproducible subset.
 

@@ -238,6 +238,80 @@ class LexicographicProjectionReuseTests(unittest.TestCase):
                         else:
                             self.assertTrue(torch.equal(actual_grad, expected_grad))
 
+    def test_p23_selection_projects_fine_off_mid(self):
+        coarse = (None,)
+        mid = (torch.tensor([1.0, 0.0]),)
+        fine = (torch.tensor([2.0, 1.0]),)
+        blocks = ("p23",)
+        block_masks = gradient_ops._resolve_trunk_masks(
+            coarse,
+            mid,
+            fine,
+            blocks=blocks,
+        )
+
+        projected, metrics = gradient_ops._build_lexicographic_grads(
+            coarse_grads=coarse,
+            mid_grads=mid,
+            fine_grads=fine,
+            trunk_masks=block_masks,
+            projection_mode="coarse_first",
+            blocks=blocks,
+            include_metrics=True,
+        )
+
+        torch.testing.assert_close(
+            projected["fine_projected"][0],
+            torch.tensor([0.0, 1.0]),
+        )
+        self.assertEqual(metrics["post_projection_applied_p23_fine_mid"], 1.0)
+        self.assertAlmostEqual(metrics["post_cos_p23_fine_mid"], 0.0, places=6)
+        self.assertIn("post_grad_norm_p23_mid", metrics)
+        self.assertIn("post_grad_norm_p23_fine", metrics)
+
+    def test_unselected_p23_is_logged_and_projected_nowhere(self):
+        coarse = (None,)
+        mid = (torch.tensor([1.0, 0.0]),)
+        fine = (torch.tensor([2.0, 1.0]),)
+        blocks = ("p123",)
+        block_masks = gradient_ops._resolve_trunk_masks(
+            coarse,
+            mid,
+            fine,
+            blocks=blocks,
+        )
+
+        projected, metrics = gradient_ops._build_lexicographic_grads(
+            coarse_grads=coarse,
+            mid_grads=mid,
+            fine_grads=fine,
+            trunk_masks=block_masks,
+            projection_mode="coarse_first",
+            blocks=blocks,
+            include_metrics=True,
+        )
+
+        self.assertTrue(torch.equal(projected["fine_projected"][0], fine[0]))
+        self.assertNotIn("post_projection_applied_p23_fine_mid", metrics)
+
+    def test_exact_support_masks_cover_all_nonempty_three_level_blocks(self):
+        marker = torch.ones(())
+        coarse = (marker, None, None, marker, marker, None, marker)
+        mid = (None, marker, None, marker, None, marker, marker)
+        fine = (None, None, marker, None, marker, marker, marker)
+
+        masks = gradient_ops._resolve_trunk_masks(
+            coarse,
+            mid,
+            fine,
+            blocks=gradient_ops.GRADIENT_BLOCK_NAMES,
+        )
+
+        for index, block in enumerate(gradient_ops.GRADIENT_BLOCK_NAMES):
+            expected = [False] * len(gradient_ops.GRADIENT_BLOCK_NAMES)
+            expected[index] = True
+            self.assertEqual(masks[block], expected)
+
 
 if __name__ == "__main__":
     unittest.main()

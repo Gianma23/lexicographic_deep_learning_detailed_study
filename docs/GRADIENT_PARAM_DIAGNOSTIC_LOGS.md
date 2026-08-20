@@ -8,13 +8,23 @@ This file documents the `train_metrics` keys written to `run_log.jsonl` by the *
   - `coarse` = level 0
   - `mid` = level 1
   - `fine` = level 2
-- Trunks:
-  - `t1`: params that receive `coarse + mid + fine` grads
-  - `t2`: params that receive `coarse + mid` grads only
-  - `t3`: params that receive `coarse` grads only
-- Union trunks:
-  - `t2t1 = t2 ∪ t1`
-  - `t3t2t1 = t3 ∪ t2 ∪ t1`
+- Exact gradient-support blocks use `p` followed by the levels whose losses
+  reach the parameter. The complete three-level vocabulary is `p1`, `p2`,
+  `p3`, `p12`, `p13`, `p23`, and `p123`.
+- Examples:
+  - `p123`: params that receive `coarse + mid + fine` gradients
+  - `p12`: params that receive `coarse + mid` gradients only
+  - `p23`: params that receive `mid + fine` gradients only
+  - `p3`: params that receive the fine gradient only
+- `train.gradient_blocks` selects which exact blocks are diagnosed and,
+  when lexicographic mode is active, projected. Its omitted-config default is
+  `[p123, p12, p1]`, which reproduces the historical H-CAST partition.
+
+The three old exact-block names remain emitted as deprecated aliases:
+`t1 = p123`, `t2 = p12`, and `t3 = p1`. Historical union aliases
+`t2t1 = p12 ∪ p123` and `t3t2t1 = p1 ∪ p12 ∪ p123` are also retained when
+their component blocks are selected. Old `run_log.jsonl` files therefore remain
+usable without conversion.
 
 Important: mask-dependent keys are emitted only when the corresponding mask is active (`any(mask)` in code).
 Pairwise cosine keys listed below are emitted for every epoch summary.
@@ -40,7 +50,37 @@ model requirements are:
 Logged `loss_level_*` values match the tensors used by lexicographic
 optimization.
 
-## A) Standard Trunk Metrics (non-lex and lex)
+## Canonical `p...` metric keys
+
+For every selected, non-empty block `pA`, the current code emits:
+
+- `grad_norm_pA_<level>` for every level in `A`;
+- `cos_pA_<lower>_<higher>` for every pair of gradients present on the block;
+- `param_norm_pA` and `delta_param_norm_pA`.
+
+For example, selecting `p23` adds `grad_norm_p23_mid`,
+`grad_norm_p23_fine`, `cos_p23_fine_mid`, `param_norm_p23`, and
+`delta_param_norm_p23`. Selecting singleton `p3` adds its norm metrics but no
+cosine and no projection, because no objectives compete there.
+
+With lexicographic mode and projection logging enabled, the corresponding
+post-update diagnostics use `post_`:
+
+- `post_projection_applied_pA_<target>_<reference>`;
+- `post_grad_norm_pA_<level>`;
+- `post_cos_pA_<target>_<reference>`.
+
+On a three-gradient block the final target is projected against the resultant
+of the already processed higher-priority gradients, denoted by `higher`; for
+example `post_cos_p123_fine_higher` in coarse-first mode. On `p23`,
+coarse-first mode produces `post_projection_applied_p23_fine_mid` and
+`post_cos_p23_fine_mid`.
+
+## A) Deprecated compatibility metrics (non-lex and lex)
+
+The keys below are still emitted alongside the canonical `p...` keys so old
+analysis notebooks can read new runs. They are not the naming convention for
+new analysis code.
 
 ### Pre-gradient norms
 
@@ -154,8 +194,9 @@ Scanned runs: `hcast*` with `run_log.jsonl` present.
 - Seen in: `hcast_lex_cifar100`, `hcast_lex_cub200`, `hcast_lex_aircraft`.
 - These runs were produced before cosine/flag renaming and before dropping `lex_*_norm_*`
   raw/projected diagnostics and projection coefficients.
-- With the current code, full lex runs are expected to expose **43** keys:
-  standard (25) + post-grad norms (9) + post cosines (6) + post-projection flags (3).
+- Current runs add canonical `p...` keys to the compatibility keys, so their
+  total depends on `train.gradient_blocks` and on which selected supports
+  are non-empty; there is no longer one model-independent expected key count.
 
 2. **25 keys** (full standard only):
 - Seen in: `hcast_cifar100`, `hcast_cub200`, `hcast_aircraft`.
@@ -175,13 +216,16 @@ Scanned runs: `hcast*` with `run_log.jsonl` present.
 
 ### Why counts differ across runs
 
-Counts differ because metric emission is mask-dependent. If a run has no active `t2`, `t3`, `t2t1`, or `t3t2t1` masks, those keys are not logged.
+Historical counts differ because metric emission was mask-dependent. Current
+canonical counts additionally depend on the selected `p...` list and the
+non-empty exact supports. The compatibility keys retain their historical
+mask-dependent behavior.
 
 ## E) Mode Expectations
 
 ### Non-lex (`train.lexicographic.enabled=false`)
 
-- Includes: standard trunk metrics, including
+- Includes: canonical metrics for the selected blocks plus compatibility trunk metrics, including
   `cos_t2_mid_coarse`, `cos_t1_mid_coarse`, `cos_t2t1_mid_coarse`,
   `cos_t1_fine_higher`, `cos_t1_fine_coarse`, `cos_t1_fine_mid`.
 - Excludes:
@@ -194,10 +238,10 @@ Counts differ because metric emission is mask-dependent. If a run has no active 
 
 ### Lex (`enabled=true`, `log_metrics=true`)
 
-- Includes: standard metrics + post-projection applied flags (`post_projection_applied_*`)
+- Includes: canonical and compatibility standard metrics + post-projection applied flags (`post_projection_applied_*`)
   + post-grad norms (`post_grad_norm_*`) + post cosine diagnostics listed above.
 
 ### Lex (`enabled=true`, `log_metrics=false`)
 
-- Includes: standard trunk metrics (including the raw pairwise and trunk-specific cosine keys).
+- Includes: canonical selected-block and compatibility metrics (including raw pairwise cosines).
 - Excludes: post-projection applied flags, post-grad norms, and post lexicographic cosine diagnostics.

@@ -3,6 +3,7 @@ from typing import Any, Dict, Mapping, Sequence, Tuple
 
 
 BEST_SELECTION_MODES = ("topdown", "independent")
+BEST_SELECTION_STRATEGIES = ("hierarchical_metrics", "deepest_accuracy")
 SelectionKey = Tuple[float, float, float]
 
 
@@ -28,20 +29,38 @@ def _deepest_accuracy_key(eval_metrics: Mapping[str, float], mode: str) -> str:
     return max(candidates, key=lambda key: int(key.rsplit("_", 1)[-1]))
 
 
-def selection_key(eval_metrics: Mapping[str, float], mode: str) -> SelectionKey:
+def selection_key(
+    eval_metrics: Mapping[str, float],
+    mode: str,
+    strategy: str = "hierarchical_metrics",
+) -> SelectionKey:
     """Return an exact tuple used for validation-checkpoint comparison.
 
-    Lexicographic order:
-    1) FPA for the selected mode (higher is better)
-    2) TICE for the selected mode (lower is better)
-    3) wAP for the selected mode (higher is better)
+    ``hierarchical_metrics`` uses the lexicographic order FPA (higher), TICE
+    (lower), then weighted AP (higher). ``deepest_accuracy`` uses only the
+    deepest-level accuracy for the selected decoder, matching single-output
+    validation monitors such as the released HT-CapsNet checkpoint callback.
 
-    Missing or non-finite values rank below every finite value. When none of
-    the three hierarchy metrics is present, deepest-level accuracy is the sole
-    ranking component.
+    Missing or non-finite values rank below every finite value. Under
+    ``hierarchical_metrics``, deepest-level accuracy is the fallback when none
+    of the three hierarchy metrics is present.
     """
     if mode not in BEST_SELECTION_MODES:
         raise ValueError(f"Unknown selection mode '{mode}'. Expected one of {BEST_SELECTION_MODES}.")
+    if strategy not in BEST_SELECTION_STRATEGIES:
+        raise ValueError(
+            f"Unknown checkpoint-selection strategy '{strategy}'. "
+            f"Expected one of {BEST_SELECTION_STRATEGIES}."
+        )
+
+    deepest_key = _deepest_accuracy_key(eval_metrics, mode)
+    if strategy == "deepest_accuracy":
+        primary = (
+            _finite_or_worst(eval_metrics.get(deepest_key))
+            if deepest_key
+            else float("-inf")
+        )
+        return primary, float("-inf"), float("-inf")
 
     fpa_key = f"fpa_{mode}"
     tice_key = f"tice_{mode}"
@@ -53,7 +72,6 @@ def selection_key(eval_metrics: Mapping[str, float], mode: str) -> SelectionKey:
             _finite_or_worst(eval_metrics.get(wap_key)),
         )
 
-    deepest_key = _deepest_accuracy_key(eval_metrics, mode)
     primary = _finite_or_worst(eval_metrics.get(deepest_key)) if deepest_key else float("-inf")
     return primary, float("-inf"), float("-inf")
 
@@ -74,11 +92,17 @@ def normalize_selection_key(value: Any, *, legacy_primary: Any = None) -> Select
     return float("-inf"), float("-inf"), float("-inf")
 
 
-def selection_components(eval_metrics: Mapping[str, float], mode: str) -> Dict[str, Any]:
+def selection_components(
+    eval_metrics: Mapping[str, float],
+    mode: str,
+    strategy: str = "hierarchical_metrics",
+) -> Dict[str, Any]:
     """Return a JSON/YAML-friendly description of a selection decision."""
-    key = selection_key(eval_metrics, mode)
+    key = selection_key(eval_metrics, mode, strategy=strategy)
     fpa_key = f"fpa_{mode}"
-    if any(
+    if strategy == "deepest_accuracy":
+        primary_name = _deepest_accuracy_key(eval_metrics, mode) or fpa_key
+    elif any(
         metric_key in eval_metrics
         for metric_key in (fpa_key, f"tice_{mode}", f"weighted_ap_{mode}")
     ):
@@ -94,6 +118,10 @@ def selection_components(eval_metrics: Mapping[str, float], mode: str) -> Dict[s
     }
 
 
-def metric_for_best(eval_metrics: Mapping[str, float], mode: str) -> float:
+def metric_for_best(
+    eval_metrics: Mapping[str, float],
+    mode: str,
+    strategy: str = "hierarchical_metrics",
+) -> float:
     """Compatibility wrapper returning only the primary scheduler metric."""
-    return float(selection_key(eval_metrics, mode)[0])
+    return float(selection_key(eval_metrics, mode, strategy=strategy)[0])

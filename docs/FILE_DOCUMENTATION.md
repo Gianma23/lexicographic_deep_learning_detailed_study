@@ -81,8 +81,10 @@ fatal errors.
 - `models/common/hcc.py` — HCC affine hierarchy projection and the shared
   on/off controller used by every HCC-capable model.
 - `models/common/subspace_supervision.py` — mixed-precision-safe taxonomy
-  subspace norms, decoder-aligned hard-label cross-entropy, historical dense
-  square-root-path target/profile regression, and capability validation.
+  subspace norms, the attainable path-energy target profile rebuilt from the
+  model's own level weights, decoder-aligned tempered soft cross-entropy on a
+  level-shared score scale averaged uniformly over levels, and capability
+  validation.
 - `models/hcast/internal/` — vendored CAST/H-CAST backbone implementation.
 
 ### LH-DNN
@@ -116,13 +118,13 @@ fatal errors.
   ResNet-50 backbone, optional LH-projected learnable level heads reading the
   transform output directly or through an LH-DNN-style shared PReLU/rho
   derivative, detached advantage baselines, an independent identity or
-  per-level block-diagonal fixed frame, and non-persistent dense subspace target
-  lookup tables exposed through the shared supervision contract.
+  per-level block-diagonal fixed frame, and non-persistent path-overlap tables
+  exposed through the shared supervision contract.
 - `models/hiercos/factory.py` — Hier-COS model config adapter.
 - `models/hiercos/losses.py` — `kl_reg`, `global_softmax_ce_reg`, and
   `level_softmax_ce_reg` objectives.
-- `models/hiercos/topology.py` — taxonomy node ids, subspace masks,
-  and path targets.
+- `models/hiercos/topology.py` — taxonomy node ids, subspace masks, per-leaf
+  path-overlap counts, and level path weights.
 - `models/hiercos/fixed_frame.py` — fixed identity/random orthonormal
   classifiers.
 - `models/hiercos/transforms.py` — full, BN-linear, and final-only
@@ -155,10 +157,10 @@ fatal errors.
 
 Lexicographic modules:
 
-- `train/lexicographic/config.py` — projection-mode resolution and
-  compatibility checks.
-- `train/lexicographic/gradients.py` — trunk detection, raw gradient
-  diagnostics, projection, and custom gradient assignment.
+- `train/lexicographic/config.py` — priority-mode and selected-support-block
+  resolution plus compatibility checks.
+- `train/lexicographic/gradients.py` — exact `p...` gradient-support detection,
+  block-selected diagnostics and projection, and custom gradient assignment.
 - `train/lexicographic/types.py` — typed lexicographic config/state records.
 
 Runtime modules:

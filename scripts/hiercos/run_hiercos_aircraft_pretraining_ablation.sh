@@ -165,7 +165,8 @@ run_seeded_train "$CONFIG" "$(run_output_dir)" \
   "model.pretrained=false" \
   "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
   "model.transform_mode=full" \
-  "train.lexicographic.enabled=false"
+  "train.lexicographic.enabled=false" \
+  "train.gradient_blocks=[p123]"
 
 if [[ "$DRY_RUN" != "1" ]]; then
   while (( "$(jobs -pr | wc -l)" > 0 )); do

@@ -1,11 +1,39 @@
-"""Shared subspace-norm scoring and direct-supervision losses.
+"""Shared subspace-norm scoring and direct supervision of the decoded scores.
 
 The loss is capability based: any model can opt in by exposing
-``subspace_scores_per_level`` in its forward output.  Hard-label cross-entropy
-is the default and trains the exact scores used for decoding.  The historical
-normalized-profile MSE remains available for old experiment configurations and
-additionally requires ``subspace_target_profiles_by_level``.  No model-family
-check is performed here.
+``subspace_scores_per_level`` and ``subspace_path_overlap_by_level`` in its
+forward output. No model-family check is performed here.
+
+The supervised quantity is the exact per-level taxonomy-subspace norm the
+decoder ranks. Its ground truth is not a one-hot label. A subspace contains the
+ancestors, the node itself and its descendants, so two classes sharing an
+ancestor necessarily share the corresponding coordinates: the score of a sibling
+of the correct class is bounded below by the energy on the shared ancestors, and
+a one-hot target is therefore infeasible. The attainable target is the score
+profile induced by the intended node geometry -- unit energy spread evenly over
+the ground-truth path -- which assigns class ``c`` the square root of the
+fraction of that path its subspace contains. Both the score
+and that profile are put on one common scale -- the norm of the node coordinate
+vector, shared by every level -- and compared through a tempered soft
+cross-entropy, so the objective is minimized exactly at the intended geometry
+rather than at a degenerate one. The scale must be shared: normalizing each
+level separately frees one scale per level and leaves the node energies
+unidentified, which shows up as the recovered geometry drifting off the
+ground-truth path whenever the target is not sharply peaked.
+
+The target carries no level weighting. A class's target is the square root of the
+fraction of the ground-truth path its subspace contains, which is fixed by the
+taxonomy alone: the intended geometry spreads unit energy evenly over the path,
+so a competitor's score is bounded below by the share of the path it shares. The
+level weights are spent where the model family's own objective spends them --
+`model.weight_mode` resolves the per-level coefficients of the scalarisation,
+exactly as it does for the native Hier-COS softmax losses -- and they are
+normalized to sum to one, so the loss keeps the scale of the previous uniform
+mean and learning rates transfer from the Hier-COS baselines unchanged.
+
+Separating the two roles is what keeps the arm interpretable. The temperature is
+then the only control over the target's margins, and `model.weight_mode` means
+the same thing here as in the baseline the arm is measured against.
 """
 
 from contextlib import nullcontext
@@ -18,19 +46,15 @@ import torch.nn.functional as F
 
 
 SUBSPACE_SCORES_KEY = "subspace_scores_per_level"
-SUBSPACE_TARGET_PROFILES_KEY = "subspace_target_profiles_by_level"
-TARGET_MODE = "sqrt_path_weights"
-CROSS_ENTROPY_LOSS_MODE = "cross_entropy"
-NORMALIZED_MSE_LOSS_MODE = "normalized_mse"
-LOSS_MODES = (CROSS_ENTROPY_LOSS_MODE, NORMALIZED_MSE_LOSS_MODE)
-LOSS_MODE = CROSS_ENTROPY_LOSS_MODE
+SUBSPACE_PATH_OVERLAP_KEY = "subspace_path_overlap_by_level"
+SUBSPACE_COORDINATES_KEY = "node_logits"
+DEFAULT_TAU = 0.25
 
 
 @dataclass(frozen=True)
 class SubspaceSupervisionConfig:
     enabled: bool = False
-    target_mode: str = TARGET_MODE
-    loss: str = LOSS_MODE
+    tau: float = DEFAULT_TAU
     eps: float = 1.0e-12
 
 
@@ -50,21 +74,23 @@ def resolve_subspace_supervision_config(cfg: Any) -> SubspaceSupervisionConfig:
         train_cfg = _section_to_dict(cfg.get("train", None))
     raw_cfg = _section_to_dict(train_cfg.get("subspace_supervision", None))
 
-    enabled = bool(raw_cfg.get("enabled", False))
-    target_mode = raw_cfg.get("target_mode", TARGET_MODE)
-    loss_mode = raw_cfg.get("loss", LOSS_MODE)
-    raw_eps = raw_cfg.get("eps", 1.0e-12)
+    enabled = raw_cfg.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("train.subspace_supervision.enabled must be a boolean.")
 
-    if not isinstance(target_mode, str) or target_mode != TARGET_MODE:
+    raw_tau = raw_cfg.get("tau", DEFAULT_TAU)
+    if isinstance(raw_tau, bool):
+        raise ValueError("train.subspace_supervision.tau must be a finite number > 0.")
+    try:
+        tau = float(raw_tau)
+    except (TypeError, ValueError) as exc:
         raise ValueError(
-            "train.subspace_supervision.target_mode must be "
-            f"'{TARGET_MODE}', got {target_mode!r}."
-        )
-    if not isinstance(loss_mode, str) or loss_mode not in LOSS_MODES:
-        raise ValueError(
-            "train.subspace_supervision.loss must be "
-            f"one of {list(LOSS_MODES)}, got {loss_mode!r}."
-        )
+            "train.subspace_supervision.tau must be a finite number > 0."
+        ) from exc
+    if not isfinite(tau) or tau <= 0.0:
+        raise ValueError("train.subspace_supervision.tau must be a finite number > 0.")
+
+    raw_eps = raw_cfg.get("eps", 1.0e-12)
     if isinstance(raw_eps, bool):
         raise ValueError("train.subspace_supervision.eps must be a finite number > 0.")
     try:
@@ -76,16 +102,11 @@ def resolve_subspace_supervision_config(cfg: Any) -> SubspaceSupervisionConfig:
     if not isfinite(eps) or eps <= 0.0:
         raise ValueError("train.subspace_supervision.eps must be a finite number > 0.")
 
-    return SubspaceSupervisionConfig(
-        enabled=enabled,
-        target_mode=target_mode,
-        loss=loss_mode,
-        eps=eps,
-    )
+    return SubspaceSupervisionConfig(enabled=enabled, tau=tau, eps=eps)
 
 
 def subspace_supervision_enabled(cfg: Any) -> bool:
-    return bool(resolve_subspace_supervision_config(cfg).enabled)
+    return resolve_subspace_supervision_config(cfg).enabled
 
 
 class _SqrtWithZeroSubgradient(torch.autograd.Function):
@@ -158,50 +179,39 @@ def subspace_norms(
     return scores_per_level
 
 
-@torch.no_grad()
-def build_sqrt_path_target_profiles(
-    level_node_ids: Sequence[torch.Tensor],
-    level_subspace_masks: Sequence[torch.Tensor],
-    leaf_to_level_local: torch.Tensor,
-    path_weights: torch.Tensor,
-) -> List[torch.Tensor]:
-    """Precompute dense subspace-norm targets for every leaf class."""
-    if not isinstance(leaf_to_level_local, torch.Tensor) or leaf_to_level_local.ndim != 2:
-        raise ValueError("Subspace target construction requires leaf_to_level_local [num_leaf, L].")
-    depth = int(leaf_to_level_local.size(1))
-    if len(level_node_ids) != depth or len(level_subspace_masks) != depth:
-        raise ValueError("Subspace target topology must be aligned with hierarchy depth.")
-    if not isinstance(path_weights, torch.Tensor) or path_weights.ndim != 1:
-        raise ValueError("Subspace path weights must have shape [L].")
-    if int(path_weights.numel()) != depth:
-        raise ValueError("Subspace path weights must be aligned with hierarchy depth.")
+def subspace_target_profile(
+    path_overlap: torch.Tensor,
+    depth: int,
+) -> torch.Tensor:
+    """Attainable subspace-score target for one level.
 
-    weights = path_weights.to(dtype=torch.float64, device="cpu")
-    if not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
-        raise ValueError("Subspace path weights must be finite and non-negative.")
-    weight_sum = weights.sum()
-    if float(weight_sum.item()) <= 0.0:
-        raise ValueError("Subspace path weights must have positive total mass.")
-    weights = weights / weight_sum
+    ``path_overlap[leaf, c]`` counts how many of the ``depth`` levels of
+    ``leaf``'s ground-truth path fall inside class ``c``'s taxonomy subspace: the
+    whole path for the correct class, and only the levels shared down to the
+    lowest common ancestor for any other. Spreading unit energy evenly over the
+    path, the induced score is the square root of that shared fraction, so the
+    correct class scores 1 and every other class scores the square root of the
+    fraction of the path its subspace contains. The target therefore depends on
+    the taxonomy alone. Nodes on a single-child chain span one subspace and
+    receive the same target, which is the one distinction the subspace map
+    cannot express.
+    """
+    if not isinstance(path_overlap, torch.Tensor) or path_overlap.ndim != 2:
+        raise ValueError("Subspace path overlap must have shape [num_leaf, C].")
+    if isinstance(depth, bool) or not isinstance(depth, int) or depth <= 0:
+        raise ValueError("Subspace target depth must be a positive integer.")
+    overlap = path_overlap.to(dtype=torch.long)
+    if bool((overlap < 0).any()) or bool((overlap > depth).any()):
+        raise ValueError(
+            f"Subspace path overlap counts must lie in [0, {depth}]."
+        )
 
-    parsed_node_ids = [node_ids.to(device="cpu", dtype=torch.long) for node_ids in level_node_ids]
-    total_nodes = sum(int(node_ids.numel()) for node_ids in parsed_node_ids)
-    num_leaf = int(leaf_to_level_local.size(0))
-    target_coordinates = torch.zeros((num_leaf, total_nodes), dtype=torch.float64)
-    row_ids = torch.arange(num_leaf, dtype=torch.long)
-    local_paths = leaf_to_level_local.to(device="cpu", dtype=torch.long)
-
-    for level, node_ids in enumerate(parsed_node_ids):
-        local_ids = local_paths[:, level]
-        if bool((local_ids < 0).any()) or bool((local_ids >= int(node_ids.numel())).any()):
-            raise ValueError(f"Invalid path indices while building level {level} targets.")
-        target_coordinates[row_ids, node_ids[local_ids]] = torch.sqrt(weights[level])
-
-    profiles = subspace_norms(
-        target_coordinates,
-        [mask.to(device="cpu") for mask in level_subspace_masks],
-    )
-    return [profile.to(dtype=torch.float32).detach() for profile in profiles]
+    shared_fraction = torch.arange(
+        depth + 1,
+        device=overlap.device,
+        dtype=torch.float32,
+    ) / float(depth)
+    return torch.sqrt(shared_fraction[overlap])
 
 
 def _hard_targets(targets: Any, depth: int) -> torch.Tensor:
@@ -257,111 +267,118 @@ def _validate_scores(output: Mapping[str, Any]) -> List[torch.Tensor]:
     return validated_scores
 
 
-def _validate_profiles(
+def _validate_path_overlap(
     output: Mapping[str, Any],
     scores: Sequence[torch.Tensor],
 ) -> List[torch.Tensor]:
-    target_profiles = output.get(SUBSPACE_TARGET_PROFILES_KEY)
-    if not isinstance(target_profiles, (list, tuple)) or len(target_profiles) != len(scores):
+    path_overlap = output.get(SUBSPACE_PATH_OVERLAP_KEY)
+    if not isinstance(path_overlap, (list, tuple)) or len(path_overlap) != len(scores):
         raise ValueError(
-            "Normalized-MSE subspace supervision requires model output "
-            f"`{SUBSPACE_TARGET_PROFILES_KEY}` aligned with score levels."
+            "Enabled direct subspace supervision requires model output "
+            f"`{SUBSPACE_PATH_OVERLAP_KEY}` aligned with score levels."
         )
 
-    validated_profiles: List[torch.Tensor] = []
+    validated: List[torch.Tensor] = []
     num_leaf: Optional[int] = None
-    for level, (level_scores, level_profiles) in enumerate(zip(scores, target_profiles)):
-        if not isinstance(level_profiles, torch.Tensor) or level_profiles.ndim != 2:
+    for level, (level_scores, level_overlap) in enumerate(zip(scores, path_overlap)):
+        if not isinstance(level_overlap, torch.Tensor) or level_overlap.ndim != 2:
             raise ValueError(
-                f"Subspace target profiles for level {level} must have shape [num_leaf, C]."
+                f"Subspace path overlap for level {level} must have shape [num_leaf, C]."
             )
-        if not level_profiles.is_floating_point():
-            raise ValueError(f"Subspace targets for level {level} must be floating point.")
-        if int(level_profiles.size(0)) <= 0 or int(level_profiles.size(1)) <= 0:
-            raise ValueError(f"Subspace target profiles for level {level} cannot be empty.")
-        if int(level_scores.size(1)) != int(level_profiles.size(1)):
+        if level_overlap.is_floating_point():
+            raise ValueError(
+                f"Subspace path overlap for level {level} must be an integer count."
+            )
+        if int(level_overlap.size(0)) <= 0 or int(level_overlap.size(1)) <= 0:
+            raise ValueError(f"Subspace path overlap for level {level} cannot be empty.")
+        if int(level_scores.size(1)) != int(level_overlap.size(1)):
             raise ValueError(
                 f"Subspace score/target width mismatch at level {level}: "
-                f"{int(level_scores.size(1))} versus {int(level_profiles.size(1))}."
+                f"{int(level_scores.size(1))} versus {int(level_overlap.size(1))}."
             )
         if num_leaf is None:
-            num_leaf = int(level_profiles.size(0))
-        elif int(level_profiles.size(0)) != num_leaf:
-            raise ValueError("Subspace target lookup tables must share one leaf dimension.")
-        if not bool(torch.isfinite(level_profiles).all()):
-            raise ValueError(f"Subspace targets for level {level} contain non-finite values.")
-        validated_profiles.append(level_profiles)
-    return validated_profiles
+            num_leaf = int(level_overlap.size(0))
+        elif int(level_overlap.size(0)) != num_leaf:
+            raise ValueError("Subspace path overlap tables must share one leaf dimension.")
+        validated.append(level_overlap)
+    return validated
 
 
-def _compute_cross_entropy_loss(
-    scores: Sequence[torch.Tensor],
-    hard_targets: torch.Tensor,
-    return_aux: bool,
-):
-    depth = len(scores)
-    raw_level_losses: List[torch.Tensor] = []
-    weighted_level_losses: List[torch.Tensor] = []
-    score_norm_means: List[torch.Tensor] = []
-    metrics: Dict[str, float] = {}
+def _resolve_level_weights(
+    output: Mapping[str, Any],
+    cfg: Any,
+    depth: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Return the model's own level coefficients, normalized to sum to one.
 
-    for level, level_scores in enumerate(scores):
-        level_targets = hard_targets[:, level].to(device=level_scores.device)
-        num_classes = int(level_scores.size(1))
-        if bool((level_targets < 0).any()) or bool((level_targets >= num_classes).any()):
-            raise ValueError(
-                f"Direct subspace targets for level {level} must be in [0, {num_classes})."
-            )
-        compute_dtype = (
-            torch.float32
-            if level_scores.dtype in {torch.float16, torch.bfloat16}
-            else level_scores.dtype
+    The subspace arm deliberately does not define a separate weighting. It reads
+    the level weights the model family's native objective would use and spends
+    them where that objective spends them: as the per-level coefficients of the
+    scalarisation. The target geometry is weight-free, so a level's importance is
+    expressed once, in the loss, and `model.weight_mode` keeps the same meaning
+    here as in the baseline the arm is measured against.
+    """
+    level_node_ids = output.get("hiercos_level_node_ids")
+    if not isinstance(level_node_ids, list) or len(level_node_ids) != int(depth):
+        raise ValueError(
+            "Direct subspace supervision resolves its level weights from the "
+            "model's native weighting and therefore requires model output "
+            "`hiercos_level_node_ids` aligned with hierarchy depth."
         )
-        autocast_off = nullcontext()
-        if level_scores.device.type in {"cpu", "cuda", "xpu", "mps"}:
-            autocast_off = torch.autocast(
-                device_type=level_scores.device.type,
-                enabled=False,
-            )
-        with autocast_off:
-            score_work = level_scores.to(dtype=compute_dtype)
-            raw_loss = F.cross_entropy(score_work, level_targets)
-            score_norm_mean = score_work.norm(p=2, dim=1).mean()
-        weighted_loss = raw_loss / float(depth)
-        raw_level_losses.append(raw_loss)
-        weighted_level_losses.append(weighted_loss)
-        score_norm_means.append(score_norm_mean)
+    from models.hiercos.losses import resolve_level_weights
 
-        metrics[f"subspace_cross_entropy_level_{level}"] = float(raw_loss.detach().item())
-        metrics[f"loss_level_{level}"] = float(weighted_loss.detach().item())
-        metrics[f"subspace_score_l2_level_{level}"] = float(
-            score_norm_mean.detach().item()
-        )
-
-    total = torch.stack(weighted_level_losses).sum()
-    metrics["total"] = float(total.detach().item())
-    metrics["subspace_cross_entropy"] = float(total.detach().item())
-    metrics["subspace_score_l2"] = float(
-        torch.stack(score_norm_means).mean().detach().item()
+    weights = resolve_level_weights(
+        output=output,
+        cfg=cfg,
+        level_node_ids=level_node_ids,
+        num_levels=int(depth),
+        device=device,
+        dtype=dtype,
     )
-    if not return_aux:
-        return total, metrics
-    return total, metrics, {
-        "level_losses": weighted_level_losses,
-        "subspace_cross_entropy_losses": raw_level_losses,
-    }
+    if bool((weights <= 0).any()):
+        raise ValueError(
+            "Direct subspace supervision requires strictly positive level weights; "
+            "a zero weight would drop that level from the objective entirely."
+        )
+    return weights / weights.sum()
 
 
-def _compute_normalized_profile_mse_loss(
+def _validate_coordinates(
+    output: Mapping[str, Any],
+    batch_size: int,
+) -> torch.Tensor:
+    coordinates = output.get(SUBSPACE_COORDINATES_KEY)
+    if not isinstance(coordinates, torch.Tensor) or coordinates.ndim != 2:
+        raise ValueError(
+            "Enabled direct subspace supervision requires model output "
+            f"`{SUBSPACE_COORDINATES_KEY}` with shape [B, N]."
+        )
+    if int(coordinates.size(0)) != int(batch_size):
+        raise ValueError(
+            "Direct subspace supervision coordinate batch size must match the score batch size."
+        )
+    return coordinates
+
+
+def _compute_soft_cross_entropy_loss(
     scores: Sequence[torch.Tensor],
-    profile_lookup: Sequence[torch.Tensor],
+    path_overlap: Sequence[torch.Tensor],
+    coordinates: torch.Tensor,
     hard_targets: torch.Tensor,
     resolved: SubspaceSupervisionConfig,
+    level_weights: torch.Tensor,
     return_aux: bool,
 ):
     depth = len(scores)
     leaf_targets = hard_targets[:, -1]
-    num_leaf = int(profile_lookup[0].size(0))
+    coordinate_norm = (
+        coordinates.to(dtype=torch.float32)
+        .norm(p=2, dim=1, keepdim=True)
+        .clamp_min(resolved.eps)
+    )
+    num_leaf = int(path_overlap[0].size(0))
     if bool((leaf_targets < 0).any()) or bool((leaf_targets >= num_leaf).any()):
         raise ValueError(
             f"Direct subspace supervision leaf targets must be in [0, {num_leaf})."
@@ -369,15 +386,23 @@ def _compute_normalized_profile_mse_loss(
 
     raw_level_losses: List[torch.Tensor] = []
     weighted_level_losses: List[torch.Tensor] = []
+    level_divergences: List[torch.Tensor] = []
     score_norm_means: List[torch.Tensor] = []
     metrics: Dict[str, float] = {}
-    for level, (level_scores, lookup) in enumerate(zip(scores, profile_lookup)):
+
+    for level, (level_scores, overlap) in enumerate(zip(scores, path_overlap)):
         compute_dtype = (
             torch.float32
             if level_scores.dtype in {torch.float16, torch.bfloat16}
             else level_scores.dtype
         )
-        level_targets = lookup.to(device=level_scores.device, dtype=compute_dtype).index_select(
+        # The target is rebuilt rather than tabulated so it stays valid for any
+        # taxonomy the model exposes; it depends on the hierarchy alone.
+        lookup = subspace_target_profile(
+            path_overlap=overlap.to(device=level_scores.device),
+            depth=depth,
+        )
+        level_targets = lookup.to(dtype=compute_dtype).index_select(
             0,
             leaf_targets.to(device=level_scores.device),
         )
@@ -396,34 +421,65 @@ def _compute_normalized_profile_mse_loss(
             )
         with autocast_off:
             score_work = level_scores.to(dtype=compute_dtype)
-            normalized_scores = F.normalize(
-                score_work,
-                p=2.0,
+            # One scale shared by every level, not one per level. Under the
+            # intended geometry z_l[y_l] = ||u|| at every level and the target
+            # already has t_l[y_l] = 1, so dividing by ||u|| puts both sides in
+            # the same units while giving up only the single global degree of
+            # freedom the score map is genuinely homogeneous in. Normalizing per
+            # level instead would free one scale per level and leave the node
+            # energies unidentified.
+            scale = coordinate_norm.to(device=score_work.device, dtype=compute_dtype)
+            normalized_scores = score_work / scale
+            target_probabilities = F.softmax(level_targets / resolved.tau, dim=1)
+            score_log_probabilities = F.log_softmax(
+                normalized_scores / resolved.tau,
                 dim=1,
-                eps=resolved.eps,
             )
-            normalized_targets = F.normalize(
-                level_targets,
-                p=2.0,
-                dim=1,
-                eps=resolved.eps,
-            )
-            raw_loss = (normalized_scores - normalized_targets).pow(2).sum(dim=1).mean()
+            raw_loss = -(target_probabilities * score_log_probabilities).sum(dim=1).mean()
+            # The target entropy is the attainable floor of `raw_loss`; the
+            # divergence is what the optimizer can actually remove and is zero
+            # exactly at the intended node geometry.
+            target_entropy = -(
+                target_probabilities
+                * torch.log(target_probabilities.clamp_min(resolved.eps))
+            ).sum(dim=1).mean()
+            divergence = raw_loss - target_entropy
             score_norm_mean = score_work.norm(p=2, dim=1).mean()
-        weighted_loss = raw_loss / float(depth)
+
+        level_weight = level_weights[level].to(
+            device=raw_loss.device,
+            dtype=raw_loss.dtype,
+        )
+        weighted_loss = level_weight * raw_loss
         raw_level_losses.append(raw_loss)
         weighted_level_losses.append(weighted_loss)
+        level_divergences.append(divergence)
         score_norm_means.append(score_norm_mean)
 
-        metrics[f"subspace_profile_mse_level_{level}"] = float(raw_loss.detach().item())
+        metrics[f"subspace_soft_cross_entropy_level_{level}"] = float(raw_loss.detach().item())
+        metrics[f"subspace_target_kl_level_{level}"] = float(divergence.detach().item())
+        # `loss_level_*` is this level's contribution to the total, matching the
+        # native Hier-COS losses; `subspace_*_level_*` stay unweighted so the
+        # geometry diagnostics remain comparable across weight modes.
         metrics[f"loss_level_{level}"] = float(weighted_loss.detach().item())
+        metrics[f"loss_weight_level_{level}"] = float(level_weight.detach().item())
         metrics[f"subspace_score_l2_level_{level}"] = float(
             score_norm_mean.detach().item()
         )
 
+    # The levels enter the objective through `model.weight_mode`, the same
+    # coefficients the native Hier-COS softmax losses apply. They sum to one, so
+    # this is a convex combination and reduces to the previous uniform mean under
+    # `equal`; the loss scale is unchanged and learning rates transfer from the
+    # Hier-COS baselines. The aggregates below follow the same weighting so that
+    # `total` is exactly the sum of the reported per-level contributions.
+    stacked_weights = level_weights.to(device=raw_level_losses[0].device)
     total = torch.stack(weighted_level_losses).sum()
     metrics["total"] = float(total.detach().item())
-    metrics["subspace_profile_mse"] = float(total.detach().item())
+    metrics["subspace_soft_cross_entropy"] = float(total.detach().item())
+    metrics["subspace_target_kl"] = float(
+        (torch.stack(level_divergences) * stacked_weights).sum().detach().item()
+    )
     metrics["subspace_score_l2"] = float(
         torch.stack(score_norm_means).mean().detach().item()
     )
@@ -432,7 +488,8 @@ def _compute_normalized_profile_mse_loss(
         return total, metrics
     return total, metrics, {
         "level_losses": weighted_level_losses,
-        "subspace_profile_losses": raw_level_losses,
+        "subspace_soft_cross_entropy_losses": raw_level_losses,
+        "subspace_target_divergences": level_divergences,
     }
 
 
@@ -459,34 +516,39 @@ def compute_subspace_supervision_loss(
             "Direct subspace supervision target batch size must match the score batch size."
         )
 
-    if resolved.loss == CROSS_ENTROPY_LOSS_MODE:
-        return _compute_cross_entropy_loss(
-            scores=scores,
-            hard_targets=hard_targets,
-            return_aux=return_aux,
-        )
-    profile_lookup = _validate_profiles(output, scores=scores)
-    return _compute_normalized_profile_mse_loss(
+    path_overlap = _validate_path_overlap(output, scores=scores)
+    coordinates = _validate_coordinates(output, batch_size=int(scores[0].size(0)))
+    level_weights = _resolve_level_weights(
+        output=output,
+        cfg=cfg,
+        depth=depth,
+        device=scores[0].device,
+        dtype=(
+            torch.float32
+            if scores[0].dtype in {torch.float16, torch.bfloat16}
+            else scores[0].dtype
+        ),
+    )
+    return _compute_soft_cross_entropy_loss(
         scores=scores,
-        profile_lookup=profile_lookup,
+        path_overlap=path_overlap,
+        coordinates=coordinates,
         hard_targets=hard_targets,
         resolved=resolved,
+        level_weights=level_weights,
         return_aux=return_aux,
     )
 
 
 __all__ = [
-    "CROSS_ENTROPY_LOSS_MODE",
-    "LOSS_MODE",
-    "LOSS_MODES",
-    "NORMALIZED_MSE_LOSS_MODE",
+    "DEFAULT_TAU",
+    "SUBSPACE_COORDINATES_KEY",
+    "SUBSPACE_PATH_OVERLAP_KEY",
     "SUBSPACE_SCORES_KEY",
-    "SUBSPACE_TARGET_PROFILES_KEY",
-    "TARGET_MODE",
     "SubspaceSupervisionConfig",
-    "build_sqrt_path_target_profiles",
     "compute_subspace_supervision_loss",
     "resolve_subspace_supervision_config",
     "subspace_norms",
+    "subspace_target_profile",
     "subspace_supervision_enabled",
 ]

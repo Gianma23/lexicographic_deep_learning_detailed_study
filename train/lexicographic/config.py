@@ -1,8 +1,8 @@
-from typing import Any, List
+from typing import Any, List, Sequence, Tuple
 
 import torch
 
-from .types import LexicographicConfig
+from .types import DEFAULT_GRADIENT_BLOCKS, GRADIENT_BLOCK_NAMES, LexicographicConfig
 from ..runtime.common import section_to_dict
 
 
@@ -55,13 +55,47 @@ def _resolve_lex_projection_mode(value: Any, default: str = "coarse_first") -> s
     return raw_mode
 
 
+def _parse_gradient_blocks(
+    value: Any,
+    default: Sequence[str] = DEFAULT_GRADIENT_BLOCKS,
+) -> Tuple[str, ...]:
+    raw_blocks = list(default) if value is None else value
+    if not isinstance(raw_blocks, Sequence) or isinstance(raw_blocks, (str, bytes)):
+        raise ValueError(
+            "train.gradient_blocks must be a non-empty list containing only "
+            f"{list(GRADIENT_BLOCK_NAMES)}."
+        )
+    blocks = tuple(raw_blocks)
+    if not blocks or any(not isinstance(block, str) for block in blocks):
+        raise ValueError(
+            "train.gradient_blocks must be a non-empty list containing only "
+            f"{list(GRADIENT_BLOCK_NAMES)}."
+        )
+    invalid = sorted(set(blocks).difference(GRADIENT_BLOCK_NAMES))
+    if invalid:
+        raise ValueError(
+            f"Unsupported train.gradient_blocks entries {invalid}. "
+            f"Expected only {list(GRADIENT_BLOCK_NAMES)}."
+        )
+    if len(set(blocks)) != len(blocks):
+        raise ValueError("train.gradient_blocks must not contain duplicates.")
+    return blocks
+
+
+def resolve_gradient_blocks(cfg: Any) -> Tuple[str, ...]:
+    train_cfg = section_to_dict(getattr(cfg, "train", None))
+    return _parse_gradient_blocks(train_cfg.get("gradient_blocks"))
+
+
 def resolve_lexicographic_config(cfg: Any) -> LexicographicConfig:
     train_cfg = section_to_dict(getattr(cfg, "train", None))
     raw_lex_cfg = section_to_dict(train_cfg.get("lexicographic", None))
     enabled = bool(raw_lex_cfg.get("enabled", False))
     eps = _parse_positive_float(raw_lex_cfg.get("eps", 1e-12), default=1e-12)
     log_metrics = bool(raw_lex_cfg.get("log_metrics", True))
-    projection_mode = _resolve_lex_projection_mode(raw_lex_cfg.get("projection_mode", "coarse_first"))
+    projection_mode = _resolve_lex_projection_mode(
+        raw_lex_cfg.get("projection_mode", "coarse_first")
+    )
 
     return LexicographicConfig(
         enabled=enabled,

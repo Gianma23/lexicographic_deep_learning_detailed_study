@@ -4,7 +4,11 @@ import torch
 
 from models import compute_loss
 from .evaluation import evaluate_batch
-from .lexicographic.config import resolve_lexicographic_config, validate_lexicographic_requirements
+from .lexicographic.config import (
+    resolve_gradient_blocks,
+    resolve_lexicographic_config,
+    validate_lexicographic_requirements,
+)
 from .lexicographic.gradients import (
     assign_grads_to_params,
     capture_trainable_param_snapshot,
@@ -66,6 +70,7 @@ def train_one_epoch(
     start_param_snapshot = capture_trainable_param_snapshot(trainable_params)
     resolved_trunk_masks: Optional[Dict[str, List[bool]]] = None
     lex_cfg = resolve_lexicographic_config(cfg)
+    gradient_blocks = resolve_gradient_blocks(cfg)
     lex_projection_active = lex_cfg.enabled
     lex_validated = False
 
@@ -107,6 +112,7 @@ def train_one_epoch(
             trainable_named_params,
             level_losses,
             retain_graph=retain_graph_for_metrics,
+            blocks=gradient_blocks,
         )
         if resolved_trunk_masks is None and grad_state is not None:
             resolved_trunk_masks = dict(grad_state.trunk_masks)
@@ -137,6 +143,7 @@ def train_one_epoch(
                 include_metrics=bool(lex_cfg.log_metrics),
                 grad_scale=lex_grad_scale,
                 projection_mode=str(lex_cfg.projection_mode),
+                blocks=gradient_blocks,
                 precomputed_level_grad_map=precomputed_level_grad_map,
             )
             if lex_state is None:
@@ -185,6 +192,7 @@ def train_one_epoch(
         params=trainable_params,
         start_snapshot=start_param_snapshot,
         trunk_masks=resolved_trunk_masks,
+        blocks=gradient_blocks,
     )
     metrics.update(grad_metrics)
     metrics.update(trunk_param_metrics)

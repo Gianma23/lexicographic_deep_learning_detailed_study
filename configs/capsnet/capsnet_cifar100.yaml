@@ -3,9 +3,6 @@ model:
   caps_dim: 8
   secondary_dims: [64, 32, 16]
   routing_iters: 3
-  # Paper Eq. 4/Fig. 2 builds one primary-capsule tensor per hierarchy level.
-  # source_reuse reproduces the released file's reshape of squashed 8-D capsules.
-  primary_capsule_mode: paper_independent
 
   num_blocks: 4
   initial_filters: 64
@@ -26,9 +23,6 @@ model:
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
-  # Paper Eq. 13 uses the parent capsule norm directly. Use softmax_norm only
-  # to reproduce the contradictory released TensorFlow layer.
-  routing_parent_activation: norm
 
   # Cross-capsule attention
   attn_heads: 16
@@ -42,21 +36,19 @@ model:
     lambda_downweight: 0.5
     weight_mode: dynamic
     dynamic_weight: 0.0
-    # Paper Eq. 21: (1 - accuracy) * initial_weight. The released callback
-    # instead evaluates 1 - accuracy * initial_weight.
-    dynamic_weight_formula: paper
 
 dataset:
   name: cifar-100
   root: ${oc.env:CIFAR100_ROOT,/scratch/g.saggini1/datasets/cifar100}
   hierarchy_depth: 3
-  # Paper/source CIFAR-100 run uses native 32x32 images.
+  # The paper keeps CIFAR-100 at its native 32x32 resolution.
   image_size: 32
   mean: [0.5071, 0.4867, 0.4408]
   std: [0.2675, 0.2565, 0.2761]
   levels: [coarse1, coarse2, fine]
   download: true
-  # Keep dataset split policy aligned with H-CAST configs.
+  # The paper requires held-out validation but does not publish its CIFAR ratio;
+  # retain the repository's stratified 90/10 train/validation protocol.
   val_split_ratio: 0.1
   split_seed: 0
   transforms:
@@ -89,6 +81,8 @@ dataloader:
 train:
   # run-HT-CapsNet.sh sets epochs=200.
   epochs: 200
+  # Released Keras reloads the checkpoint with best finest-level val accuracy.
+  checkpoint_selection: deepest_accuracy
   seed: 42
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false

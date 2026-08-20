@@ -127,20 +127,14 @@ def _dynamic_level_weights(
     decay: float,
     running_correct: Optional[torch.Tensor] = None,
     running_count: Optional[torch.Tensor] = None,
-    formula: str = "released_source",
 ) -> Tuple[List[float], Optional[torch.Tensor], Optional[torch.Tensor]]:
-    """Compute paper- or released-source dynamic level weights.
+    """Compute the released-source dynamic level weights.
 
     The upstream callback runs on `on_train_batch_end` and reads `acc_i` from the
     Keras `logs` dict, which carries the metric accumulated since the start of the
     epoch rather than the accuracy of the current batch. `running_correct` and
     `running_count` hold that epoch-to-date state; passing them as `None` treats
     the batch as the first of an epoch.
-
-    The publication defines ``rho_i = (1 - acc_i) * init_i`` in Eq. 21. The
-    released callback instead uses ``tau_i = 1 - acc_i * init_i``. These are
-    materially different on CIFAR-100, so the choice is explicit rather than
-    silently treating the public callback as the published equation.
 
     Returns the next level weights plus the updated accumulators.
     """
@@ -170,20 +164,10 @@ def _dynamic_level_weights(
 
     acc_per_level = (correct / total.clamp_min(1.0)).tolist()
 
-    if formula == "paper":
-        taus = [
-            (1.0 - float(acc_per_level[level])) * initial[level]
-            for level in range(num_levels)
-        ]
-    elif formula == "released_source":
-        taus = [
-            1.0 - (float(acc_per_level[level]) * initial[level])
-            for level in range(num_levels)
-        ]
-    else:
-        raise ValueError(
-            "HT-CapsNet dynamic_weight_formula must be paper or released_source."
-        )
+    taus = [
+        1.0 - (float(acc_per_level[level]) * initial[level])
+        for level in range(num_levels)
+    ]
     tau_sum = float(sum(taus))
     if tau_sum <= 0.0:
         return initial, correct, total
@@ -283,7 +267,6 @@ def compute_loss(
             decay=float(loss_cfg.get("dynamic_weight", 0.0)),
             running_correct=output.get("lw_running_correct"),
             running_count=output.get("lw_running_count"),
-            formula=str(loss_cfg.get("dynamic_weight_formula", "released_source")),
         )
         aux_payload["next_level_loss_weights"] = torch.tensor(
             next_weights,

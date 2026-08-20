@@ -3,7 +3,6 @@ model:
   caps_dim: 8
   secondary_dims: [64, 32, 16]
   routing_iters: 3
-  primary_capsule_mode: paper_independent
 
   num_blocks: 4
   initial_filters: 64
@@ -21,7 +20,6 @@ model:
   mask_threshold_low: 0.1
   mask_temperature: 0.5
   mask_center: 0.5
-  routing_parent_activation: norm
 
   # Cross-capsule attention
   attn_heads: 16
@@ -35,7 +33,6 @@ model:
     lambda_downweight: 0.5
     weight_mode: dynamic
     dynamic_weight: 0.0
-    dynamic_weight_formula: paper
 
 dataset:
   # Local extrapolation: HT-CapsNet reports Stanford Cars, not FGVC-Aircraft.
@@ -55,9 +52,10 @@ dataset:
     # `tf.data` pipeline, so the statistic is reduced over the batch, not the image.
     fixed_resize_only: true
     fixed_resize_interpolation: bilinear
-    # `tf.image.resize` defaults to antialias=False, so the source downsamples with
-    # a fixed 2x2 kernel. Single-stage only: the source's 512px intermediate is a
-    # `padded_batch` artifact and is deliberately not reproduced.
+    # HT-CapsNet has no Aircraft run; use the released path-loader sequence
+    # (decoded image -> 512 -> paper fine-grained input size 64) as the closest
+    # source-code port for this explicit local extrapolation.
+    fixed_resize_intermediate_size: 512
     fixed_resize_antialias: false
     use_timm: false
     normalization: standardscaler
@@ -85,6 +83,7 @@ dataloader:
 
 train:
   epochs: 200
+  checkpoint_selection: deepest_accuracy
   seed: 42
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false

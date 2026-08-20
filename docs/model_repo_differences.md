@@ -102,7 +102,7 @@ samples, or choose models on test data.
 
 ## HT-CapsNet
 
-### Shared paper/source core
+### Released code with paper hyperparameters
 
 - Per-level secondary capsules, hierarchical skip input, routing-by-agreement,
   taxonomy masking, hierarchical agreement, cross-capsule attention, capsule
@@ -110,8 +110,9 @@ samples, or choose models on test data.
 - The local taxonomy temperature `0.5` is supported by the upstream saved run
   arguments even though upstream constructor defaults are internally
   inconsistent.
-- Secondary dimensions `[64, 32, 16]`, three routing iterations, and MixUp alpha
-  `0.2` follow the source experiment family.
+- Secondary dimensions `[64, 32, 16]`, three routing iterations, MixUp alpha
+  `0.2`, mask bounds `0.99/0.1`, 200 epochs, Adam at `0.001`, and learning-rate
+  decay `0.95` after epoch 10 follow the paper's reported experiment table.
 - Standard-scaler scope is batch-scoped on CUB/Aircraft
   (`dataset.transforms.normalization_scope: batch`). Upstream reduces a single
   scalar mean/std over whatever tensor it receives: for path-loaded datasets
@@ -125,12 +126,10 @@ samples, or choose models on test data.
 - CUB/Aircraft downsample without antialiasing
   (`dataset.transforms.fixed_resize_antialias: false`), matching
   `tf.image.resize`'s default: a fixed 2x2 source kernel regardless of the
-  downsample ratio, applied after the float conversion. At 64 px this discards
-  most of a 1–2 MP source. The source's intermediate 512 px resize is a
-  `padded_batch` artifact and is deliberately not reproduced; measured against
-  the antialiased single-stage pipeline it contributes about a third as much
-  pixel difference as the antialias setting does. The paper specifies only
-  "64 x 64 pixels", so the code is the sole authority here.
+  downsample ratio, applied after the float conversion. The released path
+  loader first resizes each decoded image to 512 px and, after batching, resizes
+  again to the paper's 64 px input. The local fixed-resize pipeline now
+  reproduces both bilinear stages in that order.
 - Aircraft crops the 20 px copyright banner
   (`dataset.transforms.manual.crop_bottom_pixels: 20`). This is a documented
   local decision, not a reproduction: HT-CapsNet reports Stanford Cars, which
@@ -182,37 +181,38 @@ samples, or choose models on test data.
 ### Paper/source contradictions and selected behavior
 
 The public paper and its released TensorFlow file are not one executable
-specification. The baseline presets now select the published equations where
-the two materially disagree, while the released behavior remains available by
-an explicit config value:
+specification. The requested rule is therefore applied consistently: executable
+architecture, routing, loss-update, and preprocessing behavior follows the
+released TensorFlow code, while experiment hyperparameters follow the paper.
+In particular, the port:
 
-- `primary_capsule_mode: paper_independent` implements Eq. 4/Fig. 2: each
-  hierarchy level independently reshapes the shared backbone feature map to its
-  own primary-capsule dimension and then applies squash. The released file's
-  `source_reuse` mode builds one squashed 8-D tensor and reinterprets its memory
-  as 64-D and 32-D capsules at later levels.
-- `routing_parent_activation: norm` implements Eq. 13's direct parent capsule
-  length. `softmax_norm` reproduces the released layer, where nearly equal
-  LayerNorm capsule lengths become an almost uniform parent vector and greatly
-  weaken the taxonomy mask.
-- `dynamic_weight_formula: paper` implements Eq. 21,
-  `(1 - accuracy_i) * initial_i`. `released_source` implements the callback's
-  different parentheses, `1 - accuracy_i * initial_i`.
+- builds one squashed 8-D primary tensor and reshapes that same tensor to 64-D
+  and 32-D capsules at later levels, as the source does, rather than implementing
+  the independent primary layers described by Eq. 4/Fig. 2;
+- applies softmax to previous-level capsule lengths before weighting the
+  taxonomy mask, as the source does, rather than using the direct norm in Eq. 13;
+- updates dynamic weights as `1 - accuracy_i * initial_i`, preserving the
+  released callback's parentheses rather than substituting Eq. 21's
+  `(1 - accuracy_i) * initial_i`.
+
+These alternatives are no longer exposed as baseline switches: that made the
+implementation harder to audit and allowed a preset to stop being a port of the
+released model.
+
 - `drop_last_train: false` retains the last partial batch as `padded_batch`
-  does. Checkpoint ranking deliberately remains the same repository-wide
-  FPA/TICE/weighted-AP policy used for all models. The local run also keeps a
-  genuine validation split and a fixed 200-epoch horizon: it does not reuse
-  CIFAR test labels as validation data or enable the source's undocumented
-  early stopping.
+  does. The independent checkpoint is ranked by finest-level validation
+  accuracy, matching the released Keras monitor. The top-down checkpoint uses
+  the analogous top-down finest accuracy so every reported decoder is evaluated
+  from its own selected checkpoint. The local run also keeps a genuine
+  validation split and a fixed 200-epoch horizon: it does not reuse CIFAR test
+  labels as validation data or enable the source's undocumented early stopping.
 
-Two high-impact upstream reproducibility defects are exposed as diagnostics
-rather than silently changed. First, public preprocessing applies a
+Two high-impact upstream reproducibility defects remain visible rather than
+being silently "fixed." First, public preprocessing applies a
 split-wide StandardScaler and then EfficientNet's embedded `/255`, reducing
-CIFAR image variation by roughly 60x. To test the plausible
-raw-input recipe, override `dataset.transforms.normalization=none`,
-`dataset.transforms.normalization_scope=image`, and
-`model.backbone_preprocessing=keras_unit_range`. Second, both Eq. 18 and the
-released layer compute capsule lengths after a per-capsule LayerNorm. At its
+CIFAR image variation by roughly 60x; the baseline keeps this because it is the
+released preprocessing path. Second, both Eq. 18 and the released layer compute
+capsule lengths after a per-capsule LayerNorm. At its
 initial affine parameters those lengths are almost constant at `sqrt(D)` and
 outside the margin loss's `[0, 1]` design range. The existing
 `attn_postprocess: squash` option is therefore a useful ablation, but is not the
@@ -257,12 +257,20 @@ oracle for this model.
   Cars rather than Aircraft.
 - Local CUB keeps the unified 13/38/200 taxonomy, not the paper's 39/123/200
   construction, so it is a protocol adaptation rather than an exact paper run.
+  The released repository does not version that mapping; it downloads train
+  and test label CSVs from external URLs at runtime. The port does not invent a
+  39/123 mapping when those exact label artifacts are unavailable.
+- Source MixUp zips two independently shuffled `tf.data` streams. The unified
+  trainer uses a random within-batch permutation with the same per-example beta
+  coefficients and soft labels. This keeps the training API simple, but the
+  partner pool (and, for path data, the independently computed batch statistic)
+  is a remaining framework-level difference.
 - Requested ImageNet backbones are mandatory. Missing weights fail clearly and
   never silently produce a random-initialized paper-labeled run.
-- Paper-aligned primary capsules, routing activation, dynamic weighting, plus
-  corrected attention initialization, backbone training semantics, optimizer
-  state, and loss-weight buffering intentionally make older local HT-CapsNet
-  training checkpoints
+- Source-aligned primary-capsule reuse, routing activation, dynamic weighting,
+  plus corrected attention initialization, backbone training semantics,
+  optimizer state, and loss-weight buffering intentionally make older local
+  HT-CapsNet training checkpoints
   incompatible; fidelity runs must start from fresh initialization.
 
 ## HRN

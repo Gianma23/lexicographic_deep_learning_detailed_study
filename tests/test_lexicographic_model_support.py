@@ -4,9 +4,13 @@ from pathlib import Path
 
 import torch
 import yaml
+from omegaconf import OmegaConf
 
 from train.config_validation import validate_config
-from train.lexicographic.config import validate_lexicographic_requirements
+from train.lexicographic.config import (
+    resolve_gradient_blocks,
+    validate_lexicographic_requirements,
+)
 from train.runtime.checkpointing import _validate_resume_config_or_raise
 
 
@@ -61,6 +65,30 @@ class LexicographicModelSupportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "projection_rule"):
             validate_config(hcast)
 
+    def test_general_blocks_are_validated_and_resolved(self):
+        capsnet = self._with_lex("configs/capsnet/capsnet_cifar100.yaml")
+        capsnet["train"]["gradient_blocks"] = ["p123", "p23", "p3"]
+        validate_config(capsnet)
+
+        resolved = resolve_gradient_blocks(OmegaConf.create(capsnet))
+        self.assertEqual(resolved, ("p123", "p23", "p3"))
+
+    def test_invalid_or_duplicate_blocks_are_rejected(self):
+        capsnet = self._with_lex("configs/capsnet/capsnet_cifar100.yaml")
+        for blocks in (["p123", "p4"], ["p23", "p23"], []):
+            with self.subTest(blocks=blocks):
+                cfg = copy.deepcopy(capsnet)
+                cfg["train"]["gradient_blocks"] = blocks
+                with self.assertRaisesRegex(ValueError, "gradient_blocks"):
+                    validate_config(cfg)
+
+    def test_blocks_are_rejected_under_lexicographic_section(self):
+        capsnet = self._with_lex("configs/capsnet/capsnet_cifar100.yaml")
+        capsnet["train"]["lexicographic"]["blocks"] = ["p123", "p23", "p3"]
+
+        with self.assertRaisesRegex(ValueError, "blocks"):
+            validate_config(capsnet)
+
     def test_lhdnn_lex_is_rejected(self):
         lhdnn = self._with_lex("configs/lhdnn/lhdnn_cifar100.yaml")
         with self.assertRaisesRegex(ValueError, "not supported for LH-DNN"):
@@ -113,6 +141,39 @@ class LegacyProjectionRuleResumeTests(unittest.TestCase):
             checkpoint_cfg_resolved=checkpoint_cfg,
             current_cfg_resolved=self._config(),
             resume_path="legacy.pt",
+        )
+
+    def test_missing_historical_blocks_match_explicit_default(self):
+        current_cfg = self._config()
+        current_cfg["train"]["gradient_blocks"] = ["p123", "p12", "p1"]
+
+        _validate_resume_config_or_raise(
+            checkpoint_cfg_resolved=self._config(),
+            current_cfg_resolved=current_cfg,
+            resume_path="legacy.pt",
+        )
+
+    def test_missing_historical_blocks_do_not_match_new_selection(self):
+        current_cfg = self._config()
+        current_cfg["train"]["gradient_blocks"] = ["p123", "p23", "p3"]
+
+        with self.assertRaisesRegex(ValueError, "gradient_blocks"):
+            _validate_resume_config_or_raise(
+                checkpoint_cfg_resolved=self._config(),
+                current_cfg_resolved=current_cfg,
+                resume_path="legacy.pt",
+            )
+
+    def test_checkpoint_side_nested_blocks_are_promoted(self):
+        checkpoint_cfg = self._config()
+        checkpoint_cfg["train"]["lexicographic"]["blocks"] = ["p123", "p23", "p3"]
+        current_cfg = self._config()
+        current_cfg["train"]["gradient_blocks"] = ["p123", "p23", "p3"]
+
+        _validate_resume_config_or_raise(
+            checkpoint_cfg_resolved=checkpoint_cfg,
+            current_cfg_resolved=current_cfg,
+            resume_path="development-schema.pt",
         )
 
     def test_other_checkpoint_projection_rules_remain_incompatible(self):

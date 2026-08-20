@@ -2,22 +2,36 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 
-from .types import GradTuple, LevelGradMap, LexicographicUpdateState, TrunkGradState
+from .types import (
+    DEFAULT_GRADIENT_BLOCKS,
+    GRADIENT_BLOCK_NAMES,
+    GradTuple,
+    LevelGradMap,
+    LexicographicUpdateState,
+    TrunkGradState,
+)
 
 _GRAD_EPS = 1e-12
 _GRAD_LEVEL_NAMES = ("coarse", "mid", "fine")
 _LEX_PROJECTION_MODES = ("coarse_first", "fine_first")
-
-# Internal projection-flag key -> logged metric name. Flags are produced as
-# on-device 0-dim tensors and reduced to floats in the batched metric transfer.
-_PROJECTION_FLAG_METRICS = {
-    "mid_off_coarse_t2": "post_projection_applied_t2_mid_coarse",
-    "mid_off_coarse_t1": "post_projection_applied_t1_mid_coarse",
-    "fine_off_higher_t1": "post_projection_applied_t1_fine_higher",
-    "mid_off_fine_t1": "post_projection_applied_t1_mid_fine",
-    "coarse_off_mid_t2": "post_projection_applied_t2_coarse_mid",
-    "coarse_off_higher_t1": "post_projection_applied_t1_coarse_higher",
+_BLOCK_LEVELS = {
+    block: tuple(_GRAD_LEVEL_NAMES[int(index) - 1] for index in block[1:])
+    for block in GRADIENT_BLOCK_NAMES
 }
+_LEGACY_EXACT_BLOCK_ALIASES = {"p123": "t1", "p12": "t2", "p1": "t3"}
+_CANONICAL_PAIR_ORDER = (
+    ("mid", "coarse"),
+    ("fine", "coarse"),
+    ("fine", "mid"),
+)
+_LEGACY_PROJECTION_FLAG_NAMES = (
+    "post_projection_applied_t2_mid_coarse",
+    "post_projection_applied_t1_mid_coarse",
+    "post_projection_applied_t1_fine_higher",
+    "post_projection_applied_t1_mid_fine",
+    "post_projection_applied_t2_coarse_mid",
+    "post_projection_applied_t1_coarse_higher",
+)
 
 
 def get_trainable_named_params(model: torch.nn.Module) -> List[Tuple[str, torch.nn.Parameter]]:
@@ -237,18 +251,26 @@ def _resolve_trunk_masks(
     coarse_grads: Sequence[Optional[torch.Tensor]],
     mid_grads: Sequence[Optional[torch.Tensor]],
     fine_grads: Sequence[Optional[torch.Tensor]],
+    blocks: Sequence[str] = DEFAULT_GRADIENT_BLOCKS,
 ) -> Dict[str, List[bool]]:
-    t1_mask = []
-    t2_mask = []
-    t3_mask = []
+    selected_blocks = tuple(blocks)
+    masks = {block: [] for block in selected_blocks}
     for coarse_grad, mid_grad, fine_grad in zip(coarse_grads, mid_grads, fine_grads):
-        coarse_active = coarse_grad is not None
-        mid_active = mid_grad is not None
-        fine_active = fine_grad is not None
-        t1_mask.append(coarse_active and mid_active and fine_active)
-        t2_mask.append(coarse_active and mid_active and (not fine_active))
-        t3_mask.append(coarse_active and (not mid_active) and (not fine_active))
-    return {"t1": t1_mask, "t2": t2_mask, "t3": t3_mask}
+        active = (coarse_grad is not None, mid_grad is not None, fine_grad is not None)
+        support = "p" + "".join(
+            str(level_index + 1)
+            for level_index, is_active in enumerate(active)
+            if is_active
+        )
+        for block in selected_blocks:
+            masks[block].append(support == block)
+
+    # Keep the historical exact-block names available to internal callers and
+    # mixed old/new analysis code. New metrics use only the canonical p-names.
+    for block, legacy_name in _LEGACY_EXACT_BLOCK_ALIASES.items():
+        if block in masks:
+            masks[legacy_name] = list(masks[block])
+    return masks
 
 
 def _compute_level_grad_map(
@@ -301,9 +323,15 @@ def _merge_masks(mask_a: Sequence[bool], mask_b: Sequence[bool]) -> List[bool]:
 
 
 def _mask_views_from_trunk_masks(trunk_masks: Mapping[str, Sequence[bool]]) -> Dict[str, List[bool]]:
-    t1_mask = list(trunk_masks.get("t1", []))
-    t2_mask = list(trunk_masks.get("t2", []))
-    t3_mask = list(trunk_masks.get("t3", []))
+    num_params = max((len(mask) for mask in trunk_masks.values()), default=0)
+
+    def exact_mask(canonical_name: str, legacy_name: str) -> List[bool]:
+        mask = list(trunk_masks.get(canonical_name, trunk_masks.get(legacy_name, [])))
+        return mask if mask else [False] * num_params
+
+    t1_mask = exact_mask("p123", "t1")
+    t2_mask = exact_mask("p12", "t2")
+    t3_mask = exact_mask("p1", "t3")
     t2t1_mask = _merge_masks(t2_mask, t1_mask)
     t3t2t1_mask = _merge_masks(t3_mask, t2t1_mask)
     return {
@@ -393,52 +421,97 @@ def _sum_grad_tuples(
     return tuple(summed)
 
 
-def _compose_mid_projected_grads(
-    mid_grads: Sequence[Optional[torch.Tensor]],
-    mid_projected_t2: Sequence[Optional[torch.Tensor]],
-    mid_projected_t1: Sequence[Optional[torch.Tensor]],
-    t2_mask: Sequence[bool],
-    t1_mask: Sequence[bool],
+def _sum_grad_sequences(
+    grad_sequences: Sequence[Sequence[Optional[torch.Tensor]]],
 ) -> GradTuple:
-    composed: List[Optional[torch.Tensor]] = []
-    for mid_grad, mid_t2, mid_t1, is_t2, is_t1 in zip(
-        mid_grads,
-        mid_projected_t2,
-        mid_projected_t1,
-        t2_mask,
-        t1_mask,
-    ):
-        if is_t2:
-            composed.append(mid_t2)
-        elif is_t1:
-            composed.append(mid_t1)
-        else:
-            composed.append(mid_grad)
-    return tuple(composed)
+    if not grad_sequences:
+        return tuple()
+    num_params = len(grad_sequences[0])
+    summed: List[Optional[torch.Tensor]] = []
+    for param_index in range(num_params):
+        pieces = [
+            grads[param_index]
+            for grads in grad_sequences
+            if grads[param_index] is not None
+        ]
+        if not pieces:
+            summed.append(None)
+            continue
+        total = pieces[0]
+        for piece in pieces[1:]:
+            total = total + piece
+        summed.append(total)
+    return tuple(summed)
 
 
-def _compose_coarse_projected_grads(
-    coarse_grads: Sequence[Optional[torch.Tensor]],
-    coarse_projected_t2: Sequence[Optional[torch.Tensor]],
-    coarse_projected_t1: Sequence[Optional[torch.Tensor]],
-    t2_mask: Sequence[bool],
-    t1_mask: Sequence[bool],
-) -> GradTuple:
-    composed: List[Optional[torch.Tensor]] = []
-    for coarse_grad, coarse_t2, coarse_t1, is_t2, is_t1 in zip(
-        coarse_grads,
-        coarse_projected_t2,
-        coarse_projected_t1,
-        t2_mask,
-        t1_mask,
-    ):
-        if is_t2:
-            composed.append(coarse_t2)
-        elif is_t1:
-            composed.append(coarse_t1)
-        else:
-            composed.append(coarse_grad)
-    return tuple(composed)
+def _canonical_grad_norm_specs(
+    level_grads: Mapping[str, Sequence[Optional[torch.Tensor]]],
+    block_masks: Mapping[str, Sequence[bool]],
+    blocks: Sequence[str],
+    prefix: str = "",
+) -> List[Tuple[str, Sequence[Optional[torch.Tensor]], Sequence[bool]]]:
+    specs: List[Tuple[str, Sequence[Optional[torch.Tensor]], Sequence[bool]]] = []
+    for block in blocks:
+        mask = list(block_masks.get(block, []))
+        if not mask or not any(mask):
+            continue
+        for level_name in _BLOCK_LEVELS[block]:
+            specs.append(
+                (f"{prefix}grad_norm_{block}_{level_name}", level_grads[level_name], mask)
+            )
+    return specs
+
+
+def _canonical_pairwise_cosine_specs(
+    level_grads: Mapping[str, Sequence[Optional[torch.Tensor]]],
+    block_masks: Mapping[str, Sequence[bool]],
+    blocks: Sequence[str],
+    eps: float,
+    prefix: str = "",
+) -> List[
+    Tuple[
+        str,
+        Sequence[Optional[torch.Tensor]],
+        Sequence[Optional[torch.Tensor]],
+        Sequence[bool],
+        float,
+    ]
+]:
+    specs = []
+    for block in blocks:
+        mask = list(block_masks.get(block, []))
+        if not mask or not any(mask):
+            continue
+        active_levels = set(_BLOCK_LEVELS[block])
+        for target_name, reference_name in _CANONICAL_PAIR_ORDER:
+            if target_name not in active_levels or reference_name not in active_levels:
+                continue
+            specs.append(
+                (
+                    f"{prefix}cos_{block}_{target_name}_{reference_name}",
+                    level_grads[target_name],
+                    level_grads[reference_name],
+                    mask,
+                    eps,
+                )
+            )
+    return specs
+
+
+def _legacy_projection_flag_alias(
+    block: str,
+    target_name: str,
+    reference_name: str,
+) -> Optional[str]:
+    aliases = {
+        ("p12", "mid", "coarse"): "post_projection_applied_t2_mid_coarse",
+        ("p123", "mid", "coarse"): "post_projection_applied_t1_mid_coarse",
+        ("p123", "fine", "higher"): "post_projection_applied_t1_fine_higher",
+        ("p123", "mid", "fine"): "post_projection_applied_t1_mid_fine",
+        ("p12", "coarse", "mid"): "post_projection_applied_t2_coarse_mid",
+        ("p123", "coarse", "higher"): "post_projection_applied_t1_coarse_higher",
+    }
+    return aliases.get((block, target_name, reference_name))
 
 
 def _scale_grad_tuple(
@@ -513,101 +586,56 @@ def _build_lexicographic_grads(
     projection_mode: str = "coarse_first",
     eps: float = _GRAD_EPS,
     include_metrics: bool = True,
+    blocks: Sequence[str] = DEFAULT_GRADIENT_BLOCKS,
 ) -> Tuple[Dict[str, GradTuple], Dict[str, float]]:
     if projection_mode not in _LEX_PROJECTION_MODES:
         raise ValueError(
             f"Unsupported lex projection mode '{projection_mode}'. "
             f"Expected one of {list(_LEX_PROJECTION_MODES)}."
         )
-    t1_mask = list(trunk_masks.get("t1", []))
-    t2_mask = list(trunk_masks.get("t2", []))
-
-    # `None` means the projection was never attempted in this mode; anything set
-    # below is an on-device 0-dim bool tensor, kept unread to avoid a sync.
-    projection_flags: Dict[str, Optional[torch.Tensor]] = {
-        key: None for key in _PROJECTION_FLAG_METRICS
+    selected_blocks = tuple(blocks)
+    projected_by_level: Dict[str, GradTuple] = {
+        "coarse": tuple(coarse_grads),
+        "mid": tuple(mid_grads),
+        "fine": tuple(fine_grads),
     }
+    priority = (
+        ("coarse", "mid", "fine")
+        if projection_mode == "coarse_first"
+        else ("fine", "mid", "coarse")
+    )
+    # block, target, reference label, mask, reference gradients, applied flag
+    projection_records: List[
+        Tuple[str, str, str, Sequence[bool], GradTuple, torch.Tensor]
+    ] = []
 
-    if projection_mode == "coarse_first":
-        mid_projected_t2, _mid_coeff_t2, mid_applied_t2 = _project_onto_reference(
-            target_grads=mid_grads,
-            reference_grads=coarse_grads,
-            include_mask=t2_mask,
-            eps=eps,
-        )
-        mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
-            target_grads=mid_grads,
-            reference_grads=coarse_grads,
-            include_mask=t1_mask,
-            eps=eps,
-        )
-        mid_projected = _compose_mid_projected_grads(
-            mid_grads=mid_grads,
-            mid_projected_t2=mid_projected_t2,
-            mid_projected_t1=mid_projected_t1,
-            t2_mask=t2_mask,
-            t1_mask=t1_mask,
-        )
-        higher_t1 = _sum_grad_tuples(
-            coarse_grads,
-            mid_projected_t1,
-            (None,) * len(coarse_grads),
-        )
-        fine_projected, _fine_coeff_higher, fine_applied_higher = _project_onto_reference(
-            target_grads=fine_grads,
-            reference_grads=higher_t1,
-            include_mask=t1_mask,
-            eps=eps,
-        )
-        coarse_projected = tuple(coarse_grads)
-        projection_flags["mid_off_coarse_t2"] = mid_applied_t2
-        projection_flags["mid_off_coarse_t1"] = mid_applied_t1
-        projection_flags["fine_off_higher_t1"] = fine_applied_higher
-    else:
-        mid_projected_t1, _mid_coeff_t1, mid_applied_t1 = _project_onto_reference(
-            target_grads=mid_grads,
-            reference_grads=fine_grads,
-            include_mask=t1_mask,
-            eps=eps,
-        )
-        mid_projected = _compose_mid_projected_grads(
-            mid_grads=mid_grads,
-            mid_projected_t2=mid_grads,
-            mid_projected_t1=mid_projected_t1,
-            t2_mask=t2_mask,
-            t1_mask=t1_mask,
-        )
+    for block in selected_blocks:
+        mask = list(trunk_masks.get(block, []))
+        if not mask or not any(mask):
+            continue
+        active_levels = set(_BLOCK_LEVELS[block])
+        ordered_active = [name for name in priority if name in active_levels]
+        for target_index in range(1, len(ordered_active)):
+            target_name = ordered_active[target_index]
+            higher_names = ordered_active[:target_index]
+            reference_grads = _sum_grad_sequences(
+                [projected_by_level[name] for name in higher_names]
+            )
+            projected_target, _coefficient, applied = _project_onto_reference(
+                target_grads=projected_by_level[target_name],
+                reference_grads=reference_grads,
+                include_mask=mask,
+                eps=eps,
+            )
+            projected_by_level[target_name] = projected_target
+            reference_name = higher_names[0] if len(higher_names) == 1 else "higher"
+            projection_records.append(
+                (block, target_name, reference_name, mask, reference_grads, applied)
+            )
 
-        coarse_projected_t2, _coarse_coeff_t2, coarse_applied_t2 = _project_onto_reference(
-            target_grads=coarse_grads,
-            reference_grads=mid_grads,
-            include_mask=t2_mask,
-            eps=eps,
-        )
-        higher_t1 = _sum_grad_tuples(
-            fine_grads,
-            mid_projected_t1,
-            (None,) * len(coarse_grads),
-        )
-        coarse_projected_t1, _coarse_coeff_t1, coarse_applied_t1 = _project_onto_reference(
-            target_grads=coarse_grads,
-            reference_grads=higher_t1,
-            include_mask=t1_mask,
-            eps=eps,
-        )
-        coarse_projected = _compose_coarse_projected_grads(
-            coarse_grads=coarse_grads,
-            coarse_projected_t2=coarse_projected_t2,
-            coarse_projected_t1=coarse_projected_t1,
-            t2_mask=t2_mask,
-            t1_mask=t1_mask,
-        )
-        fine_projected = tuple(fine_grads)
-
-        projection_flags["mid_off_fine_t1"] = mid_applied_t1
-        projection_flags["coarse_off_mid_t2"] = coarse_applied_t2
-        projection_flags["coarse_off_higher_t1"] = coarse_applied_t1
-
+    coarse_projected = projected_by_level["coarse"]
+    mid_projected = projected_by_level["mid"]
+    fine_projected = projected_by_level["fine"]
     total_grads = _sum_grad_tuples(coarse_projected, mid_projected, fine_projected)
     grad_pack: Dict[str, GradTuple] = {
         "coarse": coarse_projected,
@@ -619,49 +647,120 @@ def _build_lexicographic_grads(
     if not include_metrics:
         return grad_pack, {}
 
-    t2t1_mask = _merge_masks(t2_mask, t1_mask)
-    higher_t1 = _sum_grad_tuples(
-        coarse_projected,
-        mid_projected,
-        (None,) * len(coarse_projected),
-    )
     metrics: Dict[str, float] = {
         "lex_projection_mode_coarse_first": 1.0 if projection_mode == "coarse_first" else 0.0,
         "lex_projection_mode_fine_first": 1.0 if projection_mode == "fine_first" else 0.0,
     }
-    # Modes that never attempt a projection report 0.0 directly; the rest ride
-    # along in the single batched device-to-host transfer below.
     flag_specs: List[Tuple[str, torch.Tensor]] = []
-    for flag_key, metric_name in _PROJECTION_FLAG_METRICS.items():
-        flag = projection_flags[flag_key]
-        if flag is None:
-            metrics[metric_name] = 0.0
-        else:
-            flag_specs.append((metric_name, flag))
+    higher_cosine_specs = []
+    emitted_legacy_flags = set()
+    for block, target_name, reference_name, mask, reference_grads, applied in projection_records:
+        canonical_flag = f"post_projection_applied_{block}_{target_name}_{reference_name}"
+        flag_specs.append((canonical_flag, applied))
+        legacy_flag = _legacy_projection_flag_alias(block, target_name, reference_name)
+        if legacy_flag is not None:
+            flag_specs.append((legacy_flag, applied))
+            emitted_legacy_flags.add(legacy_flag)
+        if reference_name == "higher":
+            higher_cosine_specs.append(
+                (
+                    f"post_cos_{block}_{target_name}_higher",
+                    projected_by_level[target_name],
+                    reference_grads,
+                    mask,
+                    eps,
+                )
+            )
+
+    for legacy_flag in _LEGACY_PROJECTION_FLAG_NAMES:
+        if legacy_flag not in emitted_legacy_flags:
+            metrics[legacy_flag] = 0.0
+
     mask_views = _mask_views_from_trunk_masks(trunk_masks)
+    t1_mask = mask_views["t1"]
+    t2_mask = mask_views["t2"]
+    t2t1_mask = mask_views["t2t1"]
+    legacy_higher_t1 = _sum_grad_tuples(
+        coarse_projected,
+        mid_projected,
+        (None,) * len(coarse_projected),
+    )
+    projected_level_grads = {
+        "coarse": coarse_projected,
+        "mid": mid_projected,
+        "fine": fine_projected,
+    }
     metrics.update(
         _batched_grad_metrics(
-            norm_specs=_trunk_grad_norm_specs(
-                coarse_grads=coarse_projected,
-                mid_grads=mid_projected,
-                fine_grads=fine_projected,
-                mask_views=mask_views,
-                prefix="post_",
+            norm_specs=(
+                _canonical_grad_norm_specs(
+                    level_grads=projected_level_grads,
+                    block_masks=trunk_masks,
+                    blocks=selected_blocks,
+                    prefix="post_",
+                )
+                + _trunk_grad_norm_specs(
+                    coarse_grads=coarse_projected,
+                    mid_grads=mid_projected,
+                    fine_grads=fine_projected,
+                    mask_views=mask_views,
+                    prefix="post_",
+                )
             ),
-            cosine_specs=[
-                ("post_cos_t2_mid_proj_coarse", mid_projected, coarse_projected, t2_mask, eps),
-                ("post_cos_t1_mid_proj_coarse", mid_projected, coarse_projected, t1_mask, eps),
-                (
-                    "post_cos_t2t1_mid_proj_coarse",
-                    mid_projected,
-                    coarse_projected,
-                    t2t1_mask,
-                    eps,
-                ),
-                ("post_cos_t1_fine_proj_higher", fine_projected, higher_t1, t1_mask, eps),
-                ("post_cos_t1_fine_proj_coarse", fine_projected, coarse_projected, t1_mask, eps),
-                ("post_cos_t1_fine_proj_mid_proj", fine_projected, mid_projected, t1_mask, eps),
-            ],
+            cosine_specs=(
+                _canonical_pairwise_cosine_specs(
+                    level_grads=projected_level_grads,
+                    block_masks=trunk_masks,
+                    blocks=selected_blocks,
+                    eps=eps,
+                    prefix="post_",
+                )
+                + higher_cosine_specs
+                + [
+                    (
+                        "post_cos_t2_mid_proj_coarse",
+                        mid_projected,
+                        coarse_projected,
+                        t2_mask,
+                        eps,
+                    ),
+                    (
+                        "post_cos_t1_mid_proj_coarse",
+                        mid_projected,
+                        coarse_projected,
+                        t1_mask,
+                        eps,
+                    ),
+                    (
+                        "post_cos_t2t1_mid_proj_coarse",
+                        mid_projected,
+                        coarse_projected,
+                        t2t1_mask,
+                        eps,
+                    ),
+                    (
+                        "post_cos_t1_fine_proj_higher",
+                        fine_projected,
+                        legacy_higher_t1,
+                        t1_mask,
+                        eps,
+                    ),
+                    (
+                        "post_cos_t1_fine_proj_coarse",
+                        fine_projected,
+                        coarse_projected,
+                        t1_mask,
+                        eps,
+                    ),
+                    (
+                        "post_cos_t1_fine_proj_mid_proj",
+                        fine_projected,
+                        mid_projected,
+                        t1_mask,
+                        eps,
+                    ),
+                ]
+            ),
             scalar_specs=flag_specs,
         )
     )
@@ -673,12 +772,26 @@ def compute_trunk_param_norm_metrics(
     params: Sequence[torch.nn.Parameter],
     start_snapshot: Sequence[torch.Tensor],
     trunk_masks: Optional[Mapping[str, Sequence[bool]]],
+    blocks: Sequence[str] = DEFAULT_GRADIENT_BLOCKS,
 ) -> Dict[str, float]:
     if trunk_masks is None:
         return {}
 
     mask_views = _mask_views_from_trunk_masks(trunk_masks)
     metrics: Dict[str, float] = {}
+    for block in blocks:
+        mask = list(trunk_masks.get(block, []))
+        if not mask or not any(mask):
+            continue
+        metrics[f"param_norm_{block}"] = _param_norm_from_values(params, mask)
+        metrics[f"delta_param_norm_{block}"] = _delta_param_norm_from_snapshot(
+            params=params,
+            start_snapshot=start_snapshot,
+            include_mask=mask,
+        )
+
+    # Deprecated aliases remain emitted so existing notebooks can consume new
+    # runs while historical run_log.jsonl files remain untouched.
     trunk_order = ("t3t2t1", "t3", "t2t1", "t2", "t1")
 
     for trunk_name in trunk_order:
@@ -701,6 +814,7 @@ def prepare_lexicographic_update(
     include_metrics: bool = True,
     grad_scale: float = 1.0,
     projection_mode: str = "coarse_first",
+    blocks: Sequence[str] = DEFAULT_GRADIENT_BLOCKS,
     precomputed_level_grad_map: Optional[Any] = None,
 ) -> Tuple[Optional[LexicographicUpdateState], Dict[str, float]]:
     """Build lexicographic grads in unscaled units, optionally scaling returned grads.
@@ -732,6 +846,7 @@ def prepare_lexicographic_update(
         coarse_grads=coarse_grads,
         mid_grads=mid_grads,
         fine_grads=fine_grads,
+        blocks=blocks,
     )
 
     projected_grads, metrics = _build_lexicographic_grads(
@@ -742,6 +857,7 @@ def prepare_lexicographic_update(
         projection_mode=projection_mode,
         eps=eps,
         include_metrics=include_metrics,
+        blocks=blocks,
     )
 
     safe_scale = float(grad_scale) if float(grad_scale) > 0.0 else 1.0
@@ -763,6 +879,7 @@ def compute_trunk_grad_metrics(
     trainable_named_params: Sequence[Tuple[str, torch.nn.Parameter]],
     level_losses: Sequence[torch.Tensor],
     retain_graph: bool = True,
+    blocks: Sequence[str] = DEFAULT_GRADIENT_BLOCKS,
 ) -> Tuple[Optional[TrunkGradState], Dict[str, float]]:
     level_grad_map = _compute_level_grad_map(
         trainable_named_params=trainable_named_params,
@@ -779,6 +896,7 @@ def compute_trunk_grad_metrics(
         coarse_grads=coarse_grads,
         mid_grads=mid_grads,
         fine_grads=fine_grads,
+        blocks=blocks,
     )
     mask_views = _mask_views_from_trunk_masks(trunk_masks)
 
@@ -787,14 +905,29 @@ def compute_trunk_grad_metrics(
         mid_grads,
         (None,) * len(coarse_grads),
     )
+    level_grads = {"coarse": coarse_grads, "mid": mid_grads, "fine": fine_grads}
     metrics = _batched_grad_metrics(
-        norm_specs=_trunk_grad_norm_specs(
-            coarse_grads=coarse_grads,
-            mid_grads=mid_grads,
-            fine_grads=fine_grads,
-            mask_views=mask_views,
+        norm_specs=(
+            _canonical_grad_norm_specs(
+                level_grads=level_grads,
+                block_masks=trunk_masks,
+                blocks=blocks,
+            )
+            + _trunk_grad_norm_specs(
+                coarse_grads=coarse_grads,
+                mid_grads=mid_grads,
+                fine_grads=fine_grads,
+                mask_views=mask_views,
+            )
         ),
-        cosine_specs=[
+        cosine_specs=(
+            _canonical_pairwise_cosine_specs(
+                level_grads=level_grads,
+                block_masks=trunk_masks,
+                blocks=blocks,
+                eps=_GRAD_EPS,
+            )
+            + [
             ("cos_t2_mid_coarse", mid_grads, coarse_grads, mask_views["t2"], _GRAD_EPS),
             ("cos_t1_mid_coarse", mid_grads, coarse_grads, mask_views["t1"], _GRAD_EPS),
             (
@@ -807,7 +940,8 @@ def compute_trunk_grad_metrics(
             ("cos_t1_fine_higher", fine_grads, raw_higher_t1, mask_views["t1"], _GRAD_EPS),
             ("cos_t1_fine_coarse", fine_grads, coarse_grads, mask_views["t1"], _GRAD_EPS),
             ("cos_t1_fine_mid", fine_grads, mid_grads, mask_views["t1"], _GRAD_EPS),
-        ],
+            ]
+        ),
     )
 
     if not metrics:

@@ -261,7 +261,8 @@ for ds in "${DATASETS[@]}"; do
       "model.projection.advantage_enabled=$ADVANTAGE_ENABLED" \
       "model.projection.feature_dim=$FEATURE_DIM" \
       "model.projection.eps=$PROJECTION_EPS" \
-      "train.lexicographic.enabled=false"
+      "train.lexicographic.enabled=false" \
+      "train.gradient_blocks=[p123]"
   done
 done
 

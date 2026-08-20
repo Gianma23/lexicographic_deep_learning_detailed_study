@@ -186,7 +186,8 @@ for ds in "${DATASETS[@]}"; do
       "model.transform_mode=full" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.projection_mode=$lex_mode"
+      "train.lexicographic.projection_mode=$lex_mode" \
+      "train.gradient_blocks=[p123]"
   done
 done
 

@@ -120,6 +120,23 @@ def build_topology(
                     )
                 cur = parent
 
+    # For every leaf and every class c at level l, how many levels of that leaf's
+    # ground-truth path fall inside c's taxonomy subspace. The correct class
+    # contains the whole path; any other class contains exactly the levels it
+    # shares with the path, down to its lowest common ancestor. This is the
+    # taxonomy-only part of the direct-subspace target: the level energies are
+    # supplied by the loss, so the same table serves any level weighting.
+    path_indicator = torch.zeros((num_leaf, total_nodes), dtype=torch.float32)
+    leaf_rows = torch.arange(num_leaf, dtype=torch.long)
+    for level, node_ids in enumerate(level_node_ids):
+        path_indicator[leaf_rows, node_ids[leaf_to_level_local[:, level]]] = 1.0
+    level_path_overlap = [
+        torch.matmul(path_indicator, mask.to(torch.float32).transpose(0, 1))
+        .round()
+        .to(torch.long)
+        for mask in level_subspace_masks
+    ]
+
     level_weights = torch.arange(depth, 0, -1, dtype=torch.float32)
     level_weights = torch.exp(1.0 / level_weights)
     level_weights = level_weights / torch.norm(level_weights, p=2).clamp_min(1e-12)
@@ -130,6 +147,7 @@ def build_topology(
         "total_nodes": total_nodes,
         "level_node_ids": level_node_ids,
         "level_subspace_masks": level_subspace_masks,
+        "level_path_overlap": level_path_overlap,
         "leaf_to_level_local": leaf_to_level_local,
         "node_prob_weights": level_weights,
     }

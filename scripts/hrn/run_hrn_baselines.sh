@@ -131,7 +131,8 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
     "${hard_target_overrides[@]}" \
-    "train.lexicographic.enabled=false"
+    "train.lexicographic.enabled=false" \
+    "train.gradient_blocks=[p123]"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

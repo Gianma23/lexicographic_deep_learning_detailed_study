@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Runs native HT-CapsNet baselines on CIFAR-100, CUB-200-2011, and
-# FGVC-Aircraft. CIFAR-100 follows the published equations where they conflict
-# with the released TensorFlow file; CUB uses this repository's unified
-# 13/38/200 taxonomy, and Aircraft is a local extrapolation. Select a subset
+# FGVC-Aircraft. The model path follows the released TensorFlow implementation
+# while experimental hyperparameters follow the paper; CUB uses this
+# repository's unified 13/38/200 taxonomy, and Aircraft is a local extrapolation. Select a subset
 # with, for example:
 #   DATASETS="cub200 aircraft" NUM_RUNS=3 ./scripts/capsnet/run_ht_capsnet_baselines.sh
 
@@ -124,7 +124,7 @@ printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Model: native HT-CapsNet\n'
 printf 'Loss weights: dynamic (from each baseline config)\n'
-printf 'CIFAR-100 protocol: published equations where paper/source conflict\n'
+printf 'HT-CapsNet recipe: released architecture with paper hyperparameters\n'
 printf 'CUB protocol: unified-taxonomy extrapolation\n'
 printf 'Aircraft protocol: local extrapolation\n'
 printf 'Lexicographic mode: disabled\n'
@@ -136,7 +136,8 @@ print_seed_run_settings
 for dataset in "${DATASETS[@]}"; do
   config="$(config_for_dataset "$dataset")"
   run_seeded_train "$config" "$(run_output_dir "$dataset")" \
-    "train.lexicographic.enabled=false"
+    "train.lexicographic.enabled=false" \
+    "train.gradient_blocks=[p123,p23,p3]"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

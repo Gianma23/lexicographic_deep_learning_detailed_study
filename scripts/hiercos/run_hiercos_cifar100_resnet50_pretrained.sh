@@ -263,7 +263,8 @@ run_seeded_train "$CONFIG" "$(run_output_dir)" \
   "dataset.transforms.manual.resize_before_crop_size=$IMAGE_SIZE" \
   "dataset.transforms.eval.resize_mode=resize" \
   "dataset.transforms.eval.resize_size=$IMAGE_SIZE" \
-  "train.lexicographic.enabled=false"
+  "train.lexicographic.enabled=false" \
+  "train.gradient_blocks=[p123]"
 
 if [[ "$DRY_RUN" != "1" ]]; then
   while (( "$(jobs -pr | wc -l)" > 0 )); do

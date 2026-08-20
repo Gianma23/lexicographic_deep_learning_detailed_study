@@ -196,31 +196,44 @@ def _build_fixed_resize(image_size: int, cfg: Any, crop_bottom, normalization_op
     antialias = cfg.get("fixed_resize_antialias", True)
     if not isinstance(antialias, bool):
         raise ValueError("dataset.transforms.fixed_resize_antialias must be a boolean.")
+    intermediate_size = cfg.get("fixed_resize_intermediate_size")
+    if intermediate_size is not None:
+        if isinstance(intermediate_size, bool) or not isinstance(intermediate_size, int):
+            raise ValueError(
+                "dataset.transforms.fixed_resize_intermediate_size must be a positive integer."
+            )
+        if intermediate_size <= 0:
+            raise ValueError(
+                "dataset.transforms.fixed_resize_intermediate_size must be a positive integer."
+            )
+
+    resize_sizes = []
+    if intermediate_size is not None:
+        resize_sizes.append(int(intermediate_size))
+    resize_sizes.append(int(image_size))
 
     operations = [crop_bottom] if crop_bottom.pixels > 0 else []
     if antialias:
         # torchvision resamples the PIL image, whose bilinear filter support
         # scales with the downsample ratio.
         operations.extend(
-            [
-                transforms.Resize((image_size, image_size), interpolation=interpolation),
-                transforms.ToTensor(),
-            ]
+            transforms.Resize((size, size), interpolation=interpolation)
+            for size in resize_sizes
         )
+        operations.append(transforms.ToTensor())
     else:
         # `tf.image.resize` defaults to `antialias=False` and runs after the float
         # conversion, so the tensor is converted first and then resampled with a
         # fixed 2x2 kernel regardless of the downsample ratio. The operation order
         # differs from the antialiased branch because the two pipelines differ.
+        operations.append(transforms.ToTensor())
         operations.extend(
-            [
-                transforms.ToTensor(),
-                transforms.Resize(
-                    (image_size, image_size),
-                    interpolation=interpolation,
-                    antialias=False,
-                ),
-            ]
+            transforms.Resize(
+                (size, size),
+                interpolation=interpolation,
+                antialias=False,
+            )
+            for size in resize_sizes
         )
     operations.extend(normalization_ops)
     return transforms.Compose(operations)

@@ -452,6 +452,29 @@ def _shared_level_weights(
     return torch.flip(weights, dims=[0]) if mode == "kl_coarse" else weights
 
 
+def resolve_level_weights(
+    output: Dict[str, Any],
+    cfg: Any,
+    level_node_ids: List[torch.Tensor],
+    num_levels: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Public entry point for `model.weight_mode`.
+
+    Direct subspace supervision reuses this so its level weighting is the one
+    the native objective would apply, rather than a second, independent setting.
+    """
+    return _shared_level_weights(
+        output=output,
+        cfg=cfg,
+        level_node_ids=level_node_ids,
+        num_levels=num_levels,
+        device=device,
+        dtype=dtype,
+    )
+
+
 def compute_loss(
     output: Dict[str, Any],
     targets: HierCosTargets,

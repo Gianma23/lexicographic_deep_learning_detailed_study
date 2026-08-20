@@ -96,13 +96,13 @@ SHAPE_AREA_SCALE = {"o": 1.00, "^": 1.20, "s": 0.95, "D": 1.20,
 SHAPE_HATCHES = {"o": "", "^": "//", "s": "\\\\", "D": "xx",
                  "P": "++", "v": "--", "X": "||", "*": "**"}
 
-# Variant vocabulary for the single-family notebooks, so that "HCC step@0 is a
-# green square" holds across hcast, hrn and ht_capsnet.
+# Variant vocabulary for the single-family notebooks, so that "the HCC arm is a
+# green square" holds across hcast, hrn and ht_capsnet. HCC is a binary on/off
+# switch, so there is a single HCC variant rather than an onset schedule.
 VARIANT_MARKERS = {
     "native": "o",
     "coarse_first": "^",
-    "immediate": "s",       # HCC activated at epoch 0
-    "delayed": "D",         # HCC activated late (step@80 / step@160)
+    "hcc_on": "s",          # HCC constraint active for the whole run
     "no_global_kl": "v",
     "fine_first": "X",
 }
@@ -110,8 +110,7 @@ VARIANT_MARKERS = {
 VARIANT_LABELS = {
     "native": "Native objective",
     "coarse_first": "Coarse-first priority",
-    "immediate": "Activated at epoch 0",
-    "delayed": "Activated late",
+    "hcc_on": "Constraint active throughout",
     "no_global_kl": "No global KL",
     "fine_first": "Fine-first priority",
 }

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import numpy as np
 import torch
 
+from ..lexicographic.types import DEFAULT_GRADIENT_BLOCKS
 from .common import section_to_dict, to_plain_data
 from .selection import BEST_SELECTION_MODES, SelectionKey, normalize_selection_key
 
@@ -49,6 +50,15 @@ def _normalized_cfg_for_resume_compare(
         for key in _RESUME_ALLOWED_TRAIN_DIFF_KEYS:
             train_cfg.pop(key, None)
         lex_cfg = train_cfg.get("lexicographic")
+        if checkpoint_side and isinstance(lex_cfg, dict) and "blocks" in lex_cfg:
+            # A short-lived development schema placed this general setting
+            # under train.lexicographic. Promote it only on the checkpoint side;
+            # current configs must use train.gradient_blocks.
+            train_cfg.setdefault("gradient_blocks", lex_cfg.pop("blocks"))
+        if "gradient_blocks" not in train_cfg:
+            # Historical configs predate explicit support-block selection and
+            # therefore have the original p123/p12/p1 behavior.
+            train_cfg["gradient_blocks"] = list(DEFAULT_GRADIENT_BLOCKS)
         if (
             checkpoint_side
             and isinstance(lex_cfg, dict)

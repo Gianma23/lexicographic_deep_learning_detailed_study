@@ -6,6 +6,8 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Set
 
 from omegaconf import OmegaConf
 
+from .lexicographic.types import DEFAULT_GRADIENT_BLOCKS, GRADIENT_BLOCK_NAMES
+
 
 SUPPORTED_MODELS = {"hcast", "lhdnn", "ht_capsnet", "hrn", "hiercos"}
 SUPPORTED_DATASETS = {"cifar-100", "cub-200-2011", "fgvc-aircraft"}
@@ -41,8 +43,6 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "mask_threshold_low",
         "mask_temperature",
         "mask_center",
-        "routing_parent_activation",
-        "primary_capsule_mode",
         "attn_heads",
         "attn_key_dim",
         "attn_dropout",
@@ -120,6 +120,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "normalization_scope",
         "fixed_resize_only",
         "fixed_resize_interpolation",
+        "fixed_resize_intermediate_size",
         "fixed_resize_antialias",
         "timm",
         "manual",
@@ -180,6 +181,8 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "stop_epoch",
         "scale_lr",
         "scale_lr_reference_batch_size",
+        "checkpoint_selection",
+        "gradient_blocks",
         "lexicographic",
         "subspace_supervision",
     },
@@ -191,8 +194,7 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
     },
     "train.subspace_supervision": {
         "enabled",
-        "target_mode",
-        "loss",
+        "tau",
         "eps",
     },
     "optim": {
@@ -251,7 +253,6 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "lambda_downweight",
         "weight_mode",
         "dynamic_weight",
-        "dynamic_weight_formula",
     },
     "model.loss.level_weighting": {"mode", "gamma", "eps"},
 }
@@ -440,6 +441,11 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
         "fixed_resize_antialias",
         "dataset.transforms.fixed_resize_antialias",
     )
+    if transforms.get("fixed_resize_intermediate_size") is not None:
+        _positive_int(
+            transforms.get("fixed_resize_intermediate_size"),
+            "dataset.transforms.fixed_resize_intermediate_size",
+        )
     manual_transforms = transforms.get("manual", {})
     if not isinstance(manual_transforms, Mapping):
         raise ValueError("`dataset.transforms.manual` must be a mapping.")
@@ -511,6 +517,11 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
         "drop_last_eval",
     ):
         _validate_optional_bool(dataloader, key, f"dataloader.{key}")
+    _require_enum(
+        train.get("checkpoint_selection", "hierarchical_metrics"),
+        "train.checkpoint_selection",
+        {"hierarchical_metrics", "deepest_accuracy"},
+    )
     if protocol is not None:
         _require_enum(
             protocol,
@@ -586,16 +597,11 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             subspace_supervision.get("enabled", False),
             "train.subspace_supervision.enabled",
         )
-        _require_enum(
-            subspace_supervision.get("target_mode", "sqrt_path_weights"),
-            "train.subspace_supervision.target_mode",
-            {"sqrt_path_weights"},
-        )
-        _require_enum(
-            subspace_supervision.get("loss", "cross_entropy"),
-            "train.subspace_supervision.loss",
-            {"cross_entropy", "normalized_mse"},
-        )
+        if _finite_float(
+            subspace_supervision.get("tau", 0.25),
+            "train.subspace_supervision.tau",
+        ) <= 0.0:
+            raise ValueError("`train.subspace_supervision.tau` must be > 0.")
         if _finite_float(
             subspace_supervision.get("eps", 1e-12),
             "train.subspace_supervision.eps",
@@ -660,17 +666,8 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         _require_enum(
             backbone_preprocessing,
             "model.backbone_preprocessing",
-            {"keras", "keras_unit_range", "timm"},
+            {"keras", "timm"},
         )
-        if (
-            backbone_preprocessing == "keras_unit_range"
-            and payload["dataset"].get("transforms", {}).get("normalization", "none")
-            != "none"
-        ):
-            raise ValueError(
-                "HT-CapsNet keras_unit_range requires "
-                "dataset.transforms.normalization=none."
-            )
         bn_momentum = _finite_float(
             model.get("backbone_bn_momentum", 0.01),
             "model.backbone_bn_momentum",
@@ -693,16 +690,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             "model.attn_initializer",
             {"keras_glorot", "pytorch_xavier"},
         )
-        _require_enum(
-            model.get("routing_parent_activation", "softmax_norm"),
-            "model.routing_parent_activation",
-            {"norm", "softmax_norm"},
-        )
-        _require_enum(
-            model.get("primary_capsule_mode", "source_reuse"),
-            "model.primary_capsule_mode",
-            {"paper_independent", "source_reuse"},
-        )
         if _finite_float(model.get("taxonomy_temperature", 0.5), "model.taxonomy_temperature") <= 0:
             raise ValueError("HT-CapsNet taxonomy_temperature must be > 0.")
         mask_low = _finite_float(model.get("mask_threshold_low", 0.1), "model.mask_threshold_low")
@@ -724,11 +711,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             loss.get("weight_mode", "dynamic"),
             "model.loss.weight_mode",
             {"dynamic", "static", "none"},
-        )
-        _require_enum(
-            loss.get("dynamic_weight_formula", "released_source"),
-            "model.loss.dynamic_weight_formula",
-            {"paper", "released_source"},
         )
         m_pos = _finite_float(loss.get("margin_m_pos", 0.9), "model.loss.margin_m_pos")
         m_neg = _finite_float(loss.get("margin_m_neg", 0.1), "model.loss.margin_m_neg")
@@ -930,6 +912,31 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
 
     lex = train.get("lexicographic")
     lex_enabled = False
+    gradient_blocks = train.get("gradient_blocks", DEFAULT_GRADIENT_BLOCKS)
+    if (
+        not isinstance(gradient_blocks, Sequence)
+        or isinstance(gradient_blocks, (str, bytes))
+        or not gradient_blocks
+    ):
+        raise ValueError(
+            "`train.gradient_blocks` must be a non-empty list containing only "
+            f"{list(GRADIENT_BLOCK_NAMES)}."
+        )
+    invalid_blocks = sorted(
+        {
+            str(block)
+            for block in gradient_blocks
+            if not isinstance(block, str) or block not in GRADIENT_BLOCK_NAMES
+        }
+    )
+    if invalid_blocks:
+        raise ValueError(
+            "`train.gradient_blocks` contains unsupported entries "
+            f"{invalid_blocks}; expected only {list(GRADIENT_BLOCK_NAMES)}."
+        )
+    if len(set(gradient_blocks)) != len(gradient_blocks):
+        raise ValueError("`train.gradient_blocks` must not contain duplicates.")
+
     if lex is not None and not isinstance(lex, Mapping):
         raise ValueError("`train.lexicographic` must be a mapping.")
     if isinstance(lex, Mapping):

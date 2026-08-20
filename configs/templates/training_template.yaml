@@ -10,10 +10,16 @@ train:
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/<run_name> # Run artifact directory
   smoothing: 0.1                    # Label smoothing in CE-based losses
   stop_epoch: 100                   # Optional early stop epoch; must satisfy 1 <= stop_epoch <= epochs
+  checkpoint_selection: hierarchical_metrics # hierarchical_metrics | deepest_accuracy
 
   # Optional linear LR scaling by batch size.
   scale_lr: false                   # If true, final LR = optim.lr * batch_size / reference_batch_size
   scale_lr_reference_batch_size: 512
+
+  # Exact gradient-support blocks to diagnose and, when lexicographic mode is
+  # enabled, project. p123/p12/p1 preserves historical H-CAST behavior;
+  # HT-CapsNet normally uses [p123, p23, p3].
+  gradient_blocks: [p123, p12, p1]
 
   # Optional lexicographic projected-gradient mode.
   # Supported when exactly 3 differentiable level losses are available.
@@ -26,14 +32,24 @@ train:
 
   # Optional capability-based direct supervision of taxonomy-subspace scores.
   # When enabled, this replaces the model's native loss. The model output must
-  # expose subspace_scores_per_level. Cross-entropy uses the hard path labels
-  # and exactly the scores decoded at evaluation time. normalized_mse is retained
-  # only for reproducing the historical dense-profile regression experiment.
+  # expose subspace_scores_per_level and subspace_path_overlap_by_level.
+  # The target is not a one-hot label: a subspace spans ancestors, self and
+  # descendants, so classes sharing an ancestor necessarily share coordinates
+  # and a one-hot target is unreachable. Supervision uses the attainable profile
+  # induced by unit path energy split over the ground-truth path, compared
+  # against the decoded scores through a tempered soft cross-entropy, after
+  # dividing the scores by the node-coordinate norm -- one scale shared by every
+  # level, since a per-level scale would leave the node energies unidentified.
+  # Level weights are not set here: the mechanism reuses model.weight_mode to
+  # split the path energy in the target geometry. The per-level losses are then
+  # averaged uniformly, so a level's importance is expressed once.
   # It is incompatible with mixup/cutmix, HCC, lexicographic training, and the
   # Hier-COS LH projection.
   subspace_supervision:
     enabled: false
-    loss: cross_entropy
+    tau: 0.25                       # Target/prediction temperature; ->0 recovers the
+                                    # unreachable one-hot target, large flattens it
+    eps: 1.0e-12                    # Numerical epsilon for the shared score scale
 
 optim:
   name: adamw                       # adam | keras_adam (Keras 2.8 epsilon-hat) | adamw | sgd

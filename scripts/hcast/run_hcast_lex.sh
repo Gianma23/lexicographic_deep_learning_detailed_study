@@ -48,7 +48,7 @@ trap handle_exit EXIT
 # Example:
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hcast/run_hcast_lex.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
-LEX_PROJECTION_MODE="${LEX_PROJECTION_MODE:-coarse_first}"
+LEX_PROJECTION_MODE="${LEX_PROJECTION_MODE:-fine_first}"
 
 case "$LEX_PROJECTION_MODE" in
   coarse_first|fine_first) ;;
@@ -142,6 +142,7 @@ for ds in "${DATASETS[@]}"; do
     "model.loss.globalkl=false" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
+    "train.gradient_blocks=[p123,p12,p1]" \
     "train.lexicographic.eps=1.0e-12" \
     "train.lexicographic.log_metrics=true"
 done

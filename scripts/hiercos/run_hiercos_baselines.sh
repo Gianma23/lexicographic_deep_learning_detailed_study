@@ -192,7 +192,8 @@ for ds in "${DATASETS[@]}"; do
     "model.transform_mode=full" \
     "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
     "model.projection.feature_dim=$FEATURE_DIM" \
-    "train.lexicographic.enabled=false"
+    "train.lexicographic.enabled=false" \
+    "train.gradient_blocks=[p123]"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

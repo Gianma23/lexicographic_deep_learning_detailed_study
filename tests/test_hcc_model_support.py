@@ -9,7 +9,7 @@ from train.config_validation import validate_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# CLI-override-style HCC block, matching what the run_*_hcc_grid.sh scripts
+# CLI-override-style HCC block, matching what the run_*_hcc*.sh scripts
 # pass on top of each model's plain baseline config.
 HCC_CFG = {
     "enabled": True,

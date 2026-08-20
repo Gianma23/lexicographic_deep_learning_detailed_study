@@ -145,6 +145,7 @@ for dataset in "${DATASETS[@]}"; do
     "model.loss=level_marginal" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
+    "train.gradient_blocks=[p123]" \
     "train.lexicographic.eps=1.0e-12" \
     "train.lexicographic.log_metrics=true"
 done

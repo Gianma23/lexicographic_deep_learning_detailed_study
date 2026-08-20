@@ -135,7 +135,8 @@ print_seed_run_settings
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
-    "train.lexicographic.enabled=false"
+    "train.lexicographic.enabled=false" \
+    "train.gradient_blocks=[p123,p12,p1]"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

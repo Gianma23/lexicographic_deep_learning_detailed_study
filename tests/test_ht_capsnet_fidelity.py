@@ -31,6 +31,7 @@ from models.ht_capsnet.routing import (
 )
 from train.mixup import Mixup
 from train.runtime.optimization import HTCapsNetExponentialScheduler, KerasAdam
+from train.runtime.selection import selection_components, selection_key
 
 
 def _taxonomy():
@@ -165,34 +166,29 @@ class RoutingAndLossTests(unittest.TestCase):
         short_expected = torch.softmax(raw[:, :1] * short_soft[:1].unsqueeze(0) * 0.5, dim=-1)
         torch.testing.assert_close(short_actual, short_expected)
 
-    def test_paper_parent_norm_preserves_a_stronger_taxonomy_mask(self):
+    def test_parent_lengths_are_softmaxed_before_source_taxonomy_mask(self):
         raw = torch.full((1, 2, 3), 2.0)
         taxonomy = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
         previous = torch.zeros(1, 2, 4)
-        previous[:, :, 0] = 8.0
+        previous[:, 0, 0] = 8.0
+        previous[:, 1, 0] = 2.0
 
-        paper = taxonomy_guided_routing_weights(
+        actual = taxonomy_guided_routing_weights(
             raw,
             level=1,
             taxonomy_matrix=taxonomy,
             prev_predictions=previous,
             mask_threshold_high=0.99,
-            parent_activation="norm",
         )
-        released = taxonomy_guided_routing_weights(
-            raw,
-            level=1,
-            taxonomy_matrix=taxonomy,
-            prev_predictions=previous,
-            mask_threshold_high=0.99,
-            parent_activation="softmax_norm",
-        )
+        activations = torch.softmax(torch.tensor([[8.0, 2.0]]), dim=-1)
+        weighted_taxonomy = taxonomy.unsqueeze(0) * activations.unsqueeze(-1)
+        soft_mask = 0.89 * torch.sigmoid(
+            0.5 * (weighted_taxonomy - 0.5)
+        ) + 0.1
+        expected = torch.softmax(raw * soft_mask * 0.5, dim=-1)
+        torch.testing.assert_close(actual, expected)
 
-        paper_edge_contrast = paper[0, 0, 0] - paper[0, 0, 1]
-        released_edge_contrast = released[0, 0, 0] - released[0, 0, 1]
-        self.assertGreater(float(paper_edge_contrast), float(released_edge_contrast))
-
-    def test_paper_and_released_dynamic_weight_equations_are_explicit(self):
+    def test_dynamic_weights_match_released_callback_parentheses(self):
         logits = [
             torch.tensor([[2.0, 0.0], [2.0, 0.0]]),
             torch.tensor([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
@@ -201,34 +197,21 @@ class RoutingAndLossTests(unittest.TestCase):
         targets = [torch.zeros(2, dtype=torch.long) for _ in logits]
         initial = _initial_level_weights([2, 3, 4])
 
-        paper, _, _ = _dynamic_level_weights(
+        actual, _, _ = _dynamic_level_weights(
             logits,
             targets,
             decay=0.0,
-            formula="paper",
-        )
-        released, _, _ = _dynamic_level_weights(
-            logits,
-            targets,
-            decay=0.0,
-            formula="released_source",
         )
 
-        paper_terms = [0.0, 0.5 * initial[1], initial[2]]
-        released_terms = [
+        source_terms = [
             1.0 - initial[0],
             1.0 - 0.5 * initial[1],
             1.0,
         ]
         torch.testing.assert_close(
-            torch.tensor(paper),
-            torch.tensor([value / sum(paper_terms) for value in paper_terms]),
+            torch.tensor(actual),
+            torch.tensor([value / sum(source_terms) for value in source_terms]),
         )
-        torch.testing.assert_close(
-            torch.tensor(released),
-            torch.tensor([value / sum(released_terms) for value in released_terms]),
-        )
-        self.assertNotEqual(paper, released)
 
     def test_hierarchical_agreement_matches_explicit_gate(self):
         votes = torch.tensor([[[[1.0, 2.0], [2.0, 1.0]]]])
@@ -289,27 +272,24 @@ class HTCapsNetStateTests(unittest.TestCase):
         expected_flat = feature.permute(0, 2, 3, 1).contiguous().view(1, -1, 8)
         torch.testing.assert_close(actual, squash(expected_flat, dim=-1))
 
-    def test_paper_primary_capsules_are_independently_reshaped_then_squashed(self):
+    def test_later_primary_capsules_reshape_the_source_squashed_tensor(self):
         feature = torch.linspace(-2.0, 3.0, 8 * 16 * 16).view(1, 8, 16, 16)
-        paper_model = self._model(primary_capsule_mode="paper_independent")
-        source_model = self._model(primary_capsule_mode="source_reuse")
-        paper_primary = paper_model._build_primary_caps(feature)
-        source_primary = source_model._build_primary_caps(feature)
+        model = self._model()
+        primary = model._build_primary_caps(feature)
+        later_level = model._reshape_primary_for_level(
+            primary,
+            target_dim=4,
+        )
+        torch.testing.assert_close(later_level, primary.reshape(1, -1, 4))
 
-        paper_level = paper_model._primary_caps_for_level(
-            feature,
-            paper_primary,
-            level=2,
+        independently_squashed = squash(
+            feature.permute(0, 2, 3, 1).contiguous().view(1, -1, 4),
+            dim=-1,
         )
-        source_level = source_model._primary_caps_for_level(
-            feature,
-            source_primary,
-            level=2,
+        self.assertGreater(
+            float((later_level - independently_squashed).abs().max()),
+            1e-3,
         )
-        flat = feature.permute(0, 2, 3, 1).contiguous().view(1, -1, 4)
-        torch.testing.assert_close(paper_level, squash(flat, dim=-1))
-        torch.testing.assert_close(source_level, source_primary.reshape(1, -1, 4))
-        self.assertGreater(float((paper_level - source_level).abs().max()), 1e-3)
 
     def test_custom_backbone_matches_keras_activation_bn_order_and_constants(self):
         backbone = _ConvBackbone(num_blocks=1, initial_filters=8)
@@ -359,13 +339,9 @@ class HTCapsNetStateTests(unittest.TestCase):
         ):
             self.assertIs(raw, margin_scores)
 
-    def test_paper_equation_modes_complete_a_finite_backward_pass(self):
-        model = self._model(
-            primary_capsule_mode="paper_independent",
-            routing_parent_activation="norm",
-        ).train()
+    def test_released_source_port_completes_a_finite_backward_pass(self):
+        model = self._model().train()
         cfg = _loss_cfg()
-        cfg.model.loss["dynamic_weight_formula"] = "paper"
         targets = torch.tensor([[0, 0, 0], [1, 2, 3]])
 
         output = model(torch.randn(2, 3, 32, 32))
@@ -487,25 +463,6 @@ class HTCapsNetStateTests(unittest.TestCase):
             (images - mean) / std,
         )
 
-    def test_keras_unit_range_mode_represents_raw_keras_application_input(self):
-        diagnostic_backbone = _ConvBackbone(num_blocks=1, initial_filters=8)
-        with patch(
-            "models.ht_capsnet.model._build_backbone",
-            return_value=diagnostic_backbone,
-        ):
-            model = self._model(
-                backbone_name="efficientnet_b7",
-                backbone_preprocessing="keras_unit_range",
-            )
-        images = torch.rand(2, 3, 32, 32)
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-        variance = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-        torch.testing.assert_close(
-            model._prepare_backbone_input(images),
-            (images - mean) / torch.sqrt(variance),
-        )
-
-
 class ScopedNormalizationTests(unittest.TestCase):
 
     @staticmethod
@@ -588,7 +545,7 @@ class ScopedNormalizationTests(unittest.TestCase):
 
 class FixedResizeTests(unittest.TestCase):
     @staticmethod
-    def _cfg(antialias=None, crop_bottom=None):
+    def _cfg(antialias=None, crop_bottom=None, intermediate_size=None):
         transforms_cfg = {
             "fixed_resize_only": True,
             "fixed_resize_interpolation": "bilinear",
@@ -599,6 +556,8 @@ class FixedResizeTests(unittest.TestCase):
             transforms_cfg["fixed_resize_antialias"] = antialias
         if crop_bottom is not None:
             transforms_cfg["manual"] = {"crop_bottom_pixels": crop_bottom}
+        if intermediate_size is not None:
+            transforms_cfg["fixed_resize_intermediate_size"] = intermediate_size
         return SimpleNamespace(dataset={"image_size": 16, "transforms": transforms_cfg})
 
     def test_antialias_false_converts_before_resampling(self):
@@ -632,6 +591,17 @@ class FixedResizeTests(unittest.TestCase):
         aliased = build_transforms(self._cfg(antialias=False), "train")(image)
         filtered = build_transforms(self._cfg(antialias=True), "train")(image)
         self.assertGreater(float((aliased - filtered).abs().mean()), 1e-3)
+
+    def test_source_path_loader_runs_512_then_final_tensor_resize(self):
+        pipeline = build_transforms(
+            self._cfg(antialias=False, intermediate_size=512),
+            "train",
+        ).transforms
+        self.assertIsInstance(pipeline[0], torchvision_transforms.ToTensor)
+        self.assertEqual(tuple(pipeline[1].size), (512, 512))
+        self.assertEqual(tuple(pipeline[2].size), (16, 16))
+        self.assertFalse(pipeline[1].antialias)
+        self.assertFalse(pipeline[2].antialias)
 
 
 class MixupAndSchedulerTests(unittest.TestCase):
@@ -693,6 +663,39 @@ class MixupAndSchedulerTests(unittest.TestCase):
         restored = KerasAdam([restored_parameter], lr=0.001, eps=1e-7)
         restored.load_state_dict(optimizer.state_dict())
         self.assertEqual(restored.param_groups[0]["step"], 1)
+
+
+class CheckpointSelectionTests(unittest.TestCase):
+    def test_deepest_accuracy_ignores_hierarchical_metric_ranking(self):
+        metrics = {
+            "acc_level_independent_0": 0.8,
+            "acc_level_independent_1": 0.6,
+            "acc_level_independent_2": 0.4,
+            "fpa_independent": 0.9,
+            "tice_independent": 0.1,
+            "weighted_ap_independent": 0.8,
+        }
+        self.assertEqual(
+            selection_key(
+                metrics,
+                mode="independent",
+                strategy="deepest_accuracy",
+            ),
+            (0.4, float("-inf"), float("-inf")),
+        )
+        components = selection_components(
+            metrics,
+            mode="independent",
+            strategy="deepest_accuracy",
+        )
+        self.assertEqual(
+            components["primary_name"],
+            "acc_level_independent_2",
+        )
+        self.assertEqual(
+            selection_key(metrics, mode="independent"),
+            (0.9, -0.1, 0.8),
+        )
 
 
 if __name__ == "__main__":

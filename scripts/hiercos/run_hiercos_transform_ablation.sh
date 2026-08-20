@@ -204,7 +204,8 @@ for ds in "${DATASETS[@]}"; do
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
       "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
       "train.lexicographic.enabled=true" \
-      "train.lexicographic.projection_mode=coarse_first"
+      "train.lexicographic.projection_mode=coarse_first" \
+      "train.gradient_blocks=[p123]"
   done
 done
 

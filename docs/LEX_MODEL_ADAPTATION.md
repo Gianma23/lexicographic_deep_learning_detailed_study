@@ -7,7 +7,8 @@ which behaviours change silently.
 This file complements two others and does not repeat them:
 
 - [`GRADIENT_PARAM_DIAGNOSTIC_LOGS.md`](GRADIENT_PARAM_DIAGNOSTIC_LOGS.md): the
-  `run_log.jsonl` key glossary (`grad_norm_t*`, `cos_t*`, `post_*`).
+  `run_log.jsonl` key glossary (canonical `p...` blocks and deprecated `t...`
+  compatibility aliases).
 - `README.md`: user-facing preset descriptions.
 
 Scope note: lexicographic mode here means **explicit parameter-gradient
@@ -91,7 +92,8 @@ parameter-independent. This is the same algebra that turns Hier-COS's `kl_reg`
 into `global_softmax_ce_reg`. The decomposition is exact, but the resulting
 terms share one softmax over the concatenated hierarchy, so every level's
 gradient reaches every head through the log-partition. That would collapse
-H-CAST's trunk partition to `t1` only (Section 4), which is the specific property
+H-CAST's competing support partition to `p123` only (Section 4), which is the
+specific property
 that makes H-CAST informative for this study. `globalkl: false` is therefore a
 deliberate design choice, not only a plumbing convenience.
 
@@ -187,26 +189,24 @@ per-sample, branch-point gradient intervention. Stacking a second, global
 parameter-space projection on top would make the resulting update attributable to
 neither mechanism.
 
-## 4. Trunk partition per model
+## 4. Gradient-support partition per model
 
-`t1`/`t2`/`t3` are derived at runtime from which level gradients are non-`None`
-per parameter (`gradients.py:239-254`):
-
-- `t1`: receives coarse + mid + fine gradients
-- `t2`: coarse + mid only
-- `t3`: coarse only
+Exact blocks are derived at runtime from which level gradients are non-`None`
+per parameter. Their canonical name is `p` followed by the active level indices:
+`p123`, `p12`, `p23`, `p1`, and so on. The deprecated log aliases are
+`t1 = p123`, `t2 = p12`, and `t3 = p1`.
 
 The partition is a property of the **architecture**, not of the config, and it
 differs sharply across models.
 
-**H-CAST is the only model with a non-degenerate partition.** Its heads read
+**H-CAST uses `p123`, `p12`, and `p1`.** Its heads read
 different trunk depths — `head(out2)` fine, `family_head(out3)` mid,
 `manufacturer_head(out4)` coarse
 (`models/hcast/internal/cast_deit_hier.py:221-223`) — so blocks below each head
 are exclusive to the coarser levels. Measured on
 `/scratch/g.saggini1/outputs/hcast_cifar100_lex/seed_0`, epoch 2, seed 0:
 
-| | `t1` | `t2` | `t3` |
+| | `p123` (`t1`) | `p12` (`t2`) | `p1` (`t3`) |
 | --- | --- | --- | --- |
 | `param_norm` | 321.2 | 298.6 | 198.2 |
 
@@ -215,7 +215,7 @@ The projection also behaves differently per block in that run:
 coarse gradients are strongly aligned on the fully shared trunk but nearly
 orthogonal on the coarse+mid-only trunk.
 
-**Every other model collapses to `t1` only.** Hier-COS has a single shared
+**Hier-COS and HRN reduce to `p123` as their only competing block.** Hier-COS has a single shared
 backbone with no branches and a frozen fixed frame, so all trainable parameters
 receive all three level gradients. Measured on the Aircraft lex runs, epoch 2,
 seed 0: `param_norm_t1 = param_norm_t2t1 = param_norm_t3t2t1 = 98.6`
@@ -223,14 +223,21 @@ seed 0: `param_norm_t1 = param_norm_t2t1 = param_norm_t3t2t1 = 98.6`
 both loss modes, confirming the degeneracy is architectural rather than
 loss-induced. This is expected for Hier-COS, not a defect.
 
+**HT-CapsNet instead uses `p123`, `p23`, and `p3`.** Its capsule stages are
+chained coarse-to-fine: the coarse stage is reached by all three losses, the
+middle stage by middle and fine, and the final stage by the fine loss only.
+The HT-CapsNet launchers therefore set
+`train.gradient_blocks=[p123,p23,p3]`; coarse-first mode additionally
+projects the fine gradient against the middle gradient on `p23`.
+
 Practical consequences:
 
-- Mask-dependent diagnostic keys are emitted only when the mask is non-empty
-  (`gradients.py:475-519`), so `grad_norm_t2_*` and `grad_norm_t3_*` simply do
-  not appear in single-trunk runs. Their absence is not an error.
+- Mask-dependent canonical diagnostic keys are emitted only when the selected
+  mask is non-empty, so the absence of (for example) `grad_norm_p23_*` is not an
+  error when that support does not occur.
 - `projection_mode: coarse_first` means structurally different things across
-  models. On H-CAST it exploits a real nested parameter partition; elsewhere it
-  reduces to one global projection over an undifferentiated parameter block.
+  models. On H-CAST it acts on `p123` and `p12`; on HT-CapsNet it acts on
+  `p123` and `p23`; on the remaining families it reduces to `p123`.
 - These numbers are single-seed, single-epoch snapshots. Confirm stability across
   epochs and seeds before treating them as load-bearing thesis claims.
 
@@ -267,8 +274,8 @@ training objective.
 
 | Model | Supported | Required loss config | Trunk partition | Level weights reach the step |
 | --- | --- | --- | --- | --- |
-| H-CAST | yes | `loss.globalkl: false` | `t1`+`t2`+`t3` | no (unweighted tensors) |
-| Hier-COS | yes | `loss: global_softmax_ce_reg` or `level_softmax_ce_reg`; `projection.enabled: false` | `t1` only | yes |
-| HT-CapsNet | yes | none enforced; launcher sets `weight_mode: none` | `t1` only | no (unweighted tensors) |
-| HRN | yes | `loss: level_marginal` | `t1` only | n/a (unweighted objective) |
+| H-CAST | yes | `loss.globalkl: false` | `p123`+`p12`+`p1` | no (unweighted tensors) |
+| Hier-COS | yes | `loss: global_softmax_ce_reg` or `level_softmax_ce_reg`; `projection.enabled: false` | `p123` only | yes |
+| HT-CapsNet | yes | none enforced; launcher sets `weight_mode: none` | `p123`+`p23`+`p3` | no (unweighted tensors) |
+| HRN | yes | `loss: level_marginal` | `p123` only | n/a (unweighted objective) |
 | LH-DNN | **no** | — | — | — |

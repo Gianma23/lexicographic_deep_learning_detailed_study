@@ -136,7 +136,7 @@ variant was removed on 2026-08-06 and its run directories deleted. Only two runs
 width variant, both CUB. **CIFAR-100 and Aircraft have no valid projection run.**
 `advantage_enabled` is implemented and script-exposed but I found no run directory.
 
-**HCC on Hier-COS** — `run_hiercos_hcc_grid.sh` exists (single HCC-on arm) but I found
+**HCC on Hier-COS** — `run_hiercos_hcc.sh` exists (single HCC-on arm) but I found
 no `hiercos_*hcc*` output directories. Treat as **specified, not yet run**.
 
 Note: the working tree (uncommitted) removes two former preconditions on HCC + Hier-COS —
