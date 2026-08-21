@@ -559,8 +559,11 @@ scripts/hrn/run_hrn_lex.sh
 
 Both default to coarse-first. Lexicographic projection is always active for the
 whole run. Override `DATASETS` or `LEX_PROJECTION_MODE` to select another
-validated run without adding a dataset config. The HRN launcher also enforces
-hard targets.
+validated run without adding a dataset config. Because HT-CapsNet is
+substantially more expensive in lexicographic mode, its lex launcher overrides
+the paper-aligned 200-epoch baseline presets with a 100-epoch budget. This means
+the resulting baseline-versus-lex comparison is not training-budget matched.
+The HRN launcher also enforces hard targets.
 
 Run the paper-aligned LH-DNN CIFAR-100 preset and the two explicitly
 extrapolated large-image presets with:

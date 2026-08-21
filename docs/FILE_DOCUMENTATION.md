@@ -218,8 +218,9 @@ named `<model>_<dataset>[_<loss>]_lex_<mode>[...]`.
 ## Analysis notebooks and helpers
 
 All notebooks and their shared helper modules live under `notebooks/`, split
-into three areas: cross-cutting notebooks directly under `notebooks/`,
-per-model finished-run analyses under `notebooks/model_analysis/`, live-run
+into four areas: cross-cutting notebooks directly under `notebooks/`,
+per-model finished-run analyses under `notebooks/model_analysis/`, post-hoc
+inference comparisons under `notebooks/inference_analysis/`, live-run
 trade-off plots under `notebooks/tradeoff_analysis/`, and their shared Python
 helpers under `notebooks/utils/`.
 
@@ -227,8 +228,25 @@ helpers under `notebooks/utils/`.
   exported for the thesis dataset section.
 - `notebooks/model_comparison_all_datasets.ipynb` — cross-model, cross-dataset
   comparison.
-- `notebooks/posthoc_hiercos_inference_comparison.ipynb` — post-hoc Hier-COS
-  inference comparison; drives the CLI documented in `evaluation/README.md`.
+- `notebooks/posthoc_hiercos_inference_comparison.ipynb` — the original
+  single-family post-hoc inference notebook, superseded by
+  `notebooks/inference_analysis/`.
+
+`notebooks/inference_analysis/` holds the post-hoc inference comparisons. All of
+them drive the CLI documented in `evaluation/README.md`, read the per-run
+`posthoc_inference_test_metrics.yaml` it writes, and share
+`notebooks/utils/posthoc_inference_utils.py`:
+
+- `notebooks/inference_analysis/baseline.ipynb`,
+  `lexmode.ipynb`, `hcc.ipynb`, `lhprojection.ipynb`,
+  `subspace_supervision.ipynb` — one notebook per training mechanism, each
+  reporting the within-checkpoint gain of every readout x transform cell against
+  that mechanism's own native inference.
+- `notebooks/inference_analysis/all_mechanics.ipynb` — every mechanism on one
+  grid at every inference cell, for the best (mechanism, inference) combination
+  overall. Its cross-mechanism deltas pair two different training runs by seed
+  only, so they mix the mechanism with the readout and are not the
+  within-checkpoint gains the per-mechanism notebooks report.
 
 `notebooks/model_analysis/` holds one notebook per model family for finished,
 selected-checkpoint analysis:
@@ -245,6 +263,10 @@ above:
 - `notebooks/utils/hcast_analysis_utils.py`
 - `notebooks/utils/model_comparison_utils.py`
 - `notebooks/utils/multiseed_utils.py`
+- `notebooks/utils/posthoc_inference_utils.py` — run discovery per training
+  mechanism, the evaluator sweep, the long-form result loader, the paired and
+  cross-mechanism gain tables, and every figure used by
+  `notebooks/inference_analysis/`.
 
 Current-run trade-off analyses live under `notebooks/tradeoff_analysis/`, one
 notebook per model family:

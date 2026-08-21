@@ -142,8 +142,11 @@ weight effect alone is worth roughly 1-2 pp of fine accuracy.
 (`models/ht_capsnet/losses.py:207-227`), computed on capsule norms.
 
 **Required config.** No loss-mode coercion is enforced, but the launcher
-`scripts/capsnet/run_ht_capsnet_lex.sh:153` sets `model.loss.weight_mode=none`
-deliberately.
+`scripts/capsnet/run_ht_capsnet_lex.sh` deliberately sets
+`model.loss.weight_mode=none` and reduces the training budget from the native
+baseline's 200 epochs to 100 epochs because the lexicographic update is
+substantially more expensive. Consequently, comparisons with the native
+baseline are neither level-weight matched nor training-budget matched.
 
 **Quirk — level weights are dropped, and `dynamic` is misleading.** As with
 H-CAST, `total` is the weighted sum while `aux["level_losses"]` holds the

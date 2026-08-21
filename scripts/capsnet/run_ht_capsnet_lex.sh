@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Runs native HT-CapsNet lexicographic training from the paper-baseline configs.
-# Defaults: all datasets, start@0, coarse-first, and unit
-# per-level margin-loss weights (`model.loss.weight_mode=none`).
+# Defaults: all datasets, 100 epochs, start@0, coarse-first, and unit
+# per-level margin-loss weights (`model.loss.weight_mode=none`). The native
+# baseline configs remain at their paper-aligned 200-epoch budget.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -123,6 +124,7 @@ run_output_dir() {
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
+printf 'HT-CapsNet lex training epochs: 100\n'
 printf 'HT-CapsNet level weights: unit (weight_mode=none)\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
@@ -133,6 +135,7 @@ for dataset in "${DATASETS[@]}"; do
   config="$(config_for_dataset "$dataset")"
   run_seeded_train "$config" "$(run_output_dir "$dataset")" \
     "model.loss.weight_mode=none" \
+    "train.epochs=100" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
     "train.gradient_blocks=[p123,p23,p3]" \

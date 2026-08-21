@@ -1006,6 +1006,13 @@ large effect, and whether the \emph{ranking of methods} is weight-dependent. The
 second is substantive --- a method that wins only at one weight setting has not
 been shown to win.
 
+\paragraph{Training budget.} The native HT-CapsNet baseline follows its
+paper-aligned 200-epoch schedule. Explicit lexicographic training is materially
+more expensive because it evaluates and combines the three level gradients, so
+the HT-CapsNet lexicographic arm is limited to 100 epochs. Its comparison with
+the native baseline is therefore not compute- or epoch-matched: a difference in
+final performance cannot be attributed to the gradient intervention alone.
+
 \paragraph{Backbone and pretraining.} A from-scratch, CIFAR-native wide residual
 backbone and an ImageNet-pretrained ResNet-50 bound every other conclusion. This
 axis is not a contribution; it exists to establish whether the frame, weighting
