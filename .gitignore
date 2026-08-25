@@ -9,12 +9,13 @@ __pycache__/
 # Aggiunte
 outputs/**
 data/**
-docs/figures/**
+docs/images/**
 .VSCodeCounter/
 .codex
 .vscode/
 .agents/
 .tmp_hiercos_upstream/**
+.tmp_htcapsnet_upstream/**
 .claude/
 AGENTS.md
 

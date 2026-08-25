@@ -3,8 +3,10 @@ set -euo pipefail
 
 # Runs native HT-CapsNet lexicographic training from the paper-baseline configs.
 # Defaults: all datasets, 100 epochs, start@0, coarse-first, and unit
-# per-level margin-loss weights (`model.loss.weight_mode=none`). The native
-# baseline configs remain at their paper-aligned 200-epoch budget.
+# per-level margin-loss weights (`model.loss.weight_mode=none`). The baseline
+# configs now use the same 100-epoch budget, so the `train.epochs=100` override
+# below is redundant and is kept only as an explicit guard; baseline-versus-lex
+# is therefore epoch-matched, though still not level-weight matched.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

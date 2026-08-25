@@ -1,0 +1,911 @@
+\chapter{Non-Standard Analysis}
+\label{ch:nsa}
+
+Hierarchical classification, as used throughout this thesis, requires a learning
+objective that respects a strict priority among per-level losses: a mistake on a
+coarse label must never be offset by an improvement on a fine one. Expressing that
+requirement inside a differentiable model turns out to be impossible over the real
+numbers, and possible --- by an elementary formula --- as soon as the coefficients
+of the objective are allowed to be infinitesimal. This chapter develops the
+mathematical language in which that statement can be made precise.
+
+The chapter is organised as follows. Section~\ref{sec:nsa-origins} recalls where
+infinitesimals come from, why the nineteenth century eliminated them, and how
+Robinson restored them to rigorous standing. Section~\ref{sec:nsa-motivation} shows,
+with a short self-contained proof, that no real-valued loss can encode a
+lexicographic priority: the obstruction is a fact about the real numbers, not a
+matter of tuning weights. Section~\ref{sec:alpha} introduces the field used here, the
+Euclidean numbers of Alpha Theory, with the two results needed to reason inside it
+safely --- the transfer principle and the standard part.
+Section~\ref{sec:lexico} then turns a lexicographic problem with any number of
+objectives into a single non-standard scalar program.
+
+Section~\ref{sec:nsa-bridge} is where that machinery is spent. It differentiates the
+program and shows that neither the non-standard gradient nor its standard part can
+train a real network: the first leaves the real parameter space, the second keeps
+only the highest-priority level. What survives is a real update direction obtained by
+projection, and that direction is the starting point of Chapter~\ref{ch:methods},
+which builds the operators, states their guarantees, and works out the adaptation
+each model family requires.
+
+% =====================================================================
+\section{Origins and development}
+\label{sec:nsa-origins}
+% =====================================================================
+
+Non-standard analysis is not a recent invention answering a recent question. It is
+the rigorous settlement of a dispute about the foundations of the calculus that
+remained open for roughly three centuries. Since the construction used in this
+thesis is an axiomatic shortcut through that history, it is worth recalling what the
+shortcut avoids.
+
+\subsection{Infinitesimals before rigour}
+
+The differential calculus of Leibniz and Newton was formulated in terms of
+\emph{infinitesimal} quantities: magnitudes greater than zero yet smaller than every
+positive real number. A derivative was a ratio of infinitesimal increments, an
+integral a sum of infinitesimal contributions. The technique was extraordinarily
+productive, and the physics and analysis of the eighteenth century were built with
+it.
+
+Its logical status, however, was contested from the outset. An infinitesimal was
+treated as non-zero when it appeared in a denominator and as zero when it was
+discarded at the end of a computation, and no account was given of how the same
+object could do both. The objection was pressed most famously by Berkeley, who
+described such quantities as ``ghosts of departed quantities''. No answer was
+available within the mathematics of the period, because the real number system
+itself had not yet been characterised.
+
+\subsection{The nineteenth-century settlement}
+
+The nineteenth century resolved the difficulty by removing its subject. In the work
+of Cauchy and, decisively, of Weierstrass, the infinitesimal was replaced by the
+$\varepsilon$--$\delta$ formulation of limits: every statement previously made about
+infinitely small quantities was rewritten as a statement about arbitrarily small but
+strictly positive real quantities, quantified appropriately. The resulting analysis
+was rigorous, and the price --- the loss of the infinitesimal as an object one could
+name and compute with --- was regarded as no price at all.
+
+The obstruction of Section~\ref{sec:nsa-motivation} is a consequence of that
+settlement. It is not an accident of notation: once the number system is fixed to be
+$\mathbb{R}$, certain orderings simply cannot be represented, as
+Proposition~\ref{prop:debreu} shows.
+
+\subsection{Robinson and the rehabilitation of the infinitesimal}
+
+The situation changed in 1961, when Abraham Robinson showed that infinitesimals
+could be given a fully rigorous foundation after all, using tools from model theory
+that had not existed in Berkeley's time or in Weierstrass's. The construction was
+developed in his 1966 monograph \emph{Non-standard
+Analysis}~\cite{robinson1996nonstandard}, which gives the field its name.
+
+Robinson's central device is what is now called the \emph{transfer principle}
+(Section~\ref{sec:transfer}): a systematic licence stating that every elementary
+property true of the real numbers remains true of their non-standard extension. It
+is this principle that makes non-standard analysis usable rather than merely
+consistent, since it allows the classical results of calculus to be reused verbatim
+in the extended setting instead of being reproved.
+
+The cost of Robinson's approach is the machinery it requires. Constructing the
+hyperreal field demands ultrafilters and a background in model theory, which is a
+substantial investment for a reader whose interest is computational rather than
+foundational. This is the motivation for the alternative axiomatic presentations
+discussed in Section~\ref{sec:alpha}.
+
+\subsection{A family of non-Archimedean systems}
+
+Robinson's hyperreals are not the only number system containing infinitesimals, and
+the idea in fact predates him. Levi-Civita had already constructed a non-Archimedean
+ordered field in 1892~\cite{levicivita1892infiniti}, obtained by adjoining to the
+reals formal power series in an infinitesimal indeterminate; the field that bears his
+name remains one of the standard examples, and the representation of its elements
+anticipates the canonical form of Section~\ref{sec:euclidean-structure}. Much later,
+Conway's theory of surreal numbers~\cite{conway2000numbers} produced a
+proper class containing simultaneously the reals, the ordinals, and a vast supply of
+infinite and infinitesimal magnitudes.
+
+A separate line of work, pursued by Sergeyev, approaches numerical infinities and
+infinitesimals through the \emph{grossone} methodology, with an explicit emphasis on
+computation~\cite{sergeyev2017numerical}. It pursues goals close to those of the
+present chapter by a different foundational route.
+
+The system adopted here is \emph{Alpha
+Theory}~\cite{benci2019measure,benci2022nonstandard}, chosen for two reasons that
+matter for a thesis of this kind. Its presentation is elementary and self-contained,
+requiring no model theory; and its numbers admit a finite-length binary encoding
+suitable for a computer~\cite{benci2020algorithmic}, which keeps the construction
+compatible with a numerical implementation even though, as
+Remark~\ref{rem:algorithmic} records, this thesis never needs to exercise that
+capability.
+
+% =====================================================================
+\section{Why non-standard analysis is needed here}
+\label{sec:nsa-motivation}
+% =====================================================================
+
+Hierarchical classification (HC) is not a single learning task but a family of
+learning tasks bound together by a priority relation: a mistake at the coarse level
+of the taxonomy is qualitatively more damaging than a mistake at a fine level, because
+the coarse decision constrains every decision below it. The natural formal counterpart
+of ``qualitatively more damaging'' is the \emph{lexicographic} order, in which no
+amount of improvement on a lower-priority objective can compensate a deterioration on
+a higher-priority one.
+
+\subsection{Lexicographic multi-objective optimisation}
+
+The lexicographic order is formalised as follows.
+
+\begin{definition}[Lexicographic multi-objective optimisation problem]
+\label{def:lmop}
+Let $f_1,\dots,f_n : \Omega \to \mathbb{R}$ be objective functions endowed with a
+strict priority ordering induced by the natural order of their indices. The
+\emph{lexicographic multi-objective optimisation problem} (LMOP) is the sequence of
+programs
+\[
+  \min_{x \in \Omega} f_1(x),
+  \qquad
+  \min_{x} f_i(x) \ \ \text{s.t.}\ \ f_j(x) = \bar{f}_j \ \ \forall j = 1,\dots,i-1,\ x \in \Omega,
+\]
+where $\bar{f}_j$ is the optimal value attained by $f_j$ in the preceding
+programs~\cite{fiaschi2024informed}.
+\end{definition}
+
+The definition describes a cascade rather than a single program: objective $i$ is
+minimised only over the set on which objectives $1,\dots,i-1$ are already optimal.
+Nothing obtainable at level $i$ can therefore be traded against anything at a level
+above it.
+
+\subsection{Why a real scalarisation cannot work}
+\label{sec:lexico-real}
+
+The standard machine-learning toolbox handles multiple objectives by
+\emph{scalarisation}: the per-level losses are combined into a single real number
+through a convex combination with weights $w_1,\dots,w_n \in \mathbb{R}_{>0}$,
+possibly time-varying, as done for instance by branch convolutional neural
+networks~\cite{zhu2017bcnn}. This device cannot, in principle, encode a lexicographic
+priority --- and the obstruction holds for \emph{every} choice of positive real
+weights, not just poorly-tuned ones. Denote by $\le_{\mathrm{lex}}$ the lexicographic
+order on $\mathbb{R}^{n}$. The following classical result is due to
+Debreu~\cite{debreu1954representation}; it is stated here for $n=2$, which suffices,
+and shows that the obstruction is intrinsic.
+
+\begin{proposition}[Non-representability of the lexicographic order in $\mathbb{R}$]
+\label{prop:debreu}
+There exists no function $u : \mathbb{R}^{2} \to \mathbb{R}$ such that
+$(a,b) <_{\mathrm{lex}} (a',b') \iff u(a,b) < u(a',b')$.
+\end{proposition}
+
+\begin{proof}
+Suppose such a $u$ exists. For every $a \in \mathbb{R}$ we have
+$(a,0) <_{\mathrm{lex}} (a,1)$, hence $u(a,0) < u(a,1)$; by density of $\mathbb{Q}$ in
+$\mathbb{R}$ choose $q(a) \in \mathbb{Q}$ with $u(a,0) < q(a) < u(a,1)$. Let $a < a'$.
+Then $(a,1) <_{\mathrm{lex}} (a',0)$, so $u(a,1) < u(a',0)$ and therefore
+\[
+  q(a) < u(a,1) < u(a',0) < q(a').
+\]
+Thus $a \mapsto q(a)$ is strictly increasing, hence injective, and yields an injection
+$\mathbb{R} \hookrightarrow \mathbb{Q}$. This contradicts $|\mathbb{R}| > |\mathbb{Q}|$.
+\end{proof}
+
+The obstruction is one of cardinality, not of smoothness or continuity: no
+requirement was placed on $u$ beyond being a function into $\mathbb{R}$. Enlarging
+the model class --- a deeper network, a different parameterisation, a schedule on the
+weights --- therefore cannot circumvent it.
+
+\begin{corollary}[Positive real weights always allow compensation]
+\label{cor:compensation}
+Let $w_1, w_2 \in \mathbb{R}_{>0}$ and $u(a,b) = w_1 a + w_2 b$. Then for every pair
+with $\Delta_1 := a' - a > 0$ there exist values of $\Delta_2 := b' - b$, namely all
+$\Delta_2 < -(w_1/w_2)\Delta_1$, for which $u(a',b') < u(a,b)$ even though
+$(a,b) <_{\mathrm{lex}} (a',b')$.
+\end{corollary}
+
+\begin{proof}
+Immediate: $u(a',b') - u(a,b) = w_1\Delta_1 + w_2\Delta_2 < 0$ precisely when
+$\Delta_2 < -(w_1/w_2)\Delta_1$, and $w_2 > 0$ makes this set non-empty.
+\end{proof}
+
+This is the formal statement of a phenomenon observed empirically in hierarchical
+classifiers trained with weighted losses: a sufficiently large gain on a fine-grained
+objective can, and does, buy a loss on a coarse-grained one. Fiaschi and
+Cococcioni~\cite{fiaschi2024informed} document exactly this behaviour for the
+time-varying scalarisation of B-CNNs~\cite{zhu2017bcnn}, where the accuracy on the
+highest-priority level degrades at the epochs in which the weights are shifted.
+Setting $w_2=0$ removes the compensation but also removes the second objective from
+the optimisation altogether, so it is not a solution.
+
+\subsection{Why infinitesimal weights do work}
+\label{sec:lexico-nonstd}
+
+Proposition~\ref{prop:debreu} rules out every \emph{real} coefficient pair. It does
+not rule out coefficients drawn from a larger field, and
+Section~\ref{sec:nsa-origins} has already established that such fields exist. We
+anticipate two pieces of notation from Section~\ref{sec:alpha}:
+$\mathbb{E} \supseteq \mathbb{R}$ denotes the ordered field constructed there, and
+$\eta \in \mathbb{E}$ a fixed positive \emph{infinitesimal} --- a number smaller than
+every $1/n$, $n \in \mathbb{N}$ (Definition~\ref{def:magnitudes}). Only this defining
+property of $\eta$ is used below.
+
+\begin{proposition}[Lexicographic representability in $\mathbb{E}$]
+\label{prop:e-representation}
+Let $U : \mathbb{R}^{2} \to \mathbb{E}$ be defined by $U(a,b) = a + b\eta$. Then
+\[
+  (a,b) <_{\mathrm{lex}} (a',b') \iff U(a,b) < U(a',b').
+\]
+\end{proposition}
+
+\begin{proof}
+Write $\Delta_1 = a' - a$ and $\Delta_2 = b' - b$, so that
+$U(a',b') - U(a,b) = \Delta_1 + \Delta_2\eta$.
+
+\emph{Case $\Delta_1 > 0$.} The quantity $\Delta_2 \eta$ is infinitesimal (trivially
+if $\Delta_2=0$; otherwise because $\eta$ is). Since $\Delta_1$ is a positive real, the
+Archimedean property of $\mathbb{R}$ gives $m \in \mathbb{N}$ with $1/m < \Delta_1$;
+as $|\Delta_2\eta|$ is smaller than $1/m$ in particular, $|\Delta_2\eta| < \Delta_1$
+and $\Delta_1 + \Delta_2\eta > 0$.
+
+\emph{Case $\Delta_1 < 0$.} Symmetric, giving $\Delta_1 + \Delta_2\eta < 0$.
+
+\emph{Case $\Delta_1 = 0$.} Then $U(a',b') - U(a,b) = \Delta_2\eta$, positive iff
+$\Delta_2 > 0$, since $\eta > 0$.
+
+The three cases reproduce exactly the definition of $<_{\mathrm{lex}}$.
+\end{proof}
+
+Propositions~\ref{prop:debreu} and~\ref{prop:e-representation} together are the
+precise sense in which infinitesimals are not a convenience but a necessity: the
+lexicographic priority \emph{cannot} be encoded by any real-valued aggregate, and
+\emph{can} be encoded, faithfully and by an elementary formula, as soon as the
+aggregate is allowed to live in a field containing infinitesimals. Making this
+precise --- what $\mathbb{E}$ and $\eta$ actually are, and which calculus results
+survive the move from $\mathbb{R}$ to $\mathbb{E}$ --- is the subject of the next
+section; Section~\ref{sec:lexico} then generalises
+Proposition~\ref{prop:e-representation} from two to an arbitrary number $n$ of
+objectives.
+
+% =====================================================================
+\section{Non-Archimedean fields and Alpha Theory}
+\label{sec:alpha}
+% =====================================================================
+
+\begin{axiom}[Axiom of Archimedes]
+\label{ax:archimedes}
+Let $F$ be a totally ordered field. Then
+$\forall\, x,y \in F,\ 0 < x < y,\ \exists\, n \in \mathbb{N} : y < nx$.
+\end{axiom}
+
+The axiom states that no element of $F$ is so large --- nor any positive element so
+small --- that it cannot be reached by repeatedly adding another one to itself. It is
+called \emph{Archimedean} after Otto Stolz, since it appears as Axiom~V of
+Archimedes' \emph{On the Sphere and Cylinder}~\cite{benci2022nonstandard}. A totally
+ordered field that does not satisfy it is called \emph{non-Archimedean}.
+
+\begin{remark}[The real line is not an option]
+\label{rem:R-archimedean}
+$\mathbb{R}$ is Archimedean; more strongly, it is, up to order-isomorphism, the
+unique Dedekind-complete totally ordered field, and every Dedekind-complete totally
+ordered field is Archimedean. Infinite and
+infinitesimal quantities therefore cannot be added to $\mathbb{R}$ without giving up
+completeness: one must move to a strictly larger, necessarily incomplete, ordered
+field --- e.g.\ the Levi-Civita field~\cite{levicivita1892infiniti}, the hyperreal
+numbers of Robinson~\cite{robinson1996nonstandard}, or the surreal numbers of
+Conway~\cite{conway2000numbers}.
+\end{remark}
+
+\subsection{The field of Euclidean numbers}
+
+Alpha Theory introduces the field it needs by postulating it.
+
+\begin{axiom}
+\label{ax:field}
+There exists an ordered field $\mathbb{E} \supseteq \mathbb{R}$, whose elements are
+called \emph{$\alpha$-Euclidean numbers}.
+\end{axiom}
+
+Since $\mathbb{E}$ is a field, its elements obey the ordinary rules of algebra
+(commutativity, associativity, distributivity, existence of inverses); non-standard
+expressions can therefore be simplified exactly as real ones.
+
+\begin{definition}[Infinite, finite, infinitesimal and appreciable numbers]
+\label{def:magnitudes}
+Let $\xi \in \mathbb{E}$. Then
+\begin{align*}
+  \xi \text{ is \emph{infinite}}      &\iff \forall\, n \in \mathbb{N},\ |\xi| > n, \\
+  \xi \text{ is \emph{finite}}        &\iff \exists\, n \in \mathbb{N},\ |\xi| < n, \\
+  \xi \text{ is \emph{infinitesimal}} &\iff \forall\, n \in \mathbb{N},\ |\xi| < \tfrac{1}{n}, \\
+  \xi \text{ is \emph{appreciable}}   &\iff \exists\, n \in \mathbb{N},\ \tfrac{1}{n} < |\xi| < n.
+\end{align*}
+Write $\mathbb{E}_{\mathrm{fin}} \subset \mathbb{E}$ for the set of finite elements.
+\end{definition}
+
+These are not four disjoint classes. Infinite and finite are complementary, every
+infinitesimal is finite, and the appreciable numbers are exactly the finite
+non-infinitesimal ones. So $0$ is infinitesimal and every non-zero real is
+appreciable --- but not conversely: $1+\eta$ is appreciable, hence finite, and is not
+real. The finite numbers are therefore a strictly larger set than $\mathbb{R}$. What
+does hold is that each of them sits infinitely close to exactly one real,
+\begin{equation}
+  \label{eq:finite-decomposition}
+  \xi \in \mathbb{E}_{\mathrm{fin}}
+  \quad\Longrightarrow\quad
+  \exists!\, r \in \mathbb{R} \ \ \text{and} \ \ \exists\, \zeta \ \text{infinitesimal}
+  \ : \ \xi = r + \zeta ,
+\end{equation}
+giving the strict inclusions
+$\mathbb{R} \subsetneq \mathbb{E}_{\mathrm{fin}} \subsetneq \mathbb{E}$. The map
+$\xi \mapsto r$ is the standard part of Section~\ref{sec:standard-part}: it is well
+defined because $r$ is unique, and it does real work --- rather than acting as the
+identity --- precisely because $\mathbb{E}_{\mathrm{fin}}$ is bigger than
+$\mathbb{R}$.
+
+Alpha Theory postulates one specific infinite number, $\alpha$, via the notion of
+\emph{numerosity}, a refinement of cardinality sensitive to strict inclusion.
+
+\begin{axiom}
+\label{ax:num}
+There exists a function $\mathrm{num}$, defined on the countable sets of a suitable
+superstructure over $\mathbb{N}$, taking values in $\mathbb{E}$, such that
+$\mathrm{num}(A) = |A|$ for $A$ finite; $\mathrm{num}(A) < \mathrm{num}(B)$ whenever
+$A \subset B$; $\mathrm{num}$ is additive and multiplicative with respect to
+$\cup$ and $\times$; and $\alpha := \mathrm{num}(\mathbb{N})$.
+\end{axiom}
+
+The second property is what distinguishes numerosity from cardinality: a proper
+subset is strictly less numerous than its superset, even when both are infinite.
+Setting $\eta := \alpha^{-1}$, the following hold in Alpha
+Theory~\cite{benci2022nonstandard}:
+\[
+  0 < \eta = \alpha^{-1} < \alpha^{0} = 1 < \alpha < \alpha+1,
+  \qquad
+  \alpha \cdot (\alpha + 2) = \alpha^{2} + 2\alpha.
+\]
+By Definition~\ref{def:magnitudes}, $\alpha$ is infinite and $\eta$ is
+infinitesimal --- the object anticipated in Proposition~\ref{prop:e-representation}.
+The second identity is worth pausing on: $\alpha$ obeys the ordinary rules of algebra.
+Nothing collapses, as it would in cardinal arithmetic, where
+$|\mathbb{N}|+1 = |\mathbb{N}|$, or in ordinal arithmetic, where
+$1+\omega = \omega \ne \omega+1$. These two symbols, $\alpha$ and $\eta$, are used
+with this meaning throughout the thesis.
+
+\begin{remark}[What the axioms leave open]
+Axioms~\ref{ax:field}--\ref{ax:num} do not pin down every property one might
+attribute to $\alpha$ --- whether it is even or odd, for instance, or the value of
+$\sin(\alpha)$, is independent of them, and further axioms are needed to settle
+questions of this kind~\cite{benci2019measure,benci2022nonstandard}. None of what
+follows in this thesis depends on resolving them.
+\end{remark}
+
+\subsection{The structure of a Euclidean number}
+\label{sec:euclidean-structure}
+
+The axioms above assert that $\mathbb{E}$ exists and fix two of its elements, but
+they do not yet say what a Euclidean number \emph{looks like}. The following two
+statements supply that, and are the point at which $\mathbb{E}$ becomes an object one
+can write down and, in principle, store.
+
+\begin{definition}[Monosemium]
+\label{def:monosemium}
+Any value $\xi = r\alpha^{k} \in \mathbb{E}$, with $r,k \in \mathbb{R}$, is called a
+\emph{monosemium}~\cite{fiaschi2024informed}.
+\end{definition}
+
+A monosemium is thus a single power of $\alpha$ scaled by a real coefficient. Its
+exponent $k$ fixes its \emph{magnitude}: for $k>0$ the monosemium is infinite, for
+$k=0$ it is the real number $r$, and for $k<0$ it is infinitesimal. The infinitesimal
+$\eta = \alpha^{-1}$ used throughout this thesis is the monosemium with $r=1$ and
+$k=-1$.
+
+\begin{theorem}[Canonical form of a Euclidean number]
+\label{thm:canonical-form}
+Every $\xi \in \mathbb{E}$ can be written as a sum of monosemia,
+\begin{equation}
+  \label{eq:canonical-form}
+  \xi = \sum_{i=1}^{\infty} r_i\,\alpha^{k_i},
+  \qquad r_i \in \mathbb{R},\ k_i \in \mathbb{R},
+  \qquad k_1 > k_2 > k_3 > \cdots,
+\end{equation}
+that is, as a series of monosemia with real coefficients and strictly decreasing real
+exponents~\cite{fiaschi2024informed,benci2022nonstandard}.\footnote{The statement is
+reproduced in the form used by the sources cited, with the monosemia indexed by
+$\mathbb{N}$. In full generality $\mathbb{E}$ is a field of Hahn series over
+$\mathbb{R}$ with real exponents: the support $\{k_i\}$ of $\xi$ is required only to
+be a \emph{well-ordered} subset of $\mathbb{R}$, whose order type may exceed $\omega$,
+and \eqref{eq:canonical-form} is then a formal Hahn sum rather than a limit in a
+topology on $\mathbb{E}$. The distinction is immaterial here: every Euclidean number
+this thesis writes down has finite support, and for finitely supported elements the
+two formulations coincide.}
+\end{theorem}
+
+\begin{proof}
+See~\cite{benci2019measure,benci2022nonstandard}.
+\end{proof}
+
+Two consequences of \eqref{eq:canonical-form} matter later. First, the ordering of
+$\mathbb{E}$ is governed by the leading term: since the exponents decrease, the sign
+of a non-zero $\xi$ is the sign of $r_1$, and comparisons between Euclidean numbers
+reduce to lexicographic comparisons of their coefficient sequences. This is the
+structural reason why an $\eta$-weighted sum encodes a lexicographic order, and it is
+what Proposition~\ref{prop:e-representation} exploits in the two-objective case.
+Second, a Euclidean number that involves only finitely many monosemia is completely
+described by finitely many real pairs $(r_i,k_i)$, which is precisely the
+representation exploited by the algorithmic numbers of
+Remark~\ref{rem:algorithmic}.
+
+\begin{remark}[Machine representation]
+\label{rem:algorithmic}
+Alpha-Theoretic numbers admit a finite-length binary
+encoding --- \emph{algorithmic numbers}~\cite{benci2020algorithmic} --- with
+constant-cost arithmetic, which is what makes Alpha Theory usable for actual
+computation and not only for derivation. This thesis, however, never needs to
+instantiate one: as shown in Chapter~\ref{ch:methods}, every non-standard quantity
+introduced by the construction is eliminated analytically before any arithmetic is
+performed on hardware.
+\end{remark}
+
+\subsection{The \texorpdfstring{$\alpha$}{alpha}-limit and the transfer principle}
+\label{sec:transfer}
+
+\begin{axiom}
+\label{ax:alphalimit}
+Every sequence $\varphi : \mathbb{N} \to \mathbb{R}$ has a unique
+\emph{$\alpha$-limit}, denoted $\lim_{n \uparrow \alpha} \varphi(n)$, such that:
+(1) every $\xi \in \mathbb{E}$ is the $\alpha$-limit of some real sequence;
+(2) $\lim_{n \uparrow \alpha} n = \alpha$;
+(3) if $\varphi(n) \ge \psi(n)$ eventually, then
+$\lim_{n \uparrow \alpha} \varphi(n) \ge \lim_{n \uparrow \alpha} \psi(n)$;
+(4) the $\alpha$-limit is linear and multiplicative:
+$\lim_{n \uparrow \alpha}(\varphi(n)+\psi(n)) = \lim_{n \uparrow \alpha}\varphi(n) + \lim_{n \uparrow \alpha}\psi(n)$,
+and likewise for products.
+\end{axiom}
+
+The notation $n \uparrow \alpha$ distinguishes the $\alpha$-limit from the ordinary
+(Cauchy) limit $n \to \alpha$. The substantive content of
+Axiom~\ref{ax:alphalimit} is property (1): \emph{every} sequence admits an
+$\alpha$-limit, with no convergence hypothesis --- a model satisfying
+Axioms~\ref{ax:field}--\ref{ax:alphalimit} can be built within
+ZFC~\cite{benci2019measure,benci2022nonstandard}.
+
+The $\alpha$-limit is what allows real functions to be carried into $\mathbb{E}$.
+
+\begin{theorem}[Extension of a real function]
+\label{thm:star-extension}
+Every function $f:\mathbb{R}\to\mathbb{R}$ can be coherently and uniquely extended to
+a function $f^{*}:\mathbb{E}\to\mathbb{E}$ such that $f^{*}(x) = f(x)$ for all
+$x \in \mathbb{R}$. The extension is given by
+\begin{equation}
+  \label{eq:star-extension}
+  f^{*}\!\left(\lim_{n \uparrow \alpha} \varphi(n)\right)
+  = \lim_{n \uparrow \alpha} f\big(\varphi(n)\big),
+\end{equation}
+independently of the sequence $\varphi$ chosen to represent the
+argument~\cite{fiaschi2024informed,benci2022nonstandard}.
+\end{theorem}
+
+\begin{proof}
+See~\cite{benci2019measure,benci2022nonstandard}.
+\end{proof}
+
+The star is dropped when no ambiguity arises. With the extension in place, the
+central licence of non-standard analysis can be stated --- but the word
+\emph{elementary} has to be given a meaning first, since the principle is false
+without the restriction it names.
+
+Fix the superstructure $V(\mathbb{R}) = \bigcup_{m \ge 0} V_m$ over $\mathbb{R}$,
+where $V_0 = \mathbb{R}$ and $V_{m+1} = V_m \cup \mathcal{P}(V_m)$, so that
+$V(\mathbb{R})$ contains $\mathbb{R}$, every subset of $\mathbb{R}$, every relation
+and function on $\mathbb{R}$, and so on upwards. Let $\mathcal{L}$ be the first-order
+language with equality, the binary relation $\in$, and a constant symbol for each
+element of $V(\mathbb{R})$.
+
+\begin{definition}[Elementary formula]
+\label{def:elementary}
+A formula of $\mathcal{L}$ is \emph{elementary}, or \emph{bounded}, when every
+quantifier occurring in it is restricted to a named set, i.e.\ appears in one of the
+forms $\forall\, x \in A$ or $\exists\, x \in A$ with $A$ a constant symbol.
+\end{definition}
+
+\begin{theorem}[Transfer principle]
+\label{thm:transfer}
+Let $\sigma(x_1,\dots,x_k)$ be an elementary formula of $\mathcal{L}$ and let
+$A_1,\dots,A_k \in V(\mathbb{R})$. Then
+\begin{equation}
+  \label{eq:transfer}
+  \sigma(A_1,\dots,A_k) \iff \sigma({}^{*}A_1,\dots,{}^{*}A_k),
+\end{equation}
+where ${}^{*}A$ denotes the non-standard extension of $A$.
+\end{theorem}
+
+\begin{proof}
+See~\cite{robinson1996nonstandard} for the model-theoretic formulation
+and~\cite{benci2019measure,benci2022nonstandard} for the Alpha-Theoretic one.
+\end{proof}
+
+\begin{example}[Transferring a trigonometric identity]
+To transfer $\sin(2x)=2\cos x\sin x$ to $\mathbb{E}$: let $\xi=\lim_{n\uparrow\alpha}
+\varphi(n)$ for some real sequence $\varphi$. The identity holds pointwise for every
+real $\varphi(n)$; taking the $\alpha$-limit of both sides and using linearity
+(Axiom~\ref{ax:alphalimit}(4)) gives $\sin(2\xi)=2\cos\xi\sin\xi$. The same scheme
+transfers any identity between real functions.
+\end{example}
+
+Boundedness is what makes the principle true. Dedekind completeness quantifies over
+\emph{all} bounded subsets of $\mathbb{R}$, is therefore not elementary, and does not
+carry over to $\mathbb{E}$ --- in agreement with Remark~\ref{rem:R-archimedean}. The
+opposite case is the one that misleads.
+
+\begin{remark}[What transfer does and does not say]
+\label{rem:transfer-scope}
+The Axiom of Archimedes (Axiom~\ref{ax:archimedes}) \emph{is} elementary, since its
+quantifier over $n$ is bounded by $\mathbb{N}$, and it therefore transfers: for all
+$x,y \in \mathbb{E}$ with $0 < x < y$ there exists $n \in {}^{*}\mathbb{N}$ with
+$y < nx$. This is consistent with $\mathbb{E}$ being non-Archimedean, because the
+witness is drawn from ${}^{*}\mathbb{N}$ and may be infinite. Taking $x = \eta$ and
+$y = 1$, no $n \in \mathbb{N}$ satisfies $1 < n\eta$, whereas $n = \alpha + 1$ does,
+since $(\alpha+1)\eta = 1 + \eta > 1$. Transfer preserves the \emph{form} of a
+statement, not the standardness of the objects witnessing it; reading the transferred
+conclusion back as a statement about $\mathbb{N}$ is what must be avoided.
+\end{remark}
+
+What this thesis takes from Theorem~\ref{thm:transfer} is the licence to reuse the
+classical differentiation rules --- the ones backpropagation implements --- as valid
+statements about $\mathbb{E}$. That is what makes the gradient of
+Section~\ref{sec:nsa-bridge} legitimate, and it is all that is needed there: the
+objective built in that section is a finite $\mathbb{E}$-linear combination of
+standard real functions, so no function is ever star-extended. Full transfer is
+stated because it is the defining feature of non-standard analysis and because it
+fixes exactly what may and may not be carried across.
+
+\subsection{The standard part}
+\label{sec:standard-part}
+
+\begin{theorem}[Standard part]
+\label{thm:standard-part}
+Let $\mathbb{E}_{\mathrm{fin}}$ be the set of finite elements of $\mathbb{E}$
+(Definition~\ref{def:magnitudes}). There exists a function
+$\mathrm{st} : \mathbb{E}_{\mathrm{fin}} \to \mathbb{R}$ such
+that $x \sim y \implies \mathrm{st}(x) = \mathrm{st}(y)$ and
+$\mathrm{st}(\mathrm{st}(x)) = \mathrm{st}(x)$, where $x \sim y$ means $x-y$ is
+infinitesimal. It is the map $\xi \mapsto r$ of the decomposition
+\eqref{eq:finite-decomposition}, and it is surjective onto $\mathbb{R}$ and constant
+on each class of $\sim$.
+\end{theorem}
+
+\begin{proof}
+See~\cite{benci2019measure}.
+\end{proof}
+
+Informally, $\mathrm{st}$ maps a non-infinite non-standard number to the unique real
+number infinitely close to it --- e.g.\ $\mathrm{st}(2.1-5\eta)=2.1$ and
+$\mathrm{st}(-3)=-3$. In terms of the canonical form
+\eqref{eq:canonical-form}, $\mathrm{st}$ retains the monosemium of exponent $0$ and
+discards every infinitesimal term. It is the canonical way of extracting a real
+answer from a non-standard computation.
+
+What $\mathrm{st}$ deletes matters as much as what it keeps.
+Section~\ref{ssec:nsa-why-not} shows that applying it to the gradient of the
+non-standard objective deletes every level below the first, which is why this thesis
+recovers a real update direction by projection instead.
+
+% =====================================================================
+\section{From LMOP to a non-standard scalar program}
+\label{sec:lexico}
+% =====================================================================
+
+Proposition~\ref{prop:e-representation} handles two objectives. The general case is
+due to Fiaschi and Cococcioni~\cite{fiaschi2022nonarchimedean} and is reported
+in~\cite{fiaschi2024informed} as follows.
+
+\begin{theorem}[Non-standard scalarisation of an LMOP]
+\label{thm:lmop-scalar}
+Consider an LMOP (Definition~\ref{def:lmop}) whose priority is induced by the natural
+order. Then there exists an equivalent scalar program over the same domain, whose
+objective function is non-standard and has the form
+\begin{equation}
+  \label{eq:beta-scalarisation}
+  f(x) = \beta_1 f_1(x) + \dots + \beta_n f_n(x),
+\end{equation}
+where $\beta_1,\dots,\beta_n \in \mathbb{E}$ are such that $\beta_{i+1}/\beta_i$ is
+infinitesimal for $i = 1,\dots,n-1$.\footnote{The symbols $\beta_i$ follow the
+notation of the source and are local to this theorem; they are unrelated to the real
+exponent $\beta$ of the gradient-scaling rules in Chapter~\ref{ch:methods}.}
+\end{theorem}
+
+The canonical instantiation is $\beta_i = \eta^{\,i-1}$, giving
+\begin{equation}
+  \label{eq:eta-scalarisation}
+  f(x) = \sum_{i=1}^{n} f_i(x)\,\eta^{\,i-1},
+\end{equation}
+which recovers Proposition~\ref{prop:e-representation} exactly when $n=2$. In the
+language of Section~\ref{sec:euclidean-structure}, \eqref{eq:eta-scalarisation} is
+nothing other than the canonical form \eqref{eq:canonical-form} of a Euclidean number
+whose $i$-th coefficient is the $i$-th objective value: the objectives occupy
+successive, strictly decreasing magnitudes, and comparison of two such numbers is
+therefore the lexicographic comparison of the objective vectors.
+
+The equivalence is conditional: it holds \emph{provided the domain is standard},
+that is, provided the decision variables remain real~\cite{fiaschi2024informed}. The
+hypothesis looks innocuous and is not, as Section~\ref{sec:nsa-bridge} shows the
+moment those decision variables are network weights.
+
+The use of numerical infinities and infinitesimals in optimisation is a recent but
+active line of research: non-Archimedean formulations exist for linear
+programming~\cite{cococcioni2018lexicographic},
+mixed-integer linear programming~\cite{cococcioni2020solving}, quadratic
+programming~\cite{fiaschi2022nonarchimedean}, and non-linear/evolutionary
+optimisation~\cite{lai2021solving}; a survey of the parallel \emph{grossone}
+methodology of Sergeyev, which pursues similar goals through a different
+foundational route, is given in~\cite{sergeyev2017numerical}.
+
+% =====================================================================
+\section{Recovering a standard update direction}
+\label{sec:nsa-bridge}
+% =====================================================================
+
+Theorem~\ref{thm:lmop-scalar} delivers a single objective, differentiable in each of
+its standard components, so it is tempting to conclude that a hierarchical network
+can simply be trained on \eqref{eq:eta-scalarisation} by gradient descent. It cannot.
+Seeing exactly why is what makes the operator of Chapter~\ref{ch:methods} the
+resolution of a specific difficulty rather than an unmotivated piece of linear
+algebra.
+
+\subsection{The non-standard gradient}
+\label{ssec:nsa-gradient}
+
+Let $\theta \in \mathbb{R}^{P}$ be the parameter vector of a model exposing $n$
+differentiable level objectives
+$\ell_1,\dots,\ell_n : \mathbb{R}^{P} \to \mathbb{R}$ ordered by decreasing priority,
+and let
+\begin{equation}
+  \label{eq:ns-objective}
+  f(\theta) \;=\; \sum_{i=1}^{n} \ell_i(\theta)\,\eta^{\,i-1} \;\in\; \mathbb{E}
+\end{equation}
+be the scalarisation \eqref{eq:eta-scalarisation}. Two observations make the gradient
+of \eqref{eq:ns-objective} unproblematic to write down.
+
+First, $f$ is a \emph{finite} $\mathbb{E}$-linear combination of standard real
+functions. Differentiating it therefore requires no non-standard differential
+calculus: the coefficients $\eta^{\,i-1}$ are constants of the field, so by
+$\mathbb{E}$-linearity of the derivative,
+\begin{equation}
+  \label{eq:ns-gradient}
+  \nabla_\theta f(\theta)
+  \;=\;
+  \sum_{i=1}^{n} \eta^{\,i-1}\,\nabla_\theta \ell_i(\theta)
+  \;=\;
+  g_1 + \eta\,g_2 + \dots + \eta^{\,n-1} g_n
+  \;\in\; \mathbb{E}^{P},
+  \qquad
+  g_i := \nabla_\theta \ell_i(\theta) \in \mathbb{R}^{P}.
+\end{equation}
+Each $g_i$ is an ordinary real gradient, produced by ordinary backpropagation, and
+Theorem~\ref{thm:transfer} is what guarantees that the rules used to compute it stay
+valid when read in $\mathbb{E}$. Beyond that, the only operation performed is
+extension of scalars on $\mathbb{R}^{P}$.
+
+Second, \eqref{eq:ns-gradient} is already in canonical form, coordinate by
+coordinate: its $j$-th component is the Euclidean number
+$\sum_{i} (g_i)_j\,\alpha^{-(i-1)}$, a sum of at most $n$ monosemia with strictly
+decreasing exponents. By Theorem~\ref{thm:canonical-form}, comparing two such
+components is comparing the tuples $\big((g_1)_j,\dots,(g_n)_j\big)$
+lexicographically. The priority structure is therefore carried by the gradient
+itself, not only by the objective, which is what makes \eqref{eq:ns-gradient} the
+natural object to try to descend.
+
+\subsection{Why that gradient cannot be used directly}
+\label{ssec:nsa-why-not}
+
+\paragraph{The step leaves the standard domain.}
+Theorem~\ref{thm:lmop-scalar} holds only while the decision variables remain real, as
+Section~\ref{sec:lexico} flagged. A gradient step on \eqref{eq:ns-objective},
+\begin{equation}
+  \label{eq:ns-step}
+  \theta^{+}
+  \;=\; \theta - \mu\,\nabla_\theta f(\theta)
+  \;=\; \theta - \mu g_1 - \mu\eta\,g_2 - \dots - \mu\eta^{\,n-1} g_n ,
+\end{equation}
+violates that hypothesis after a single iteration, for any real step size $\mu>0$,
+whenever $g_2,\dots,g_n$ are not all zero: $\theta^{+} \in \mathbb{E}^{P}$ and
+$\theta^{+} \notin \mathbb{R}^{P}$. The next forward pass would then have to be
+evaluated at a non-standard argument, the level losses would themselves become
+$\mathbb{E}$-valued, and the $\eta$-degrees would compound from iteration to
+iteration. Nothing in this is inconsistent --- Remark~\ref{rem:algorithmic} records
+that such numbers are machine-representable, and \eqref{eq:ns-step} is exactly the
+iteration a non-Archimedean solver would run --- but the object being trained would
+no longer be the real-weighted network whose parameters, gradients and predictions
+this thesis reports.
+
+\paragraph{The standard part discards the hierarchy.}
+The canonical way back from $\mathbb{E}$ to $\mathbb{R}$ is the standard part
+(Theorem~\ref{thm:standard-part}). Applied componentwise to \eqref{eq:ns-gradient},
+\begin{equation}
+  \label{eq:st-collapse}
+  \mathrm{st}\big(\nabla_\theta f(\theta)\big)
+  \;=\;
+  \mathrm{st}\!\left(g_1 + \sum_{i \ge 2}\eta^{\,i-1} g_i\right)
+  \;=\;
+  g_1 ,
+\end{equation}
+because every term with $i \ge 2$ is infinitesimal and $\mathrm{st}$ retains only the
+monosemium of exponent $0$. The resulting update is the gradient of the
+highest-priority objective alone. This is not a lossy approximation of the
+lexicographic problem: it is the sequence of programs of Definition~\ref{def:lmop}
+truncated after the first, and it discards every objective the hierarchy was
+introduced to express. The standard part is behaving exactly as it should; the
+trouble is that the lower levels are, by construction, below the resolution of
+anything it can return.
+
+\paragraph{What is needed instead.}
+Equations \eqref{eq:ns-gradient} and \eqref{eq:st-collapse} bracket the situation.
+The non-standard gradient carries the full priority structure but cannot be applied
+to a real parameter vector; its standard part can be applied but carries only the
+first level. What is needed is a map
+\begin{equation}
+  \label{eq:assembler}
+  \mathcal{A} : (\mathbb{R}^{P})^{n} \longrightarrow \mathbb{R}^{P},
+  \qquad (g_1,\dots,g_n) \longmapsto d ,
+\end{equation}
+returning a \emph{real} direction $d$ in which the lower-priority objectives still
+act, while the effect they may have on the higher-priority ones is controlled. Any
+such map is necessarily a weakening. By Proposition~\ref{prop:debreu} no real-valued
+aggregate encodes the lexicographic order, and $d$ is a real vector; so the question
+is not whether the encoding is exact --- it cannot be --- but which property of the
+lexicographic problem survives it.
+
+\subsection{The property retained: first-order non-interference}
+\label{ssec:nsa-what-retained}
+
+The device used in this thesis keeps every lower-priority gradient but removes from
+it the component acting along the directions already claimed by the higher-priority
+ones. For two objectives,
+\begin{equation}
+  \label{eq:nsa-projection-sketch}
+  d \;=\; g_1 + \Pi(g_2;g_1),
+  \qquad
+  \Pi(g_2;g_1) \;:=\; g_2 - \frac{\langle g_2,g_1\rangle}{\langle g_1,g_1\rangle}\,g_1 ,
+\end{equation}
+which is real, so $\theta - \mu d$ remains in $\mathbb{R}^{P}$ and the standard-domain
+hypothesis of Theorem~\ref{thm:lmop-scalar} is preserved.\footnote{The quotient is
+undefined when $g_1=0$; Chapter~\ref{ch:methods} skips the projection in that case
+and in the numerically ill-conditioned neighbourhood of it.} What this buys follows
+from $\langle g_1, \Pi(g_2;g_1)\rangle = 0$:
+\begin{equation}
+  \label{eq:nsa-noninterference}
+  \langle g_1, d \rangle \;=\; \lVert g_1 \rVert^{2} \;\ge\; 0
+  \qquad \text{for every } g_2 ,
+\end{equation}
+and a first-order expansion of the dominant objective along the step
+$\theta^{+} = \theta - \mu d$ gives
+$\ell_1(\theta^{+}) = \ell_1(\theta) - \mu\lVert g_1\rVert^{2} + o(\mu)$. To first
+order the subordinate objective cannot degrade the dominant one, whatever it is and
+however large it is --- which is the operational content of the lexicographic
+priority, and exactly what Corollary~\ref{cor:compensation} showed no positive real
+weighting can deliver. Unlike \eqref{eq:st-collapse}, the second objective survives:
+it acts, undiminished, on the orthogonal complement of the first.
+
+Three qualifications bound every claim made later in this thesis.
+
+\begin{enumerate}
+  \item The guarantee is \emph{first-order and local}. It concerns the directional
+        derivative at the current $\theta$, hence the change predicted over an
+        infinitesimally small step. It says nothing about the loss observed after a
+        step of realistic size, nor about the trajectory.
+  \item It is \emph{not} the nested optimisation of Definition~\ref{def:lmop}. The
+        LMOP restricts objective $i$ to the argmin set of objectives $1,\dots,i-1$;
+        \eqref{eq:nsa-projection-sketch} restricts it to the orthogonal complement of
+        the higher-priority \emph{gradients} at a single point. The second is the
+        first-order shadow of the first, and no more than that.
+  \item With three or more objectives the composition of successive projections does
+        \emph{not} preserve \eqref{eq:nsa-noninterference} in general.
+        Chapter~\ref{ch:methods} exhibits a counterexample and identifies the
+        parameter blocks on which the guarantee does hold.
+\end{enumerate}
+
+The construction leaves a gap, then, between the exact formulation of
+Section~\ref{sec:lexico} and the real operator sketched here. That gap is what the
+experiments of Chapter~\ref{ch:experiments} probe: whether enforcing the first-order
+surrogate produces, in practice, the hierarchical behaviour the exact formulation
+prescribes.
+
+Note finally that $\eta$ has disappeared. It appears in \eqref{eq:ns-objective} and
+\eqref{eq:ns-gradient}, where it establishes what a real substitute has to preserve,
+and it occurs nowhere in the resulting update \eqref{eq:nsa-projection-sketch} --- nor
+in any line of the training loop. This is the sense of
+Remark~\ref{rem:algorithmic}: every non-standard quantity introduced by this chapter
+is eliminated analytically before any arithmetic reaches hardware.
+
+% =====================================================================
+\section{Summary and notation}
+\label{sec:nsa-summary}
+% =====================================================================
+
+\begin{itemize}
+  \item Infinitesimals were the original language of the calculus, were eliminated by
+        the $\varepsilon$--$\delta$ rigour of the nineteenth century, and were
+        restored to rigorous standing by Robinson in the
+        1960s~\cite{robinson1996nonstandard}; Alpha Theory provides an elementary
+        axiomatic route to the same objects
+        (Section~\ref{sec:nsa-origins}).
+  \item No real-valued aggregate can encode a lexicographic priority
+        (Proposition~\ref{prop:debreu}); an $\eta$-weighted sum does, faithfully
+        (Proposition~\ref{prop:e-representation}), and the general $n$-objective
+        statement is Theorem~\ref{thm:lmop-scalar}.
+  \item A totally ordered field violating the Axiom of Archimedes contains infinite
+        and infinitesimal elements; $\mathbb{R}$ cannot be such a field
+        (Remark~\ref{rem:R-archimedean}).
+  \item Alpha Theory postulates such a field $\mathbb{E} \supseteq \mathbb{R}$, an
+        infinite number $\alpha$, and an $\alpha$-limit operator
+        (Axioms~\ref{ax:field}--\ref{ax:alphalimit}). Every element of $\mathbb{E}$
+        is a series of monosemia with strictly decreasing exponents
+        (Theorem~\ref{thm:canonical-form}), which is what makes the ordering of
+        $\mathbb{E}$ lexicographic in the coefficients.
+  \item The finite elements form a set $\mathbb{E}_{\mathrm{fin}}$ strictly between
+        $\mathbb{R}$ and $\mathbb{E}$, and every finite $\xi$ splits uniquely as
+        $r+\zeta$ with $r$ real and $\zeta$ infinitesimal
+        (Definition~\ref{def:magnitudes}, \eqref{eq:finite-decomposition}).
+  \item Real functions extend to $\mathbb{E}$ (Theorem~\ref{thm:star-extension}), and
+        properties whose quantifiers are all bounded by named sets transfer across
+        the extension (Definition~\ref{def:elementary},
+        Theorem~\ref{thm:transfer}). Transfer supplies the witnesses from the extended
+        sets, which is why $\mathbb{E}$ can satisfy the transferred Archimedean
+        statement and still be non-Archimedean (Remark~\ref{rem:transfer-scope}).
+  \item The standard part returns the unique real number infinitely close to a finite
+        element (Theorem~\ref{thm:standard-part}).
+  \item Differentiating the non-standard objective gives
+        $\nabla_\theta f = \sum_i \eta^{\,i-1} g_i$ with each $g_i$ an ordinary real
+        gradient \eqref{eq:ns-gradient}. It cannot be descended directly: a step
+        leaves $\mathbb{R}^{P}$ and voids the standard-domain hypothesis of
+        Theorem~\ref{thm:lmop-scalar} \eqref{eq:ns-step}, while its standard part
+        collapses to $g_1$ and deletes every level below the first
+        \eqref{eq:st-collapse}.
+  \item The device this thesis uses instead is a projection assembling a real
+        direction $d$ in which lower-priority gradients act only orthogonally to
+        higher-priority ones \eqref{eq:nsa-projection-sketch}. It retains
+        first-order non-interference, $\langle g_1,d\rangle = \lVert g_1\rVert^{2}$
+        \eqref{eq:nsa-noninterference}, and nothing stronger; it is not the nested
+        optimisation of Definition~\ref{def:lmop}
+        (Section~\ref{ssec:nsa-what-retained}).
+  \item Alpha-Theoretic numbers are, in principle, machine-representable
+        (Remark~\ref{rem:algorithmic}), but the construction of this thesis never
+        needs to represent one: $\eta$ is eliminated analytically before any
+        arithmetic reaches hardware.
+\end{itemize}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Notation used in this chapter and in the rest of the thesis.}
+  \label{tab:nsa-notation}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Symbol} & \textbf{Meaning} \\
+    \midrule
+    $\mathbb{E}$ & field of $\alpha$-Euclidean (non-standard) numbers, $\mathbb{E} \supseteq \mathbb{R}$ \\
+    $\mathbb{E}_{\mathrm{fin}}$ & finite (i.e.\ non-infinite) elements of $\mathbb{E}$ \\
+    $\alpha$ & the infinite number $\mathrm{num}(\mathbb{N})$ \\
+    $\eta$ & the infinitesimal $\alpha^{-1}$ \\
+    $\zeta$ & a generic infinitesimal, as in $\xi = r + \zeta$ \\
+    $r\alpha^{k}$ & monosemium with coefficient $r$ and exponent $k$ \\
+    $\lim_{n \uparrow \alpha}$ & $\alpha$-limit \\
+    $\lim_{n \to \alpha}$ & ordinary (Cauchy) limit \\
+    $f^{*}$ & star-extension of $f : \mathbb{R} \to \mathbb{R}$ to $\mathbb{E}$ \\
+    $\mathrm{st}(\cdot)$ & standard part \\
+    $x \sim y$ & $x - y$ is infinitesimal \\
+    $\le_{\mathrm{lex}}$ & lexicographic order \\
+    \midrule
+    $\theta \in \mathbb{R}^{P}$ & parameter vector of the model \\
+    $\ell_i$ & level objective of priority $i$ (lower index, higher priority) \\
+    $g_i := \nabla_\theta \ell_i$ & real gradient of the $i$-th level objective \\
+    $d$ & assembled real update direction \\
+    $\mathcal{A}$ & assembler $(g_1,\dots,g_n) \mapsto d$ of \eqref{eq:assembler} \\
+    $\Pi(g;r)$ & $g$ with its component along $r$ removed \\
+    $\mu$ & step size of an idealised gradient step \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{remark}[Symbols reserved by this chapter]
+\label{rem:notation-scope}
+No real quantity is ever denoted by $\alpha$ or $\eta$. In particular, the step size
+of a gradient step is written $\mu$, per-level gradient scaling factors $\kappa_l$,
+and regularisation coefficients $\lambda$ (objective-level) or $\varepsilon$
+(numerical stabilisation).
+\end{remark}

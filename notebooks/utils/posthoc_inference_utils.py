@@ -830,12 +830,58 @@ def best_cells(absolute_table, metric='fpa', decoder='independent',
 # These are module-level settings on purpose: a notebook overrides them with
 # ``posthoc.THESIS_STYLE = False`` and every figure follows.
 # --------------------------------------------------------------------------
-# Width of the text block the figure is included in. Read yours from LaTeX with
-# \the\textwidth (1 pt = 1/72.27 in); 6.3 in is a4paper/12pt with default margins.
-TEXT_WIDTH_IN = 6.3
+# Width of the text block the figure is included in, read from the one place the
+# thesis geometry is written down. main.tex uses a4paper with inner=3cm,
+# outer=2.5cm and bindingoffset=0.5cm, which leaves 150 mm = 5.906 in.
+from thesis_style import TEXT_WIDTH_IN  # noqa: E402
 # True: no in-figure title or explanatory paragraph, because in a thesis both
 # belong to the LaTeX caption. False: keep them, for reading in the notebook.
 THESIS_STYLE = True
+
+# What thesis mode leaves behind is an unlabelled figure on screen: these grids
+# carry no title, and a notebook that renders five of them gives the reader
+# nothing saying which comparison, which datasets or which decoder any one of
+# them is. The title and a one-line scope note are therefore written above the
+# figure as notebook text, which labels it while it is read and never reaches
+# the exported PDF the document includes. Set to False for bare figures.
+SHOW_FIGURE_CAPTIONS = True
+
+
+def show_markdown(text):
+    """Render a line of markdown in a notebook; plain text anywhere else."""
+    try:
+        from IPython import get_ipython
+        from IPython.display import Markdown, display
+
+        shell = get_ipython()
+        if shell is not None and shell.__class__.__name__ == 'ZMQInteractiveShell':
+            display(Markdown(text))
+            return
+    except Exception:
+        pass
+    print(text)
+
+
+def _caption(title, note=None):
+    """Name the figure just above it, when the title is not on the canvas."""
+    if not (THESIS_STYLE and SHOW_FIGURE_CAPTIONS):
+        return
+    show_markdown(f'**{title}**' + (f'  \n{note}' if note else ''))
+
+
+def _scope_note(datasets, series_list, decoders=None, extra=None):
+    """One line saying what the figure covers: datasets, rows, decoders."""
+    parts = ['datasets: ' + ', '.join(DATASET_SHORT.get(d, d) for d in datasets)]
+    if series_list is not None:
+        labels = [series_label(s, short=True) for s in series_list]
+        parts.append('rows: ' + (', '.join(labels) if len(labels) <= 6
+                                 else f'{len(labels)} rows'))
+    if decoders:
+        parts.append(' and '.join(DECODER_SHORT.get(d, d) for d in decoders)
+                     + ' decoding')
+    if extra:
+        parts.append(extra)
+    return ' \u00b7 '.join(parts)
 
 # Vector output for LaTeX, with fonts embedded as TrueType rather than Type 3.
 mpl.rcParams.update({'pdf.fonttype': 42, 'ps.fonttype': 42, 'svg.fonttype': 'none'})
@@ -1176,6 +1222,9 @@ def effect_grid(gain_table, seed_table, absolute_table, metrics=('fpa', 'tice'),
         for n, p in enumerate(panels):
             draw_bar(p, bar_top + n * 0.46, bar_w, bar_x)
 
+    _caption('Gain of every inference cell against the checkpoint’s own readout',
+             _scope_note(datasets, series_list, decoders,
+                         'metrics: ' + ', '.join(METRIC_SPECS[m][1] for m in metrics)))
     if not THESIS_STYLE:
         fig.suptitle('Does any inference cell beat the checkpoint’s own readout?',
                      fontsize=11, fontweight='bold', color=INK, y=1 - 0.06 / height)
@@ -1413,6 +1462,9 @@ def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series
              'checkpoint’s own native readout',
              ha='center', va='top', fontsize=FS_NOTE, color=INK_2)
 
+    _caption('Raw test values of every inference cell',
+             _scope_note(datasets, series_list, decoders,
+                         'metrics: ' + ', '.join(METRIC_SPECS[m][1] for m in metrics)))
     if not THESIS_STYLE:
         fig.suptitle('Where the inference cells actually land',
                      fontsize=11, fontweight='bold', color=INK, y=1 - 0.06 / height)
@@ -1597,6 +1649,8 @@ def accuracy_consistency_map(absolute_table, datasets=None, series=None,
         for text in legend.get_texts():
             text.set_color(INK_2)
         fig.add_artist(legend)
+    _caption('What each inference cell trades: consistency against accuracy',
+             _scope_note(datasets, series_list, ['independent']))
     if not THESIS_STYLE:
         fig.suptitle('What each inference cell trades: consistency against accuracy',
                      fontsize=11, fontweight='bold', color=INK, y=1 - 0.04 / height)
@@ -1866,6 +1920,8 @@ def decoder_gain_figure(summary, readout, datasets=None, series=None, save_path=
                  f'collapsed baseline (< {MIN_BASELINE_FPA:g}% independent FPA), '
                  'error bar omitted: ' + '; '.join(parts),
                  ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+    _caption(f'What top-down decoding buys under the {READOUT_LABELS[readout]} readout',
+             _scope_note(datasets, series_list, extra='relative FPA change, paired per seed'))
     if not THESIS_STYLE:
         fig.suptitle(f'What top-down decoding buys under the {READOUT_LABELS[readout]} readout',
                      fontsize=11, fontweight='bold', color=INK, y=1 - 0.05 / height)
@@ -2044,6 +2100,12 @@ def best_inference_chart(absolute_table, metric='fpa', decoder='independent',
     # the caption differs in kind between a one-mechanism and a cross-mechanism
     # figure, because only the latter compares separate training runs
     multi_family = len({series_family(s) for s in series_list} - {None}) > 1
+    _caption(
+        'Best inference cell across '
+        + ('every mechanism' if multi_family else 'every model')
+        + f' ({short})',
+        _scope_note(datasets, series_list, [decoder]),
+    )
     if not THESIS_STYLE:
         scope = 'every mechanism' if multi_family else 'every model'
         fig.suptitle(f'Best inference cell across {scope} ({short})',

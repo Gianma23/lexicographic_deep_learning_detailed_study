@@ -2,8 +2,10 @@
 set -euo pipefail
 
 # Runs native HRN lexicographic training from the paper-baseline configs using
-# three taxonomy-state marginal objectives. Defaults: all datasets, start@0,
-# and coarse-first.
+# three taxonomy-state marginal objectives. Defaults: all datasets, 100 epochs,
+# start@0, and coarse-first. The baseline configs now use the same 100-epoch
+# budget, so the `train.epochs=100` override below is redundant and is kept only
+# as an explicit guard; baseline-versus-lex is therefore epoch-matched.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -50,7 +52,7 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-parse_choice_list DATASETS "aircraft cifar100" DATASETS \
+parse_choice_list DATASETS "aircraft cub200 cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -133,6 +135,7 @@ printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'HRN loss mode: level_marginal\n'
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
+printf 'HRN lex training epochs: 100\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -143,6 +146,7 @@ for dataset in "${DATASETS[@]}"; do
   run_seeded_train "$config" "$(run_output_dir "$dataset")" \
     "${hard_target_overrides[@]}" \
     "model.loss=level_marginal" \
+    "train.epochs=100" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
     "train.gradient_blocks=[p123]" \

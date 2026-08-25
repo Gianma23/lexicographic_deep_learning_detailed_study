@@ -28,7 +28,16 @@ model:
   attn_heads: 16
   attn_key_dim: 32
   attn_dropout: 0.0
-  attn_postprocess: layernorm
+  # Deviation from the released default (`layernorm`), which the paper also
+  # specifies in Eq. (18) and Algorithm 1 line 20. That readout fixes every
+  # capsule length at sqrt(d) regardless of input, so the class score used by
+  # Eq. (10) and the margin loss in Eq. (19) carries no information: verified by
+  # running the authors' TensorFlow code (initial lengths 8.00/5.66/4.00, fine
+  # level separating 100 classes by 1.3e-06, fine accuracy 0.00 after 60 steps
+  # on a 16-image memorisation test). `squash` restores the [0,1) length-as-
+  # probability semantics of Eq. (6)/(16) that the margin loss is designed for.
+  # See docs/htcapsnet_vs_keras_differences.md section 4.3.
+  attn_postprocess: squash
   attn_initializer: keras_glorot
   loss:
     margin_m_pos: 0.9
@@ -79,10 +88,9 @@ dataloader:
   drop_last_train: false
 
 train:
-  # run-HT-CapsNet.sh sets epochs=200.
-  epochs: 200
-  # Released Keras reloads the checkpoint with best finest-level val accuracy.
-  checkpoint_selection: deepest_accuracy
+  # Unified 100-epoch budget (upstream run-HT-CapsNet.sh sets epochs=200);
+  # truncation only, the exponential schedule below is unchanged.
+  epochs: 100
   seed: 42
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false
@@ -92,12 +100,12 @@ train:
 
 optim:
   # Upstream optimizer default: Adam (lr=0.001).
-  # Keras 2.8 epsilon-hat Adam update, not PyTorch's differently ordered form.
-  name: keras_adam
+  # Stock PyTorch Adam, not the Keras 2.8 epsilon-hat variant.
+  name: adam
   lr: 0.001
   weight_decay: 0.0
   momentum: 0.9
-  opt_eps: 1.0e-7
+  opt_eps: 1.0e-8
   opt_betas: null
 
 scheduler:

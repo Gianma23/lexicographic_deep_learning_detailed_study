@@ -25,7 +25,9 @@ model:
   attn_heads: 16
   attn_key_dim: 32
   attn_dropout: 0.0
-  attn_postprocess: layernorm
+  # Deviation from the released `layernorm` readout; see capsnet_cifar100.yaml
+  # for the rationale and docs/htcapsnet_vs_keras_differences.md section 4.3.
+  attn_postprocess: squash
   attn_initializer: keras_glorot
   loss:
     margin_m_pos: 0.9
@@ -82,8 +84,9 @@ dataloader:
   drop_last_train: false
 
 train:
-  epochs: 200
-  checkpoint_selection: deepest_accuracy
+  # Unified 100-epoch budget (upstream run-HT-CapsNet.sh sets epochs=200);
+  # truncation only, the exponential schedule below is unchanged.
+  epochs: 100
   seed: 42
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false
@@ -92,11 +95,12 @@ train:
   smoothing: 0.0
 
 optim:
-  name: keras_adam
+  # Stock PyTorch Adam; see capsnet_cifar100.yaml for the rationale.
+  name: adam
   lr: 0.001
   weight_decay: 0.0
   momentum: 0.9
-  opt_eps: 1.0e-7
+  opt_eps: 1.0e-8
   opt_betas: null
 
 scheduler:

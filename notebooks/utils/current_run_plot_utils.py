@@ -135,23 +135,10 @@ MODEL_REFERENCE_SPECS = (
 
 # Figures are authored at their final printed width and must be included with
 # width=\linewidth and no extra scaling: any additional resizing in LaTeX shrinks
-# the font sizes set below along with the artwork. These values are copied from
-# notebooks/datasets_analysis.ipynb so the two notebook families produce figures
-# that sit side by side in the thesis without a visible style break.
-TEXT_WIDTH_IN = 6.3   # A4 text block with 2.5 cm margins
-HALF_WIDTH_IN = 3.05
-
-PAPER_RCPARAMS = {
-    "figure.dpi": 140, "savefig.dpi": 400,
-    "font.family": "serif", "font.serif": ["DejaVu Serif"],
-    "mathtext.fontset": "dejavuserif",
-    "font.size": 9, "axes.titlesize": 9, "axes.labelsize": 8.5,
-    "xtick.labelsize": 7.5, "ytick.labelsize": 7.5,
-    "legend.fontsize": 7, "legend.title_fontsize": 7,
-    "axes.axisbelow": True, "grid.linewidth": 0.5,
-    "pdf.fonttype": 42, "ps.fonttype": 42,
-    "figure.constrained_layout.use": True,
-}
+# the font sizes with the artwork. The values live in thesis_style so that this
+# module, notebooks/datasets_analysis.ipynb and the model-analysis notebooks all
+# read one definition and sit side by side in the thesis without a style break.
+from thesis_style import HALF_WIDTH_IN, PAPER_RCPARAMS, TEXT_WIDTH_IN  # noqa: F401,E402
 
 # Sizes tuned for a 6.3 in wide, roughly 2.3 in tall panel. Marker areas are in
 # points squared, so they do not follow the figure size automatically.

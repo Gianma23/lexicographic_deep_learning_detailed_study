@@ -143,10 +143,10 @@ weight effect alone is worth roughly 1-2 pp of fine accuracy.
 
 **Required config.** No loss-mode coercion is enforced, but the launcher
 `scripts/capsnet/run_ht_capsnet_lex.sh` deliberately sets
-`model.loss.weight_mode=none` and reduces the training budget from the native
-baseline's 200 epochs to 100 epochs because the lexicographic update is
-substantially more expensive. Consequently, comparisons with the native
-baseline are neither level-weight matched nor training-budget matched.
+`model.loss.weight_mode=none`. It also passes `train.epochs=100`, which is now
+the baseline preset's value as well, so the arms are training-budget matched;
+the override is kept as an explicit guard. Comparisons with the native baseline
+therefore remain not level-weight matched, but are no longer budget-mismatched.
 
 **Quirk — level weights are dropped, and `dynamic` is misleading.** As with
 H-CAST, `total` is the weighted sum while `aux["level_losses"]` holds the

@@ -203,15 +203,17 @@ presets remain local extrapolations.
 The presets port the released TensorFlow architecture and callback behavior:
 one squashed primary-capsule tensor is reshaped at later levels, parent capsule
 lengths are softmaxed before taxonomy masking, and dynamic loss weights use the
-released callback's parentheses. Experimental hyperparameters follow the paper:
-the 200-epoch horizon, taxonomy temperature `0.5`, 16×32
+released callback's parentheses. Experimental hyperparameters follow the paper except for
+the training budget, taxonomy temperature `0.5`, 16×32
 Keras-shaped attention with rank-three Keras Glorot initialization, per-example
-MixUp, the paper-reported epoch schedule, Keras 2.8 Adam update, deterministic
-execution, capsule margin loss, and next-batch dynamic level weights.
-Checkpointing uses deepest-level validation accuracy; this exactly matches the
-released finest-output monitor for independent decoding, with the analogous
-per-decoder metric used for top-down evaluation. The last partial training
-batch is retained. The EfficientNet preset pins
+MixUp, Keras 2.8 Adam update, deterministic
+execution, capsule margin loss, and next-batch dynamic level weights. The
+presets run 100 epochs rather than the paper's 200, under the repository-wide
+budget shared by every family except LH-DNN; the learning-rate decay rate is
+unchanged, so the schedule is truncated rather than rescaled.
+Checkpointing deliberately departs from the released finest-output monitor and
+uses the repository-wide `(FPA, -TICE, weighted_AP)` ranking, so every family is
+selected by the same rule. The last partial training batch is retained. The EfficientNet preset pins
 the Keras-compatible
 `tf_efficientnet_b7.aa_in1k` conversion and restores Keras BatchNorm/drop-connect
 training semantics. CIFAR uses native 32 px inputs and split-wide scalar
@@ -559,10 +561,11 @@ scripts/hrn/run_hrn_lex.sh
 
 Both default to coarse-first. Lexicographic projection is always active for the
 whole run. Override `DATASETS` or `LEX_PROJECTION_MODE` to select another
-validated run without adding a dataset config. Because HT-CapsNet is
-substantially more expensive in lexicographic mode, its lex launcher overrides
-the paper-aligned 200-epoch baseline presets with a 100-epoch budget. This means
-the resulting baseline-versus-lex comparison is not training-budget matched.
+validated run without adding a dataset config. The HT-CapsNet and HRN lex
+launchers pass an explicit `train.epochs=100`, which now agrees with their
+baseline presets, so baseline-versus-lex comparisons in these two families are
+training-budget matched (they remain not compute-matched, since a lexicographic
+step is more expensive than a baseline step).
 The HRN launcher also enforces hard targets.
 
 Run the paper-aligned LH-DNN CIFAR-100 preset and the two explicitly

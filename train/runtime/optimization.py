@@ -33,76 +33,6 @@ def seed_everything(seed: int, deterministic: bool = True) -> None:
     torch.use_deterministic_algorithms(deterministic)
 
 
-class KerasAdam(torch.optim.Optimizer):
-    """Keras 2.8 Adam update, including its epsilon-hat placement.
-
-    PyTorch Adam applies epsilon after bias correction. Keras 2.8 instead
-    scales the learning rate by the bias-correction terms and divides the
-    uncorrected first moment by ``sqrt(v) + epsilon``. The distinction is most
-    visible in early updates and for small gradients.
-    """
-
-    def __init__(
-        self,
-        params,
-        lr: float = 0.001,
-        betas=(0.9, 0.999),
-        eps: float = 1e-7,
-    ):
-        if lr <= 0.0:
-            raise ValueError(f"Invalid Keras Adam learning rate: {lr}")
-        if eps <= 0.0:
-            raise ValueError(f"Invalid Keras Adam epsilon: {eps}")
-        if len(betas) != 2 or not 0.0 <= betas[0] < 1.0 or not 0.0 <= betas[1] < 1.0:
-            raise ValueError(f"Invalid Keras Adam beta values: {betas}")
-        super().__init__(params, {"lr": float(lr), "betas": tuple(betas), "eps": float(eps)})
-
-    @torch.no_grad()
-    def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
-
-        for group in self.param_groups:
-            step = int(group.get("step", 0)) + 1
-            group["step"] = step
-            beta1, beta2 = group["betas"]
-            lr_t = float(group["lr"]) * math.sqrt(1.0 - beta2**step) / (1.0 - beta1**step)
-            epsilon = float(group["eps"])
-
-            for parameter in group["params"]:
-                if parameter.grad is None:
-                    continue
-                gradient = parameter.grad
-                if gradient.is_sparse:
-                    raise RuntimeError("KerasAdam does not support sparse gradients.")
-
-                state = self.state[parameter]
-                if not state:
-                    state["exp_avg"] = torch.zeros_like(
-                        parameter,
-                        memory_format=torch.preserve_format,
-                    )
-                    state["exp_avg_sq"] = torch.zeros_like(
-                        parameter,
-                        memory_format=torch.preserve_format,
-                    )
-
-                exp_avg = state["exp_avg"]
-                exp_avg_sq = state["exp_avg_sq"]
-                exp_avg.mul_(beta1).add_(gradient, alpha=1.0 - beta1)
-                exp_avg_sq.mul_(beta2).addcmul_(
-                    gradient,
-                    gradient,
-                    value=1.0 - beta2,
-                )
-                denominator = exp_avg_sq.sqrt().add_(epsilon)
-                parameter.addcdiv_(exp_avg, denominator, value=-lr_t)
-
-        return loss
-
-
 class HierCosCosineScheduler:
     """Upstream cosine schedule with per-group LR scaling."""
 
@@ -249,18 +179,6 @@ def build_optimizer(cfg: Any, model: torch.nn.Module):
         if opt_betas is not None:
             kwargs["betas"] = opt_betas
         return torch.optim.Adam(model.parameters(), **kwargs)
-    if name == "keras_adam":
-        if wd != 0.0:
-            raise ValueError(
-                "Keras 2.8 Adam parity does not include decoupled or L2 weight decay; "
-                "set optim.weight_decay=0."
-            )
-        kwargs = {"lr": lr}
-        if opt_eps is not None:
-            kwargs["eps"] = opt_eps
-        if opt_betas is not None:
-            kwargs["betas"] = opt_betas
-        return KerasAdam(model.parameters(), **kwargs)
     if name == "adamw":
         kwargs = {"lr": lr, "weight_decay": wd}
         if opt_eps is not None:

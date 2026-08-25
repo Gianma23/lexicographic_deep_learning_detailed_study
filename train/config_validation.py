@@ -181,7 +181,6 @@ _ALLOWED_CHILDREN: Dict[str, Set[str]] = {
         "stop_epoch",
         "scale_lr",
         "scale_lr_reference_batch_size",
-        "checkpoint_selection",
         "gradient_blocks",
         "lexicographic",
         "subspace_supervision",
@@ -517,11 +516,6 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
         "drop_last_eval",
     ):
         _validate_optional_bool(dataloader, key, f"dataloader.{key}")
-    _require_enum(
-        train.get("checkpoint_selection", "hierarchical_metrics"),
-        "train.checkpoint_selection",
-        {"hierarchical_metrics", "deepest_accuracy"},
-    )
     if protocol is not None:
         _require_enum(
             protocol,
@@ -551,7 +545,7 @@ def _validate_common_sections(payload: Mapping[str, Any]) -> None:
     _require_enum(
         optim.get("name"),
         "optim.name",
-        {"sgd", "adam", "adamw", "keras_adam"},
+        {"sgd", "adam", "adamw"},
     )
     _validate_optional_bool(optim, "nesterov", "optim.nesterov")
     if _finite_float(optim.get("lr"), "optim.lr") <= 0.0:

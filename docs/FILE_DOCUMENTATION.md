@@ -227,7 +227,25 @@ helpers under `notebooks/utils/`.
 - `notebooks/datasets_analysis.ipynb` — dataset-level analysis and the figures
   exported for the thesis dataset section.
 - `notebooks/model_comparison_all_datasets.ipynb` — cross-model, cross-dataset
-  comparison.
+  comparison: one run per family, each family's baseline, on the same axes. It
+  is the transpose of the family notebooks below and shares their code and
+  figure style through `HCastAnalysis.for_baseline_comparison`, which reads each
+  baseline out of the same `FAMILY_PROFILES` registry they use. It renders the
+  subset of their sections that is well defined across architectures - run
+  matrix, validation curves, per-level validation accuracy, per-run level
+  objectives, test tables - and omits the aggregate objective, the
+  gradient-support blocks, since `total` is a different functional per family and
+  the blocks are a property of the architecture. Its second half is the
+  cross-model mechanism comparison, driven by `MechanismDeltaComparison`: for
+  each mechanism registered in `FamilyProfile.mechanism_arms` (`hcc`,
+  `lex_coarse_first`, `lex_fine_first`) it pairs every family's arm against that
+  family's own baseline, per seed, and plots and tabulates the difference. It
+  never puts two architectures on a shared axis there, because the gap between
+  models is far larger than the effect of a mechanism on either. It also diffs
+  the two resolved configs of every pair, which is what surfaces a second change
+  travelling with the mechanism - H-CAST's lexicographic mode requires
+  `model.loss.globalkl: false`, and the HRN arms also switch the objective to
+  `level_marginal`.
 - `notebooks/posthoc_hiercos_inference_comparison.ipynb` — the original
   single-family post-hoc inference notebook, superseded by
   `notebooks/inference_analysis/`.
@@ -249,19 +267,39 @@ them drive the CLI documented in `evaluation/README.md`, read the per-run
   within-checkpoint gains the per-mechanism notebooks report.
 
 `notebooks/model_analysis/` holds one notebook per model family for finished,
-selected-checkpoint analysis:
+selected-checkpoint analysis. The five family notebooks are deliberately
+identical: the same eleven sections in the same order, driven by the same code,
+so a section of one can be read directly against the same section of another.
+The only line that differs is `FAMILY` in the setup cell, and the run matrix,
+labels and aggregate loss terms that selects come from `FAMILY_PROFILES` in
+`notebooks/utils/hcast_analysis_utils.py`. A section that comes out shorter for
+one family is a fact about the family - a loss term it never logs, a gradient-support
+block its architecture does not contain, a diagnostic that is constant or that
+duplicates another panel exactly - and each of those prints a line saying so. The
+degenerate cases are detected from the values rather than listed, so a quantity that
+stops being degenerate reappears on its own.
 
 - `notebooks/model_analysis/hcast_analysis.ipynb`
-- `notebooks/model_analysis/hcc_internal_diagnostics.ipynb`
-- `notebooks/model_analysis/hiercos_analysis.ipynb`
 - `notebooks/model_analysis/lhdnn_analysis.ipynb`
+- `notebooks/model_analysis/ht_capsnet_analysis.ipynb` — plus one
+  family-specific appendix, the per-seed margin-collapse screen.
 - `notebooks/model_analysis/hrn_analysis.ipynb`
+- `notebooks/model_analysis/hiercos_analysis.ipynb`
+- `notebooks/model_analysis/hcc_internal_diagnostics.ipynb` — not part of that
+  set: a standalone cross-family baseline-versus-HCC notebook with its own
+  loaders and plotting helpers.
 
 `notebooks/utils/` holds the shared Python helpers imported by the notebooks
 above:
 
-- `notebooks/utils/hcast_analysis_utils.py`
-- `notebooks/utils/model_comparison_utils.py`
+- `notebooks/utils/hcast_analysis_utils.py` — the family registry, the run
+  loaders, and every figure used by `notebooks/model_analysis/` and by
+  `notebooks/model_comparison_all_datasets.ipynb`.
+- `notebooks/utils/thesis_style.py` — the single print style, page geometry, and
+  display-name tables the exported figures share.
+- `notebooks/utils/model_comparison_utils.py` — the previous, separate
+  implementation of the cross-model comparison. No notebook imports it since
+  that comparison moved onto `hcast_analysis_utils.py`.
 - `notebooks/utils/multiseed_utils.py`
 - `notebooks/utils/posthoc_inference_utils.py` — run discovery per training
   mechanism, the evaluator sweep, the long-form result loader, the paired and

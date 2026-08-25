@@ -85,7 +85,7 @@ OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environmen
 
 parse_choice_list DATASETS "cifar100 aircraft cub200" DATASETS \
   cifar100 cub200 aircraft
-parse_choice_list LEX_PROJECTION_MODES "coarse_first" LEX_PROJECTION_MODES \
+parse_choice_list LEX_PROJECTION_MODES "fine_first" LEX_PROJECTION_MODES \
   coarse_first fine_first
 
 config_for_dataset() {

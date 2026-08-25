@@ -111,8 +111,9 @@ samples, or choose models on test data.
   arguments even though upstream constructor defaults are internally
   inconsistent.
 - Secondary dimensions `[64, 32, 16]`, three routing iterations, MixUp alpha
-  `0.2`, mask bounds `0.99/0.1`, 200 epochs, Adam at `0.001`, and learning-rate
-  decay `0.95` after epoch 10 follow the paper's reported experiment table.
+  `0.2`, mask bounds `0.99/0.1`, Adam at `0.001`, and learning-rate
+  decay `0.95` after epoch 10 follow the paper's reported experiment table. The
+  epoch count does not: see the horizon note below.
 - Standard-scaler scope is batch-scoped on CUB/Aircraft
   (`dataset.transforms.normalization_scope: batch`). Upstream reduces a single
   scalar mean/std over whatever tensor it receives: for path-loaded datasets
@@ -170,13 +171,19 @@ samples, or choose models on test data.
 - MixUp samples one beta coefficient per example with random pairing. The
   epoch-indexed paper-reported schedule holds `0.001` through epoch index 10
   and uses `0.00095` at index 11 (the released parser instead defaults to a
-  `0.9` decay factor). `keras_adam` implements the Keras 2.8 epsilon-hat
-  update instead of assuming that PyTorch Adam with `eps=1e-7` is identical.
+  `0.9` decay factor). The optimizer is stock PyTorch Adam with `eps=1e-8`,
+  not a replica of the Keras 2.8 epsilon-hat update; see
+  `docs/htcapsnet_vs_keras_differences.md` for why that difference is not
+  treated as an experimental variable.
 - During training, margin loss consumes raw capsule lengths. During validation
   and test it consumes the softmax output produced by the source `LengthLayer`;
   argmax predictions are unchanged.
-- The shipped horizon is 200 epochs, matching the upstream launcher rather
-  than the shorter README example.
+- The shipped horizon is 100 epochs, not the upstream launcher's 200. This is
+  the repository-wide budget applied to every family except LH-DNN, adopted so
+  that cross-family and baseline-versus-lex rows are epoch-matched. Only the
+  epoch count changed: `decay_rate` stays at `0.95` and `start_epoch` at 10, so
+  the schedule is truncated, not rescaled, and training ends at a learning rate
+  near `9.9e-6` instead of `5.9e-8`.
 
 ### Paper/source contradictions and selected behavior
 
@@ -200,23 +207,32 @@ implementation harder to audit and allowed a preset to stop being a port of the
 released model.
 
 - `drop_last_train: false` retains the last partial batch as `padded_batch`
-  does. The independent checkpoint is ranked by finest-level validation
-  accuracy, matching the released Keras monitor. The top-down checkpoint uses
-  the analogous top-down finest accuracy so every reported decoder is evaluated
-  from its own selected checkpoint. The local run also keeps a genuine
-  validation split and a fixed 200-epoch horizon: it does not reuse CIFAR test
+  does. Checkpoint selection does *not* follow the released Keras finest-output
+  monitor: both checkpoints are ranked by the repository-wide
+  `(FPA, -TICE, weighted_AP)` tuple, because cross-family comparability of the
+  selection rule outweighs fidelity to one family's callback. Each decoder is
+  still evaluated from its own selected checkpoint. The local run also keeps a genuine
+  validation split and a fixed 100-epoch horizon: it does not reuse CIFAR test
   labels as validation data or enable the source's undocumented early stopping.
 
-Two high-impact upstream reproducibility defects remain visible rather than
-being silently "fixed." First, public preprocessing applies a
-split-wide StandardScaler and then EfficientNet's embedded `/255`, reducing
-CIFAR image variation by roughly 60x; the baseline keeps this because it is the
-released preprocessing path. Second, both Eq. 18 and the released layer compute
-capsule lengths after a per-capsule LayerNorm. At its
-initial affine parameters those lengths are almost constant at `sqrt(D)` and
-outside the margin loss's `[0, 1]` design range. The existing
-`attn_postprocess: squash` option is therefore a useful ablation, but is not the
-paper/source default and is not presented as a verified correction.
+Two high-impact upstream reproducibility defects were identified. The first
+remains visible rather than being silently "fixed": public preprocessing applies
+a split-wide StandardScaler and then EfficientNet's embedded `/255`, reducing
+CIFAR image variation by roughly 60x, and the baseline keeps this because it is
+the released preprocessing path.
+
+The second is now corrected, because it makes the model untrainable. Both Eq. 18
+and the released layer compute capsule lengths after a per-capsule LayerNorm,
+which pins every length at `sqrt(D)` — an algebraic identity, not an
+approximation — while Eq. 10 and the margin loss of Eq. 19 read exactly that
+length as the class score. Running the authors' TensorFlow code confirms it:
+initial lengths 8.00/5.66/4.00, the fine level separating 100 classes by
+1.3e-06, and fine-level accuracy stuck at 0.00 after 60 steps on a 16-image
+memorisation test, while `HD_CapsNet` and a one-line squash swap in the same
+layer both reach 1.00. The presets therefore set `attn_postprocess: squash`,
+restoring the `[0, 1]` length-as-probability semantics of Eq. 6/16 that the
+margin loss requires. This is a documented deviation from the released default;
+see `docs/htcapsnet_vs_keras_differences.md` section 4.3 for the full evidence.
 
 The paper also says the hierarchical-agreement gate and transform are
 taxonomy-biased at initialization, but supplies no edge/non-edge values; the
@@ -284,7 +300,8 @@ oracle for this model.
 - The local state-space/tree objective and leaf-only CE reproduce full-label
   HRN semantics.
 - CUB/Aircraft use the source-style 550 resize, 448 crop,
-  `[0.5, 0.5, 0.5]` normalization, SGD/cosine schedule, and 0.1× trunk LR.
+  `[0.5, 0.5, 0.5]` normalization, SGD/cosine schedule, and 0.1× trunk LR. The
+  cosine schedule runs over 100 epochs rather than upstream's 200 (see below).
 
 ### Unified-protocol choices and extrapolations
 
@@ -293,6 +310,10 @@ oracle for this model.
 - Upstream scripts can select/report on test data. Local checkpoints are
   selected only on validation data.
 - Partial-label HRN branches are out of scope.
+- The horizon is 100 epochs, not upstream's 200, under the repository-wide
+  budget shared by every family except LH-DNN. The cosine schedule is
+  parameterized by `train.epochs`, so this compresses the annealing rather than
+  cutting it short: the learning rate still reaches zero at the final epoch.
 - CIFAR-100 is a local HRN-WRN-28-8 adaptation that retains the
   repository-wide native 32 px preprocessing and uses the same CIFAR-style
   backbone geometry as Hier-COS. The WideResNet trunk preserves an `8 x 8`

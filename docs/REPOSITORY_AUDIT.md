@@ -29,7 +29,7 @@ The method combined:
 | High | “Lexicographic” checkpoint selection packed metrics into one float, allowing a sufficiently large TICE change to override a small real FPA improvement. | Compare the exact tuple `(FPA, -TICE, weighted_AP)` and persist it in v2 checkpoints. |
 | High | HRN and most Hier-COS presets dropped incomplete validation/test batches. | Corrected presets and validator require `drop_last_eval: false`. |
 | Medium | CIFAR HT-CapsNet silently resumed from an output checkpoint by default. | All presets start with `train.resume: ""`; resume is explicit. |
-| Medium | HT-CapsNet configs used 100 epochs while the upstream launcher uses 200. | Corrected HT-CapsNet presets use 200 epochs. |
+| Medium | HT-CapsNet configs used 100 epochs while the upstream launcher uses 200. | Corrected HT-CapsNet presets used 200 epochs. **Superseded:** presets now use 100 epochs under the repository-wide budget shared by every family except LH-DNN, a deliberate deviation from the upstream launcher rather than an oversight (see `docs/model_repo_differences.md`). |
 | Medium | LH-DNN CIFAR-100 claimed paper fidelity but used 30 epochs instead of the large-network 15. | Corrected to 15 epochs. |
 | Medium | Applying the CIFAR LH-DNN topology directly at 224 px created a very large flattened dense layer. | CUB/Aircraft explicitly adapt the last map to 2×2 before the shared layer. |
 | Medium | HT-CapsNet could run without a complete taxonomy and lose its defining routing constraint. | Factory now requires every child at every transition to have a valid parent. |

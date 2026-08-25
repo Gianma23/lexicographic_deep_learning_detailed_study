@@ -1,19 +1,23 @@
 \chapter{Experiments}
 \label{ch:experiments}
 
-This chapter puts the methods of \cref{ch:methods} on a common footing and
-reports what that comparison produced.
+This chapter evaluates the methods introduced in \cref{ch:methods}. Five
+baseline model families are trained on CIFAR-100, CUB-200-2011 and
+FGVC-Aircraft using common dataset partitions, label hierarchies and evaluation
+metrics. Each proposed intervention is assessed within a model family against a
+matched baseline: the modified model is compared with the unmodified version of
+the same family, trained under the same settings. Results are also compared
+across families, but differences between them cannot be attributed to a single
+hierarchical mechanism because the families use different architectures and
+training recipes.
 
-Four things are fixed before any number can mean anything: the data and the
-label trees the models are trained against (\S\ref{sec:datasets}), the
-quantities they are scored with (\S\ref{ssec:inference_metrics}), the fidelity
-of five separately published implementations to the works they come from
-(\S\ref{sec:fidelity}), and the rules under which an observed difference is
-allowed to count as evidence (\S\ref{sec:results_design}). The results then
-follow in the order in which they become readable: the baselines, what can be
-obtained from those same checkpoints by changing only the inference rule, the
-mechanisms one at a time, and last the ablations that localise whatever the
-earlier sections found.
+The chapter first presents the datasets, metrics and implementation choices,
+then defines the experimental comparisons and reporting protocol. The results
+begin with the baseline models and an analysis of inference rules, followed by
+the evaluation of HCC, lexicographic gradient ordering and direct subspace
+supervision. The final sections compare the different intervention points,
+report the required ablations and state which conclusions are supported by the
+completed experiments.
 % ======================================================
 %                       DATASETS
 % ======================================================
@@ -59,38 +63,41 @@ earlier sections found.
 \section{Datasets}
 \label{sec:datasets}
 
-In the literature, methods for Hierarchical Image Classification (HIC) are typically evaluated on heterogeneous datasets, differing in scale, hierarchical structure, and overall complexity. This variability makes a direct, like-for-like comparison across approaches difficult.
-
-For example, LH-DNN \cite{fiaschi2024informed} is evaluated mainly on relatively simple datasets such as CIFAR-10, CIFAR-100, and Fashion-MNIST, where the class hierarchy is generally constructed artificially. Capsule-Network-based methods, such as HD-CapsNet \cite{noor2024consistency} and HT-CapsNet \cite{noor2025taxonomy}, employ both synthetic or simplified datasets (e.g., CIFAR and Fashion-MNIST) and fine-grained datasets with natural taxonomies, such as CUB-200-2011 and Stanford Cars. HRN \cite{chen2022label}, one of the earlier CNN-based hierarchical architectures, is evaluated on three widely used fine-grained visual classification (FGVC) benchmarks --- CUB-200-2011, FGVC-Aircraft, and Stanford Cars --- for which the label hierarchy is reconstructed from Wikipedia-derived taxonomies following the procedure of Chang et al. \cite{chang2021flamingo}. More recent Transformer-based approaches, such as H-CAST \cite{park2024visually}, additionally include hierarchical benchmarks derived from ImageNet, namely the BREEDS suite, alongside fine-grained datasets such as CUB-200-2011 and FGVC-Aircraft. Finally, Hier-COS \cite{sani2025hiercos} evaluates hierarchy-aware representation learning on FGVC-Aircraft and CIFAR-100, together with two large-scale, deeply nested taxonomies: iNaturalist-19 and tieredImageNet-H.
-
-Table \ref{tab:datasets_hic} summarizes the datasets used across the works considered in this survey.
+The five baseline methods were originally evaluated on different datasets,
+hierarchies and protocols. LH-DNN focuses on CIFAR-10, CIFAR-100 and
+Fashion-MNIST \cite{fiaschi2024informed}; HT-CapsNet adds datasets with natural
+taxonomies, including CUB-200-2011 \cite{noor2025taxonomy}; HRN evaluates three
+fine-grained benchmarks \cite{chen2022label}; H-CAST includes CUB-200-2011,
+FGVC-Aircraft and the BREEDS suite \cite{park2024visually}; and Hier-COS spans
+CIFAR-100, FGVC-Aircraft and two deeper taxonomies \cite{sani2025hiercos}.
+Table~\ref{tab:datasets_hic} summarises the datasets used by the baseline methods.
 
 \begin{table}[!h]
 \centering
-\caption{Datasets used in the main works on Hierarchical Image Classification.}
+\caption{Datasets used to evaluate the five baseline methods considered.}
 \label{tab:datasets_hic}
-
-\begin{tabularx}{\textwidth}{l l l X}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.7cm}L{1.6cm}L{3.4cm}Y@{}}
 \toprule
 \textbf{Dataset} & \textbf{Source} & \textbf{Hierarchy} & \textbf{Used by} \\
 \midrule
 
-Fashion-MNIST & \href{https://github.com/zalandoresearch/fashion-mnist}{Link} & artificial (tree) & LH-DNN, HD-CapsNet, HT-CapsNet \\
+Fashion-MNIST & \href{https://github.com/zalandoresearch/fashion-mnist}{Link} & artificial (tree) & LH-DNN, HT-CapsNet \\
 \midrule
 
-CIFAR-10 & \href{https://www.cs.toronto.edu/~kriz/cifar.html}{Link} & artificial (tree) & LH-DNN, HD-CapsNet, HT-CapsNet \\
+CIFAR-10 & \href{https://www.cs.toronto.edu/~kriz/cifar.html}{Link} & artificial (tree) & LH-DNN, HT-CapsNet \\
 \midrule
 
-CIFAR-100 & \href{https://www.cs.toronto.edu/~kriz/cifar.html}{Link} & natural (superclasses) & LH-DNN, HD-CapsNet, HT-CapsNet, Hier-COS \\
+CIFAR-100 & \href{https://www.cs.toronto.edu/~kriz/cifar.html}{Link} & natural (superclasses) & LH-DNN, HT-CapsNet, Hier-COS \\
 \midrule
 
-Marine Tree & \href{https://github.com/visipedia/marine-tree}{Link} & natural (taxonomy) & HD-CapsNet, HT-CapsNet \\
+Marine Tree & \href{https://github.com/visipedia/marine-tree}{Link} & natural (taxonomy) & HT-CapsNet \\
 \midrule
 
-CUB-200-2011 & \href{https://www.vision.caltech.edu/datasets/cub_200_2011/}{Link} & natural (taxonomy) & HD-CapsNet, HT-CapsNet, H-CAST, HRN \\
+CUB-200-2011 & \href{https://www.vision.caltech.edu/datasets/cub_200_2011/}{Link} & natural (taxonomy) & HT-CapsNet, H-CAST, HRN \\
 \midrule
 
-Stanford Cars & \href{https://ai.stanford.edu/~jkrause/cars/car_dataset.html}{Link} & natural (taxonomy) & HD-CapsNet, HT-CapsNet, HRN \\
+Stanford Cars & \href{https://ai.stanford.edu/~jkrause/cars/car_dataset.html}{Link} & natural (taxonomy) & HT-CapsNet, HRN \\
 \midrule
 
 FGVC-Aircraft & \href{https://www.robots.ox.ac.uk/~vgg/data/fgvc-aircraft/}{Link} & natural (taxonomy) & H-CAST, HRN, Hier-COS \\
@@ -112,29 +119,38 @@ BREEDS benchmarks & \href{https://github.com/microsoft/robustness/tree/master/ro
 
 \end{table}
 
-This heterogeneity of benchmarks makes a direct comparison between the different approaches proposed in the literature difficult. For this reason, this work proposes to evaluate the considered architectures on a common set of datasets, in order to obtain a more consistent comparison across methods.
-
-
 \subsection{Dataset selection}
 \label{sec:dataset_selection}
 
-To evaluate the hierarchical classification models considered in this work, a set of benchmarks widely used in the recent literature was selected. Rather than including every dataset present in the analyzed works, a representative subset was chosen, covering different levels of complexity, dataset size, and hierarchy type.
+No single dataset is shared by all five original evaluation suites. CIFAR-100, CUB-200-2011 and
+FGVC-Aircraft tie for the widest coverage in Table~\ref{tab:datasets_hic}: each was used by three of
+the five families, and together they include at least one originally evaluated dataset for every
+family. This is coverage at the dataset level; the exact hierarchies and protocols can still differ.
+The selection therefore does not make every family--dataset pair an in-domain reproduction. The
+unsupported pairs are identified as extrapolations in \S\ref{ssec:fidelity_families}.
 
-Specifically, the datasets used are \textit{CIFAR-100}, \textit{CUB-200-2011}, and \textit{FGVC-Aircraft}. This selection allows the models to be evaluated across markedly different scenarios: a small, artificially organized hierarchy (CIFAR-100), and fine-grained natural taxonomies with a limited number of training images (CUB-200-2011, FGVC-Aircraft). Table \ref{tab:datasets_info} summarizes the characteristics of the three datasets.
-
-The BREEDS suite was deliberately excluded from this selection, for two reasons. First, being derived from the full ImageNet training set, it imposes computational requirements well beyond those of the other three benchmarks, which is impractical given the computational budget available for this work. Second, and more fundamentally, BREEDS follows a different evaluation paradigm from CIFAR-100, CUB-200-2011, and FGVC-Aircraft: instead of measuring accuracy on a fixed, fully observed taxonomy, each of its four sub-benchmarks (Entity-13, Entity-30, Living-17, Nonliving-26) tests a model's ability to generalize coarse-level (superclass) knowledge to fine-level subclasses that are disjoint between training and test sets, over a two-level hierarchy rather than the three-level structure of the other datasets. Mixing this generalization-to-unseen-subpopulations protocol with the fixed-hierarchy classification protocol of CIFAR-100, CUB-200-2011, and FGVC-Aircraft would undermine the goal, stated above, of obtaining a coherent and directly comparable evaluation across all considered models.
+Within that coverage constraint, the selection combines complementary data and hierarchy
+regimes, rather than treating any one of the three as uniquely standard. CIFAR-100 is a generic,
+low-resolution recognition dataset with substantially more training images per leaf class; CUB and
+FGVC-Aircraft are higher-resolution fine-grained datasets with much less leaf-level supervision.
+Their hierarchies also have different provenance: CIFAR-100 supplies two levels and receives an
+external top-level grouping, CUB supplies only the species labels and requires a reconstructed
+taxonomy, and FGVC-Aircraft distributes annotations for all three levels used here.
+Table~\ref{tab:datasets_info} summarises their characteristics.
 
 \begin{table}[ht]
 \centering
-\caption{Characteristics of the datasets used in the hierarchical classification experiments, as distributed by their authors. Splits are the published ones; the partition actually used by the protocol is reported in Table~\ref{tab:protocol_splits}.}
+\caption{Characteristics of the datasets used in the hierarchical classification experiments, as
+distributed by their authors. Splits are the published ones; the partition actually used by the
+protocol is reported in Table~\ref{tab:protocol_splits}.}
 \label{tab:datasets_info}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{lccc}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}YCCC@{}}
 \toprule
 \textbf{Property} & \textbf{CIFAR-100} & \textbf{CUB-200-2011} & \textbf{FGVC-Aircraft} \\
 \midrule
 Levels                 & 3            & 3                     & 3 \\
-Level names            & coarse1/coarse2/fine & order/family/species & manufacturer/family/variant \\
+Level names            & coarse1/\allowbreak coarse2/\allowbreak fine & order/\allowbreak family/\allowbreak species & manufacturer/\allowbreak family/\allowbreak variant \\
 Classes per level      & 8/20/100     & 13/38/200             & 30/70/100 \\
 Hierarchy source       & 2 official levels    & inherited             & official \\
                        & + imposed top level  & (H-CAST, HRN)         & (parallel annotations) \\
@@ -146,37 +162,76 @@ Total images           & 60{,}000     & 11{,}788              & 10{,}000 \\
 \midrule
 Native image size      & $32\times32$ & median $500\times375$ & median $1024\times699$ \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-
-\subsection{Dataset descriptions}
-\label{sec:dataset_descriptions}
-
 \subsubsection{CIFAR-100}
-CIFAR-100 remains a relevant benchmark, since it still leaves room for improvement both in fine-level classification and in the overall consistency of the hierarchical path. Although recent works have already achieved competitive results, performance is not yet saturated, particularly considering that distinguishing between fine-grained classes remains non-trivial.
+CIFAR-100 appears in the original evaluation suites of LH-DNN, HT-CapsNet and Hier-COS
+\cite{fiaschi2024informed,noor2025taxonomy,sani2025hiercos}; this is the same three-of-five coverage
+as each of the other selected datasets. Its distinct role is instead the data regime. The official
+dataset contains 100 fine classes grouped into 20 superclasses, with $32\times32$ images and 500
+published training images per fine class \cite{krizhevsky2009learning}. After the validation split
+used in this work, 450 images per leaf class remain, compared with 25--26 for a CUB species and
+33--34 for an Aircraft variant. Only the fine and superclass levels are official; the eight-class
+top level used by the common three-level protocol is the external B-CNN grouping described in
+\S\ref{sec:hierarchy_construction}.
 
 \subsubsection{CUB-200-2011}
-CUB-200-2011 is one of the datasets with the greatest experimental value, as it allows a direct comparison with H-CAST, HT-CapsNet, and, as discussed below, HRN. H-CAST achieves the best overall results on this benchmark, with a Full-Path Accuracy of 83.28 and an improvement of about 3.2 points over HRN in the configuration reported by the authors \cite{park2024visually}. HT-CapsNet also reports substantial gains on CUB, with absolute improvements exceeding 10\% on some hierarchical metrics relative to the strongest baseline \cite{noor2025taxonomy}. This suggests that the dataset is competitive but not saturated: there remains room for improvement, particularly in balancing fine-grained accuracy against hierarchical consistency.
-
-The three works do not agree on the taxonomy: H-CAST and HRN use a 13/38/200 hierarchy while HT-CapsNet uses a 39/123/200 one. The taxonomy adopted here, and the reasons for preferring it over the alternatives found in the literature, are discussed in Section~\ref{sec:hierarchy_construction}.
+CUB-200-2011 likewise appears in the original evaluation suites of three families: H-CAST, HRN and
+HT-CapsNet \cite{park2024visually,chen2022label,noor2025taxonomy}. It contributes a fine-grained
+biological domain with 200 leaf classes and only 25--26 training images per species under the common
+protocol. The dataset itself publishes species labels but no order or family labels
+\cite{wah2011caltech}; consequently, the upper levels must be inherited from a reconstruction.
+This makes CUB useful for testing a reconstructed natural taxonomy, but it also prevents unqualified
+comparison of published scores: H-CAST and HRN use a 13/38/200 tree, whereas HT-CapsNet reports a
+39/123/200 tree. Section~\ref{sec:hierarchy_construction} documents the tree adopted here and the
+remaining uncertainty about its provenance.
 
 \subsubsection{FGVC-Aircraft}
-FGVC-Aircraft is particularly interesting because H-CAST clearly improves over hierarchical ViT baselines, yet remains far from the best HRN configuration: H-CAST reports an FPA of 83.72, while HRN reaches 91.39 in the best configuration reported by its authors \cite{park2024visually}. The same authors observe that, on small datasets such as Aircraft, ResNet-based models remain highly competitive \cite{park2024visually}. HT-CapsNet, on the other hand, has not been evaluated on this dataset. Overall, the benchmark is not saturated, but any improvement is likely to require a genuinely competitive method, especially in a fine-grained scenario with a limited number of training images.
+FGVC-Aircraft is the third dataset with three-family prior coverage, having been evaluated by H-CAST,
+HRN and Hier-COS \cite{park2024visually,chen2022label,sani2025hiercos}. Like CUB, it is a
+fine-grained, low-data benchmark; unlike CUB, its manufacturer, family and variant annotations and
+its train/validation/test partition are distributed with the dataset \cite{maji2013fine}. It
+therefore provides a second fine-grained visual domain while avoiding reliance on an externally
+reconstructed label taxonomy. The official split leaves only 33--34 training images per variant,
+and the resulting 30/70/100 tree has a markedly different branching structure from both CUB and
+CIFAR-100, as quantified in \S\ref{sec:dataset_analysis}. The LH-DNN and HT-CapsNet rows on this
+dataset are extrapolations, not original evaluation settings.
 
 
 \subsection{Hierarchy construction}
 \label{sec:hierarchy_construction}
 
-The three selected benchmarks do not share a common notion of hierarchy: each of the label trees used in the experiments has a different origin, and only one of them is published as part of the dataset itself. Since every model in this study is trained against these trees, and since hierarchy-aware metrics such as AHD and TICE are defined \emph{on} them, the provenance of each tree is part of the experimental protocol rather than a detail of data preparation. This subsection therefore states, for each dataset, where every level comes from, which decisions were taken in this work, and what remains uncertain.
+The three selected benchmarks do not share a common notion of hierarchy: each of the label trees
+used in the experiments has a different origin, and only one of them is published as part of the
+dataset itself. Since every model in this study is trained against these trees, and since
+hierarchy-aware metrics such as AHD and TICE are defined \emph{on} them, the provenance of each tree
+is part of the experimental protocol rather than a detail of data preparation. This subsection
+therefore states, for each dataset, where every level comes from, which decisions were taken in this
+work, and what remains uncertain.
 
-Three properties are enforced identically across the three datasets, so that the comparison between models is not confounded by the shape of the label space. First, all hierarchies have exactly three levels, which is the depth required by H-CAST and HRN and the depth at which all considered methods can be run without modification. Second, every class has exactly one parent at every level, so the taxonomy is a tree and not a directed acyclic graph. Third, the label space --- the mapping from raw dataset identifiers to the contiguous class indices seen by the models --- is constructed once from the training split and reused unchanged by validation and test, which prevents split-local relabelling and guarantees that a class index denotes the same concept in every split.
+Three properties are enforced identically across the three datasets, so that the comparison between
+models is not confounded by the shape of the label space. First, all hierarchies have exactly three
+levels, which is the depth required by H-CAST and HRN and the depth at which all considered methods
+can be run without modification. Second, every class has exactly one parent at every level, so the
+taxonomy is a tree and not a directed acyclic graph. Third, the label space --- the mapping from raw
+dataset identifiers to the contiguous class indices seen by the models --- is constructed once from
+the training split and reused unchanged by validation and test, which prevents split-local
+relabelling and guarantees that a class index denotes the same concept in every split.
 
 \subsubsection{CIFAR-100: two official levels and one imposed level}
 
-CIFAR-100 \cite{krizhevsky2009learning} publishes two of the three levels. The 100 fine labels are the leaves, and the 20 official superclasses --- which the dataset distributes as \texttt{coarse\_label\_names} --- form the middle level. This mapping is regular by construction: each superclass contains exactly five fine classes.
+CIFAR-100 \cite{krizhevsky2009learning} publishes two of the three levels. The 100 fine labels are
+the leaves, and the 20 official superclasses --- which the dataset distributes as
+\texttt{coarse\_label\_names} --- form the middle level. This mapping is regular by construction:
+each superclass contains exactly five fine classes.
 
-The dataset provides no third level. The top level used here is the grouping of the 20 superclasses into 8 coarse classes introduced by the B-CNN reference implementation \cite{zhu2017bcnn}, which is adopted so that the CIFAR-100 hierarchy is three levels deep and therefore directly comparable with the other two benchmarks.\footnote{The grouping is taken from the published B-CNN source, \url{https://github.com/zhuxinqimac/B-CNN/blob/main/CIFAR_100_keras_vgg16_hierarchy_dynamic.py}, and is reproduced verbatim in the data adapter of this work.} The resulting eight groups are:
+The dataset provides no third level. The top level used here is the grouping of the 20 superclasses
+into 8 coarse classes introduced by the B-CNN reference implementation \cite{zhu2017bcnn}, which is
+adopted so that the CIFAR-100 hierarchy is three levels deep and therefore directly comparable with
+the other two benchmarks.\footnote{The grouping is taken from the published B-CNN source,
+\url{https://github.com/zhuxinqimac/B-CNN/blob/main/CIFAR_100_keras_vgg16_hierarchy_dynamic.py}, and
+is reproduced verbatim in the data adapter of this work.} The resulting eight groups are:
 
 \begin{enumerate}[label=(\arabic*), itemsep=0pt, topsep=3pt]
   \item aquatic mammals, fish;
@@ -189,48 +244,112 @@ The dataset provides no third level. The top level used here is the grouping of 
   \item vehicles~1, vehicles~2.
 \end{enumerate}
 
-Two consequences follow and are carried through the rest of this work. The top level is an \emph{external, manually defined} semantic grouping, not a property of CIFAR-100: results obtained on it describe this particular taxonomy and should not be read as results on ``the'' CIFAR-100 hierarchy. Furthermore, the grouping is deliberately uneven --- the mammal-and-reptile group collects five superclasses while the \emph{people} group collects one --- so CIFAR-100 combines a perfectly regular lower transition with a visibly irregular upper one, a combination that turns out to be useful when interpreting the analysis in Section~\ref{sec:dataset_analysis}.
+Two consequences follow and are carried through the rest of this work. The top level is an
+\emph{external, manually defined} semantic grouping, not a property of CIFAR-100: results obtained
+on it describe this particular taxonomy and should not be read as results on ``the'' CIFAR-100
+hierarchy. Furthermore, the grouping is deliberately uneven --- the mammal-and-reptile group
+collects five superclasses while the \emph{people} group collects one --- so CIFAR-100 combines a
+perfectly regular lower transition with a visibly irregular upper one, a combination that turns out
+to be useful when interpreting the analysis in \S\ref{sec:dataset_analysis}.
 
 \subsubsection{CUB-200-2011: a taxonomy inherited from the literature}
 
-CUB-200-2011 \cite{wah2011caltech} publishes 200 species and their images, but no higher taxonomic level. The hierarchy used here is the 13 orders / 38 families / 200 species tree retained from the H-CAST codebase \cite{park2024visually}, stored in this work as an explicit species-to-(order, family) table so that it is versioned together with the experiments rather than reconstructed at load time.
+CUB-200-2011 \cite{wah2011caltech} publishes 200 species and their images, but no higher taxonomic
+level. The hierarchy used here is the 13 orders / 38 families / 200 species tree retained from the
+H-CAST codebase \cite{park2024visually}, stored in this work as an explicit species-to-(order,
+family) table so that it is versioned together with the experiments rather than reconstructed at
+load time.
 
-From the H-CAST codebase, the hierarchy can be identified as order/family/species; this was further confirmed by retrieving the actual class names associated with each order, family, and species. Notably, the same 13/38/200 order--family--species hierarchy is independently reported by HRN \cite{chen2022label}, which reconstructs the CUB taxonomy following the procedure of Chang et al. \cite{chang2021flamingo}. The agreement between these two independently obtained hierarchies lends external support to the taxonomy used by H-CAST, and it is the reason this tree was preferred over the alternatives found in the literature.
+The codebase does not name the levels, so they were identified by inspecting the class names
+attached to each group; they are orders, families and species. The same 13/38/200
+order--family--species tree is reported independently by HRN \cite{chen2022label}, which
+reconstructs the CUB taxonomy following the procedure of Chang et al.\ \cite{chang2021flamingo}. Two
+independent reconstructions agreeing is the strongest corroboration available for a tree that the
+dataset does not publish, and it is why this one was preferred to the alternatives in the
+literature.
 
-HT-CapsNet \cite{noor2025taxonomy}, by contrast, adopts a 39/123/200 hierarchy derived from another paper that originally published the corresponding labels through links that are no longer accessible. Moreover, the metrics it reports appear suspiciously low (20--30\%, against roughly 90\% for H-CAST). Further investigation revealed that the paper cited by HT-CapsNet had in turn taken its hierarchy from yet another source. From this latter source, the 39/123/200 split appears to correspond to family/genus/species; however, (i) that paper actually reports a 36/113/200 hierarchy, and (ii) the accuracy it obtains is comparable to that of H-CAST (approximately 80\%). The hierarchy used by HT-CapsNet cannot therefore be considered reliable or independently verifiable, and it was not adopted here.
+HT-CapsNet \cite{noor2025taxonomy} instead uses a 39/123/200 hierarchy, which could not be traced to
+a verifiable source. It is taken from a second paper whose label files are distributed through links
+that no longer resolve, and that paper in turn takes it from a third. In the third source the
+39/123/200 split appears to correspond to family/genus/species, but two things do not match: that
+work states a 36/113/200 hierarchy, and it reports roughly 80\% accuracy, comparable to H-CAST,
+whereas HT-CapsNet reports 20--30\% on the metrics it shares with the other works. Since the chain
+cannot be closed, this tree was not adopted.
 
-Additional discrepancies in the H-CAST hierarchy were also flagged during a preliminary, LLM-assisted check; being non-authoritative, this check does not substitute for a rigorous verification. A systematic ground-truth validation of the taxonomic hierarchy actually used --- for instance, by cross-checking every order, family, and species label against an authoritative biological taxonomy database --- therefore remains a necessary next step before this hierarchy can be adopted with full confidence.
+Additional discrepancies in the H-CAST hierarchy were also flagged during a preliminary,
+LLM-assisted check; being non-authoritative, this check does not substitute for a rigorous
+verification. A systematic ground-truth validation of the taxonomic hierarchy actually used --- for
+instance, by cross-checking every order, family, and species label against an authoritative
+biological taxonomy database --- therefore remains a necessary next step before this hierarchy can
+be adopted with full confidence.
 
 \subsubsection{FGVC-Aircraft: the official hierarchy, joined from parallel annotations}
 
-FGVC-Aircraft \cite{maji2013fine} is the only one of the three benchmarks that publishes a complete hierarchy, and it is used here without any external input. The official download distributes the class lists (\texttt{manufacturers.txt}, \texttt{families.txt}, \texttt{variants.txt}) and, for every split, three \emph{parallel} per-image annotation files that label the same images at the manufacturer, family, and variant levels. The tree is therefore not published as a set of parent--child edges: it has to be recovered by joining the three annotation files on the image identifier.
+FGVC-Aircraft \cite{maji2013fine} is the only one of the three benchmarks that publishes a complete
+hierarchy, and it is used here without any external input. The official download distributes the
+class lists (\texttt{manufacturers.txt}, \texttt{families.txt}, \texttt{variants.txt}) and, for
+every split, three \emph{parallel} per-image annotation files that label the same images at the
+manufacturer, family, and variant levels. The tree is therefore not published as a set of
+parent--child edges: it has to be recovered by joining the three annotation files on the image
+identifier.
 
-This work performs that join and, in doing so, verifies the assumptions it relies on: the three annotation files of a split are required to cover exactly the same image identifiers; every variant must be observed with a single family and every family with a single manufacturer across the entire dataset, so that the recovered relation is a function; and the resulting parent maps must cover every published class. Violations raise an error rather than being silently repaired. The resulting hierarchy has 30 manufacturers, 70 families, and 100 variants, matching the official class lists.
+This work performs that join and, in doing so, verifies the assumptions it relies on: the three
+annotation files of a split are required to cover exactly the same image identifiers; every variant
+must be observed with a single family and every family with a single manufacturer across the entire
+dataset, so that the recovered relation is a function; and the resulting parent maps must cover
+every published class. Violations raise an error rather than being silently repaired. The resulting
+hierarchy has 30 manufacturers, 70 families, and 100 variants, matching the official class lists.
 
-The official annotation also defines a fourth, finer \emph{model} level, which is not used: three levels are kept for comparability with CIFAR-100 and CUB-200-2011, and the variant level is the one on which the published FGVC-Aircraft results of HRN, H-CAST, and Hier-COS are reported.
+The official annotation also defines a fourth, finer \emph{model} level, which is not used: three
+levels are kept for comparability with CIFAR-100 and CUB-200-2011, and the variant level is the one
+on which the published FGVC-Aircraft results of HRN, H-CAST, and Hier-COS are reported.
 
 \subsubsection{Status of the three taxonomies}
 
-The three trees consequently have different epistemic status, and this asymmetry is a threat to the external validity of any cross-dataset claim made in this work. The FGVC-Aircraft hierarchy is official and fully verifiable from the distributed annotations. The CUB-200-2011 hierarchy is inherited from H-CAST and corroborated by an independent reconstruction in HRN, but it has not yet been validated against an authoritative biological taxonomy. The CIFAR-100 top level is externally imposed and is one grouping among many possible ones. Results are therefore reported for the explicit taxonomies described above, and no claim is made that they transfer to a different hierarchy defined over the same images.
+The three trees consequently have different epistemic status, and this asymmetry is a threat to the
+external validity of any cross-dataset claim made in this work. The FGVC-Aircraft hierarchy is
+official and fully verifiable from the distributed annotations. The CUB-200-2011 hierarchy is
+inherited from H-CAST and corroborated by an independent reconstruction in HRN, but it has not yet
+been validated against an authoritative biological taxonomy. The CIFAR-100 top level is externally
+imposed and is one grouping among many possible ones. Results are therefore reported for the
+explicit taxonomies described above, and no claim is made that they transfer to a different
+hierarchy defined over the same images.
 
 
 \subsection{Dataset analysis}
 \label{sec:dataset_analysis}
 
-This subsection characterizes what the unified protocol actually sees. It has two purposes: to document the splits and the amount of supervision available per class, and to quantify the properties of the label trees that are expected to interact with hierarchical methods --- how unbalanced each tree is, and how much of the fine decision is already determined by the coarse one. All figures and numbers below are produced by the analysis notebook from the same dataset adapters used during training, so split sizes, label indices, and hierarchy edges are identical to those seen by the models.
-
-Throughout this subsection the statements are \emph{descriptive}. They characterize the data and the label space, not the behaviour of any model: no claim about accuracy, hierarchical consistency, or the relative merits of the methods is derived from them here. Those comparisons belong to the results sections of this chapter.
+This subsection characterises what the unified protocol actually sees: the splits and the amount of
+supervision available per class, and the two properties of the label trees that hierarchical methods
+act on --- how unbalanced each tree is, and how much of the fine decision the coarse level already
+makes. Every number below is produced by the analysis notebook from the dataset adapters used at
+training time, so split sizes, label indices and hierarchy edges are exactly those the models see.
+All of it is \emph{descriptive}: it describes the data and the label space, never the behaviour of a
+model.
 
 \subsubsection{Splits and supervision per class}
 
-Table~\ref{tab:datasets_info} reports the datasets as they are distributed. The protocol departs from those published partitions in one respect only, and it does so because model selection requires a validation set that is disjoint from the test set. FGVC-Aircraft ships an official train/validation/test partition, which is used unchanged. CIFAR-100 and CUB-200-2011 publish only a train/test partition, so a validation split is carved deterministically out of the published training pool: the split is stratified at the leaf level, uses a fixed seed, and reserves a nominal 10\% of the CIFAR-100 training pool and 15\% of the CUB training pool. Per-class rounding makes the realized CUB fraction slightly smaller --- exactly four images per species, or 13.3\% of the pool --- while CIFAR-100 divides exactly. The published test sets are never touched, so test results remain comparable with the numbers reported in the literature. Table~\ref{tab:protocol_splits} reports the resulting partition.
+Table~\ref{tab:datasets_info} reports the datasets as they are distributed. The protocol departs
+from those published partitions in one respect only, and it does so because model selection requires
+a validation set that is disjoint from the test set. FGVC-Aircraft ships an official
+train/validation/test partition, which is used unchanged. CIFAR-100 and CUB-200-2011 publish only a
+train/test partition, so a validation split is carved deterministically out of the published
+training pool: the split is stratified at the leaf level, uses a fixed seed, and reserves a nominal
+10\% of the CIFAR-100 training pool and 15\% of the CUB training pool. Per-class rounding makes the
+realised CUB fraction slightly smaller --- exactly four images per species, or 13.3\% of the pool
+--- while CIFAR-100 divides exactly. The published test sets are never touched, so test results
+remain comparable with the numbers reported in the literature. Table~\ref{tab:protocol_splits}
+reports the resulting partition.
 
 \begin{table}[ht]
 \centering
-\caption{Partition actually used by the unified protocol, derived from the published splits of Table~\ref{tab:datasets_info}. ``Images per leaf class'' is the observed range across the classes of that split. The validation splits of CIFAR-100 and CUB-200-2011 are deterministic, leaf-stratified subsets of the published training pools; FGVC-Aircraft uses its official partition unchanged.}
+\caption{Partition actually used by the unified protocol, derived from the published splits of
+Table~\ref{tab:datasets_info}. ``Images per leaf class'' is the observed range across the classes of
+that split. The validation splits of CIFAR-100 and CUB-200-2011 are deterministic, leaf-stratified
+subsets of the published training pools; FGVC-Aircraft uses its official partition unchanged.}
 \label{tab:protocol_splits}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{lccc}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}YCCC@{}}
 \toprule
 \textbf{} & \textbf{CIFAR-100} & \textbf{CUB-200-2011} & \textbf{FGVC-Aircraft} \\
 \midrule
@@ -242,34 +361,62 @@ Validation origin           & 10\% of published train & 4 per species (13.3\%) &
 Train images per leaf class & 450           & 25--26            & 33--34 \\
 Test images per leaf class  & 100           & 11--30            & 33--34 \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-Two facts in this table matter more than the totals. The first is the amount of supervision per leaf class, which differs by more than an order of magnitude: a CIFAR-100 fine class is trained on 450 images, whereas a CUB species is trained on 25 or 26 and an Aircraft variant on 33 or 34. Any observation about fine-grained behaviour on CUB and Aircraft is therefore made in a low-data regime that CIFAR-100 does not share. The second is the split composition: CIFAR-100 devotes 75\% of its images to training and 8\% to validation, whereas the official FGVC-Aircraft partition devotes only one third to training and a full third to validation. Aircraft consequently trains on the smallest pool of the three while offering the largest model-selection set, and the reliability of the checkpoint-selection procedure is not comparable across datasets.
+Two facts in this table matter more than the totals. The first is the amount of supervision per leaf
+class, which differs by more than an order of magnitude: 450 images for a CIFAR-100 fine class
+against 25 or 26 for a CUB species and 33 or 34 for an Aircraft variant. Any observation about
+fine-grained behaviour on CUB and Aircraft is therefore made in a low-data regime that CIFAR-100
+does not share. The second is the split composition: CIFAR-100 devotes 75\% of its images to
+training and 8\% to validation, whereas the official FGVC-Aircraft partition devotes one third to
+each. Aircraft trains on the smallest pool of the three while offering the largest model-selection
+set, so the reliability of checkpoint selection is itself not comparable across datasets.
 
-Sample balance itself needs no further discussion. Leaf-class counts are uniform or near-uniform in every training split (exactly 450 per class on CIFAR-100, 33 or 34 per variant on Aircraft, 25 or 26 per species on CUB), and the only visible dispersion is the CUB test split, which ranges from 11 to 30 images per species. Class imbalance is therefore not a confound in these experiments; imbalance of the \emph{hierarchy}, examined next, is a different matter.
+Sample balance needs no further discussion: leaf-class counts are uniform or near-uniform in every
+training split, and the only visible dispersion is the CUB test split, at 11 to 30 images per
+species. Class imbalance is not a confound in these experiments; imbalance of the \emph{hierarchy},
+examined next, is a different matter.
 
 \subsubsection{Shape of the label trees}
 
-Figure~\ref{fig:taxonomy_icicle} shows the three taxonomies drawn to scale: the three bands are the three levels, every rectangle is a class, its width is the fraction of leaf classes in its subtree, and children are drawn beneath their parent. The three trees have visibly different shapes despite having the same depth.
+Figure~\ref{fig:taxonomy_icicle} shows the three taxonomies drawn to scale: the three bands are the
+three levels, every rectangle is a class, its width is the fraction of leaf classes in its subtree,
+and children are drawn beneath their parent. The three trees have visibly different shapes despite
+having the same depth.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/dataset/taxonomy_icicle.pdf}
-\caption{Structure of the three taxonomies. Each band is one hierarchy level and each rectangle one class, with width proportional to the number of leaf classes in its subtree; subtrees are ordered by size, so the horizontal axis is a ranking and not a class identifier. A rectangle whose width is unchanged from one band to the next is a single-child chain. Widths are shares of leaf classes, not of images.}
+\caption{Structure of the three taxonomies. Each band is one hierarchy level and each rectangle one
+class, with width proportional to the number of leaf classes in its subtree; subtrees are ordered by
+size, so the horizontal axis is a ranking and not a class identifier. A rectangle whose width is
+unchanged from one band to the next is a single-child chain. Widths are shares of leaf classes, not
+of images.}
 \label{fig:taxonomy_icicle}
 \end{figure}
 
-CIFAR-100 is regular at the bottom and irregular at the top: every superclass has exactly five fine classes, but the eight imposed coarse classes cover between 5 and 25 fine classes. CUB-200-2011 is dominated by a single top-level class, which covers 133 of the 200 species (66.5\%); the two largest orders together cover 78\%. FGVC-Aircraft is the most evenly distributed at the top --- its largest manufacturer covers 22 of 100 variants --- but it is the most degenerate at the bottom, as the icicle makes visible in the many family rectangles whose width is identical to that of the single variant beneath them.
+CIFAR-100 is regular at the bottom and irregular at the top: every superclass has exactly five fine
+classes, but the eight imposed coarse classes cover between 5 and 25 fine classes. CUB-200-2011 is
+dominated by a single top-level class, which covers 133 of the 200 species (66.5\%); the two largest
+orders together cover 78\%. FGVC-Aircraft is the most evenly distributed at the top --- its largest
+manufacturer covers 22 of 100 variants --- but it is the most degenerate at the bottom, as the
+icicle makes visible in the many family rectangles whose width is identical to that of the single
+variant beneath them.
 
-Table~\ref{tab:branching} quantifies both transitions. The last column is the one with the clearest consequence for hierarchical classification: a parent with a single child is not a decision but a relabelling, since the coarse label already determines the fine one. On FGVC-Aircraft, 54 of the 70 families (77\%) contain exactly one variant, and 8 of the 13 CUB orders (62\%) contain a single family. CIFAR-100 has almost none, by construction.
+Table~\ref{tab:branching} quantifies both transitions. The last column is the one with the clearest
+consequence for hierarchical classification: a parent with a single child is not a decision but a
+relabelling, since the coarse label already determines the fine one. On FGVC-Aircraft, 54 of the 70
+families (77\%) contain exactly one variant, and 8 of the 13 CUB orders (62\%) contain a single
+family. CIFAR-100 has almost none, by construction.
 
 \begin{table}[ht]
 \centering
-\caption{Branching statistics of the two transitions of each taxonomy. ``Single-child parents'' counts the parents with exactly one child, for which the level pair carries no decision.}
+\caption{Branching statistics of the two transitions of each taxonomy. ``Single-child parents''
+counts the parents with exactly one child, for which the level pair carries no decision.}
 \label{tab:branching}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{llccccc}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.7cm}L{2.85cm}CCCCC@{}}
 \toprule
 \textbf{Dataset} & \textbf{Transition} & \textbf{Parents} & \textbf{Children} & \textbf{Median} & \textbf{Max} & \textbf{Single-child parents} \\
 \midrule
@@ -282,49 +429,105 @@ CUB-200-2011  & family $\to$ species       & 38 & 200 & 3.5 & 30 & 12 (32\%) \\
 FGVC-Aircraft & manufacturer $\to$ family  & 30 & 70  & 2.0 & 8  & 14 (47\%) \\
 FGVC-Aircraft & family $\to$ variant       & 70 & 100 & 1.0 & 8  & 54 (77\%) \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \subsubsection{How much of the fine decision the coarse level already makes}
 
-Branching statistics can be summarized in a single quantity per transition: the uncertainty about the child class that remains once the parent is known. Measuring it in bits as the conditional entropy $H(\text{child}\mid\text{parent})$, and comparing it against the $H(\text{child})$ that would remain without any hierarchy, gives a direct measure of how much information a correct coarse prediction supplies. Figure~\ref{fig:conditional_entropy} reports both.
+Branching statistics can be summarised in a single quantity per transition: the uncertainty about
+the child class that remains once the parent is known. Measuring it in bits as the conditional
+entropy $H(\text{child}\mid\text{parent})$, and comparing it against the $H(\text{child})$ that
+would remain without any hierarchy, gives a direct measure of how much information a correct coarse
+prediction supplies. Figure~\ref{fig:conditional_entropy} reports both.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/dataset/hierarchy_conditional_entropy.pdf}
-\caption{Uncertainty about the child class of each transition, in bits. The full bar is the uncertainty without the hierarchy, $H(\text{child})$; the colored part is what remains once the parent is known, $H(\text{child}\mid\text{parent})$; the grey part above it, annotated with its percentage, is what the hierarchy removes. Values are structural, that is, computed from the taxonomy with a uniform distribution over classes.}
+\caption{Uncertainty about the child class of each transition, in bits. The full bar is the
+uncertainty without the hierarchy, $H(\text{child})$; the coloured part is what remains once the
+parent is known, $H(\text{child}\mid\text{parent})$; the grey part above it, annotated with its
+percentage, is what the hierarchy removes. Values are structural, that is, computed from the
+taxonomy with a uniform distribution over classes.}
 \label{fig:conditional_entropy}
 \end{figure}
 
-The three datasets separate clearly. On FGVC-Aircraft, identifying a variant among 100 costs $\log_2 100 = 6.64$ bits without the hierarchy, but knowing the family leaves only $0.78$ bits --- the equivalent of fewer than two equally likely variants --- an 88\% reduction that is the direct consequence of the 54 single-variant families. On CUB-200-2011 the same transition leaves $3.10$ of $7.64$ bits, roughly nine equally likely species, a reduction of 59\%; the order-to-family transition is the weakest of all six, at 48\%, because one order dominates. CIFAR-100 sits in between and is the most uniform across its two transitions, at 66\% and 65\%.
+The three datasets separate clearly. On FGVC-Aircraft, identifying a variant among 100 costs $\log_2
+100 = 6.64$ bits without the hierarchy, but knowing the family leaves only $0.78$ bits --- the
+equivalent of fewer than two equally likely variants --- an 88\% reduction that is the direct
+consequence of the 54 single-variant families. On CUB-200-2011 the same transition leaves $3.10$ of
+$7.64$ bits, roughly nine equally likely species, a reduction of 59\%; the order-to-family
+transition is the weakest of all six, at 48\%, because one order dominates. CIFAR-100 sits in
+between and is the most uniform across its two transitions, at 66\% and 65\%.
 
-Two qualifications are necessary. First, these values are \emph{structural}: they are computed with a uniform distribution over classes and therefore describe the label tree alone. The analysis also computes the empirical version, weighted by training-image counts. The two agree to within $0.13$ bits on every transition and are identical on CIFAR-100, where each fine class has exactly 450 training images, which confirms that the effect measured here is a property of the taxonomy rather than of sample imbalance. Second, and more importantly, this is a statement about the label space, not a prediction: it says how much a correct coarse prediction constrains the leaf, not how easily a model recovers that constraint, and not whether a method that enforces the constraint will classify better. It does, however, delimit what a hierarchy-exploiting method can gain on each benchmark, and it makes the three datasets genuinely complementary --- one where the coarse level nearly determines the leaf (Aircraft), one where it is dominated by a single branch (CUB), and one where the two transitions are balanced (CIFAR-100).
+Two qualifications are necessary. First, these values are \emph{structural}: they assume a uniform
+distribution over classes and therefore describe the label tree alone. The empirical version,
+weighted by training-image counts, agrees to within $0.13$ bits on every transition and is identical
+on CIFAR-100, so what is measured here is a property of the taxonomy and not of sample imbalance.
+Second, this is a statement about the label space and not a prediction: it says how much a correct
+coarse prediction constrains the leaf, not how easily a model recovers that constraint, and still
+less whether enforcing it improves classification. What it does establish is that the three
+benchmarks are complementary rather than redundant --- one where the coarse level nearly determines
+the leaf (Aircraft), one where it is dominated by a single branch (CUB), and one where the two
+transitions are balanced (CIFAR-100).
 
 \subsubsection{Image geometry and its interaction with the model presets}
 
-Figure~\ref{fig:image_geometry} shows the native resolution of the training images. The three datasets occupy three separate regions: CIFAR-100 collapses into a single point at $32\times32$, CUB-200-2011 has a median of $500\times375$ pixels, with no sampled image exceeding 500 pixels on its long side, and FGVC-Aircraft has a median of $1024\times699$ pixels, roughly four times the area of a CUB image and seven hundred times that of a CIFAR-100 image.
+Figure~\ref{fig:image_geometry} shows the native resolution of the training images. The three
+datasets occupy three separate regions: CIFAR-100 collapses into a single point at $32\times32$,
+CUB-200-2011 has a median of $500\times375$ pixels, with no sampled image exceeding 500 pixels on
+its long side, and FGVC-Aircraft has a median of $1024\times699$ pixels, roughly four times the area
+of a CUB image and seven hundred times that of a CIFAR-100 image.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/dataset/native_image_geometry.pdf}
-\caption{Native resolution of the sampled training images, on logarithmic axes. Each point is one image; the dashed diagonal marks square images, so points below it are landscape. The small open square marks the $224\times224$ input used by most model presets. All CIFAR-100 images coincide in the single marker at $32\times32$; the right-angled edge of the CUB cloud is the 500-pixel cap observed on the long side of every sampled CUB image, not a property of the photographs.}
+\caption{Native resolution of the sampled training images, on logarithmic axes. Each point is one
+image; the dashed diagonal marks square images, so points below it are landscape. The small open
+square marks the $224\times224$ input used by most model presets. All CIFAR-100 images coincide in
+the single marker at $32\times32$; the right-angled edge of the CUB cloud is the 500-pixel cap
+observed on the long side of every sampled CUB image, not a property of the photographs.}
 \label{fig:image_geometry}
 \end{figure}
 
-This matters because the presets do not consume these images at a single resolution. CIFAR-100 is used natively at $32\times32$ by every model. CUB-200-2011 and FGVC-Aircraft are resized to $224\times224$ by the H-CAST, Hier-COS, and LH-DNN presets, to $448\times448$ by the HRN preset, and to $64\times64$ by the HT-CapsNet preset. An Aircraft image is therefore downsampled by a factor of roughly 14 in area for a $224$-pixel model, 3.6 for HRN, and 175 for HT-CapsNet. These values follow each method's own configuration rather than a common normalization, so input resolution is a confound that is \emph{not} controlled in this comparison: any difference in fine-grained accuracy between HRN and the $224$-pixel models on CUB and Aircraft is partly attributable to it. The choice is stated explicitly among the threats to validity rather than silently normalized away, since imposing a single resolution would depart from the settings under which each baseline is designed to operate.
+This matters because the presets do not consume these images at a single resolution. CIFAR-100 is
+used natively at $32\times32$ by every model, but CUB-200-2011 and FGVC-Aircraft are resized to
+$224\times224$ by the H-CAST, Hier-COS and LH-DNN presets, to $448\times448$ by HRN, and to
+$64\times64$ by HT-CapsNet. An Aircraft image is thus reduced in area by a factor of roughly 14 for
+a $224$-pixel model, 3.6 for HRN, and 175 for HT-CapsNet. Each figure follows the method's own
+published configuration rather than a common normalisation, so input resolution is a confound that
+is \emph{not} controlled here: part of any fine-grained accuracy gap between HRN and the $224$-pixel
+models on CUB and Aircraft is attributable to it. Imposing a single resolution would have removed
+the confound at the price of evaluating each baseline outside the regime it was designed for, so the
+confound is declared instead.
 
 \subsubsection{Summary and threats to validity}
 
 The analysis supports four statements that are used when interpreting the experimental results.
 
 \begin{itemize}[itemsep=2pt, topsep=3pt]
-  \item \textbf{Supervision differs by an order of magnitude per class.} CIFAR-100 provides 450 training images per leaf class against 25--34 for CUB and Aircraft, so the two fine-grained benchmarks are low-data regimes and CIFAR-100 is not.
-  \item \textbf{The trees are unbalanced in different ways.} CUB is dominated by one order covering 66.5\% of the species; Aircraft is nearly degenerate at its lower transition, with 77\% single-variant families; CIFAR-100 is perfectly regular below and deliberately irregular above.
-  \item \textbf{The hierarchy carries very different amounts of information.} A correct parent removes 88\% of the leaf uncertainty on Aircraft, 59\% on CUB, and 65\% on CIFAR-100. The datasets therefore probe hierarchical methods in complementary rather than redundant conditions.
-  \item \textbf{Two experimental factors are not controlled.} Split composition is inherited (Aircraft validates on a third of its data, CIFAR-100 on 8\%), and input resolution is inherited from each method's published configuration (64, 224, or 448 pixels on the fine-grained datasets).
+  \item \textbf{Supervision differs by an order of magnitude per class.} CIFAR-100 provides 450
+      training images per leaf class against 25--34 for CUB and Aircraft, so the two fine-grained
+      benchmarks are low-data regimes and CIFAR-100 is not.
+  \item \textbf{The trees are unbalanced in different ways.} CUB is dominated by one order covering
+      66.5\% of the species; Aircraft is nearly degenerate at its lower transition, with 77\%
+      single-variant families; CIFAR-100 is perfectly regular below and deliberately irregular
+      above.
+  \item \textbf{The hierarchy carries very different amounts of information.} A correct parent
+      removes 88\% of the leaf uncertainty on Aircraft, 59\% on CUB, and 65\% on CIFAR-100. The
+      datasets therefore probe hierarchical methods in complementary rather than redundant
+      conditions.
+  \item \textbf{Two experimental factors are not controlled.} Split composition is inherited
+      (Aircraft validates on a third of its data, CIFAR-100 on 8\%), and input resolution is
+      inherited from each method's published configuration (64, 224, or 448 pixels on the
+      fine-grained datasets).
 \end{itemize}
 
-Finally, the descriptive nature of this analysis bounds what it can support. The statistics above are computed on the taxonomies of Section~\ref{sec:hierarchy_construction}, two of which are not published with their datasets; they would change under a different, equally defensible hierarchy over the same images. Native image geometry describes the source data and not the tensors seen by a model after resizing, cropping, and augmentation. And none of these quantities predicts performance: they describe the conditions under which the methods are compared, and they are used in the results sections below only to explain results, never to anticipate them.
+Two limits bound what this analysis can support. The statistics are computed on the taxonomies of
+\S\ref{sec:hierarchy_construction}, two of which the datasets do not publish, and would change under
+a different but equally defensible tree over the same images; and native image geometry describes
+the source files, not the tensors a model sees after resizing, cropping and augmentation. Everything
+above describes the conditions under which the methods are compared, and is used in the results
+sections to explain a result, never to anticipate one.
 
 % ======================================================
 %                       METRICS
@@ -365,8 +568,7 @@ smallest set that leaves no one of the four questions unanswered.
 
 \emph{Comparability with the baselines.} Each of the four is already in use in
 the line of work the baselines belong to, so no claim made below rests on an
-instrument devised for this thesis, and none rests on a metric introduced
-together with the method it evaluates. Per-level accuracy is the common currency
+instrument devised for this thesis. Per-level accuracy is the common currency
 of every multi-head method of \cref{sec:baselines}; full-path accuracy is the
 metric under which H-CAST reports its results~\cite{park2024visually}; TICE is
 due to Wang et al.~\cite{wang2023consistency}, and LH-DNN~\cite{fiaschi2024informed}
@@ -545,831 +747,640 @@ decoder behaves as specified.
 \providecommand{\tbd}{\textcolor{gray}{--}}
 \providecommand{\na}{\textit{n/a}}
 
-\section{Implementation fidelity and deviations from the published models}
+\section{Baseline implementation and comparability}
 \label{sec:fidelity}
 
-The data and the metrics are now fixed. What is not yet fixed is the object being
-measured. \Cref{ch:methods} described the mechanisms and the inference rules as
-though they applied to a single, uniform substrate; they do not. They apply to
-five model families, and those families are the one component of the apparatus
-that this work did not define.
+The five baselines originate from separate codebases, frameworks and evaluation
+protocols. They were brought into one experimental framework so that they could
+use the same data splits, metrics and checkpoint-selection rules. This section
+states which sources were used, which rules were standardised, and where the
+local implementations depart from the published settings.
 
-The five families compared in this thesis were published as five separate
-codebases, in two deep learning frameworks, with five evaluation protocols, five
-label conventions and, in one case, no released code at all. Comparing them
-required reimplementing or porting all of them into the single framework of
-\cref{ch:methods}. That decision is what makes the comparisons of this chapter
-meaningful, and it is also the largest threat to their external validity, because
-every reimplementation is an opportunity to change a result without intending to.
+Here, \emph{aligned} means that the architecture, objective and inference rule
+match the cited source at the level tested in
+\S\ref{ssec:fidelity_verification}. It does not imply numerical reproduction of
+a published result: framework, protocol, hardware and seed differences remain.
 
-This section therefore records what was changed and why. It is written to be
-falsifiable rather than reassuring: each deviation is classified, and deviations
-that place a configuration outside what the original work evaluated are marked as
-such so that no claim below can silently rest on one. It is placed here, before
-the experimental design, because the design's central caveat --- that a
-difference between two family rows compares implementations rather than
-mechanisms (\S\ref{ssec:design_threats}) --- is only as credible as the record
-that follows.
-
-Throughout, \emph{aligned} means that the local implementation reproduces the
-method-defining behaviour of the source --- its architecture, objective and
-inference rule --- as verified by the tests of \S\ref{ssec:fidelity_verification}.
-It does not mean that a local run reproduces a published number. It cannot: the
-protocol below deliberately differs from several of the originals, and framework,
-library, hardware and seed differences prevent numerical identity even where the
-equations agree.
-
-\subsection{Source anchors}
+\subsection{Reference implementations}
 \label{ssec:fidelity_anchors}
 
 \begin{table}[htbp]
 \centering
-\small
-\begin{tabular}{@{}llll@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.4cm}YL{2.1cm}L{2.8cm}@{}}
 \toprule
 \textbf{Family} & \textbf{Reference implementation} & \textbf{Revision} & \textbf{Source framework} \\
 \midrule
-H-CAST     & \texttt{github.com/pseulki/HCAST}            & \texttt{b1a222bb} & PyTorch \\
-HT-CapsNet & \texttt{github.com/tasrif-khondaker/HT-CapsNet} & \texttt{8a0ea23f} & TensorFlow / Keras \\
-HRN        & \texttt{github.com/MonsterZhZh/HRN}          & \texttt{59944e48} & PyTorch \\
-Hier-COS   & \texttt{github.com/Depanshu-Sani/Hier-COS}   & \texttt{122b01df} & PyTorch \\
-LH-DNN     & no official implementation found            & ---               & reconstructed from \cite{fiaschi2024informed} \\
+H-CAST     & \href{https://github.com/pseulki/HCAST}{\texttt{pseulki/HCAST}} & \texttt{b1a222bb} & PyTorch \\
+HT-CapsNet & \href{https://github.com/tasrif-khondaker/HT-CapsNet}{\texttt{tasrif-khondaker/HT-CapsNet}} & \texttt{8a0ea23f} & TensorFlow / Keras \\
+HRN        & \href{https://github.com/MonsterZhZh/HRN}{\texttt{MonsterZhZh/HRN}} & \texttt{59944e48} & PyTorch \\
+Hier-COS   & \href{https://github.com/Depanshu-Sani/Hier-COS}{\texttt{Depanshu-Sani/Hier-COS}} & \texttt{122b01df} & PyTorch \\
+LH-DNN     & paper only \cite{fiaschi2024informed} & --- & not released \\
 \bottomrule
-\end{tabular}
-\caption{Reference implementations against which the local ports were audited.
-The revisions are evidence anchors: they fix what ``the original'' means for
-every statement in this section, and are not fetched or executed during
-training. Where a released implementation and its paper disagree, both were
-consulted and the resolution is recorded in \S\ref{ssec:fidelity_families}.}
+\end{tabularx}
+\caption{Sources used to audit the local implementations. The revisions fix the
+meaning of ``reference implementation'' throughout this chapter.}
 \label{tab:fidelity_anchors}
 \end{table}
 
-LH-DNN is the exception that must be stated first, because it conditions
-everything said about that family: no official code was found, so the local
-implementation is reconstructed from the prose, equations and figures of
-\cite{fiaschi2024informed}. It has therefore not been validated against an
-authoritative implementation, and a discrepancy between this thesis and that
-paper may be a property of the reconstruction rather than of the method.
+LH-DNN is the only family without an official implementation. Its local version
+was reconstructed from the equations, figures and experimental description in
+\cite{fiaschi2024informed}; discrepancies with the paper may therefore arise
+from the reconstruction itself.
 
-\subsection{The unified protocol, and what it costs}
+\subsection{Common evaluation protocol}
 \label{ssec:fidelity_protocol}
 
-A set of protocol decisions is applied identically to every family. They are
-listed together because they are the reason cross-family numbers can be placed in
-one table at all, and because each of them silently breaks compatibility with at
-least one of the original repositories.
+All families use the same coarse-to-fine label convention, dataset partitions
+and label indices. Validation and test include every sample, checkpoints are
+selected on validation data only, and a separate checkpoint is retained for each
+decoding mode according to \S\ref{ssec:inference_selection}. Metrics, logging,
+mixed-precision checks and resume validation are also shared.
 
-\begin{enumerate}
-    \item One coarse-to-fine label convention with a fixed number of levels, and
-    one canonical label space reused across training, validation and test.
-    \item A deterministic, stratified train/validation partition with a fixed
-    split seed, so that all families see the same partition of the same data.
-    \item Every validation and test sample is evaluated; incomplete final batches
-    are not dropped.
-    \item Checkpoints are selected on validation data only, never on test.
-    \item Two checkpoints are kept per run, one per decoding mode, ranked by the
-    lexicographic criterion of \S\ref{ssec:inference_selection}.
-    \item Shared metrics, logging artefacts, mixed-precision gating and strict
-    resume checks.
-\end{enumerate}
+These choices correct two behaviours present in some reference codebases:
+dropping incomplete evaluation batches and selecting results on test data. They
+also mean that the experiments below are controlled comparisons inside this
+framework, not exact reproductions of the published runs.
 
-Items 3 and 4 are corrections rather than conveniences. At least one reference
-implementation drops incomplete evaluation batches, and at least one can select
-or report on test data; reproducing either would import an optimistic bias into
-this thesis, so neither is reproduced. The cost is stated plainly: a run in this
-framework is not a reproduction of a published run, and no number in this
-chapter should be read against a published table. The comparisons
-that this thesis makes are within-framework comparisons, in which every arm pays
-the same protocol cost.
-
-\subsection{A classification of the deviations}
+\subsection{Model-specific adaptations and extrapolations}
 \label{ssec:fidelity_classes}
-
-Every difference from a reference implementation falls into one of five classes,
-and the class determines what may be claimed from the resulting run.
-
-\begin{itemize}
-    \item \textbf{Framework adaptation.} Plumbing required to run the model in
-    this framework: data loading, logging, checkpointing, the protocol of
-    \S\ref{ssec:fidelity_protocol}. Method-neutral by construction.
-    \item \textbf{Port.} A translation between frameworks or library versions
-    which is intended to preserve semantics exactly. Ports are the class most
-    likely to introduce silent error, and are therefore the class most heavily
-    covered by the tests of \S\ref{ssec:fidelity_verification}.
-    \item \textbf{Verified correction.} A place where the reference
-    implementation is internally inconsistent, disagrees with its own paper, or
-    relies on an artefact of its local environment, and a decision had to be
-    taken. Each such decision is recorded with the evidence that motivated it.
-    \item \textbf{Local extension.} Behaviour that is not in the original at all:
-    HCC, lexicographic mode, and the transplant of the LH-projection onto
-    Hier-COS. These are contributions of this thesis and must never be attributed
-    to the authors of the host family.
-    \item \textbf{Unsupported extrapolation.} A dataset, hierarchy or input
-    geometry the original work never evaluated. Results from these settings are
-    reported separately and are not used to support any claim about the published
-    method.
-\end{itemize}
-
-The extrapolations are named here in one place, since they recur in the results:
-HRN on CIFAR-100, Hier-COS on CUB-200-2011 and on a three-level rather than
-five-level CIFAR hierarchy, HT-CapsNet on FGVC-Aircraft and on this framework's
-CUB taxonomy, and LH-DNN on CUB-200-2011 and FGVC-Aircraft.
-
-\subsection{Family by family}
 \label{ssec:fidelity_families}
 
-\paragraph{H-CAST.} The CAST and H-CAST internals are vendored unmodified, and
-the local wrapper only reorders their level outputs into the repository-wide
-coarse-to-fine convention. The segmentation machinery and the level-wise and
-global-KL loss paths follow the upstream design. One verified correction was
-required: the upstream Aircraft helper derives its hierarchy from a local
-CSV with a partly hard-coded taxonomy, which is not reconstructible outside that
-repository; the local adapter instead joins the official parallel
-manufacturer/family/variant annotations distributed with the dataset and
-validates the resulting $30/70/100$ taxonomy. Remaining divergences are shape and
-forward-contract guards required by current \texttt{timm} and PyTorch versions,
-each covered by a test. HCC and lexicographic mode are local extensions on this
-family.
+Three kinds of difference matter when interpreting the results. A
+\emph{protocol adaptation} applies the common rules above without changing the
+method-defining computation. A \emph{local extension}, such as HCC or
+lexicographic mode, is a contribution of this thesis applied to a baseline. An
+\emph{unsupported extrapolation} evaluates a family on a dataset or hierarchy
+not covered by its source; such rows describe the local implementation and are
+not evidence about the published method.
 
-\paragraph{LH-DNN.} Reconstructed from \cite{fiaschi2024informed}. The
-reconstruction follows the paper on the CIFAR-100 $8\to20\to100$ hierarchy, the
-large topology (four pairs of $3\times3$ convolutions, four $2\times2$ pooling
-stages, a shared $512$-unit rectified layer and linear level heads), the
-detached branch projections whose forward value is unchanged --- the behaviour
-established in general in \S\ref{ssec:lhproj_forward} --- the advantage
-topology in which coarser predictions are propagated as detached baselines, an
-unweighted sum of per-level cross-entropies, and the paper's short CIFAR schedule
-with its learning-rate switch. Two extrapolations are recorded: the paper
-evaluates CIFAR-10, CIFAR-100 and Fashion-MNIST rather than the fine-grained
-datasets used here, and on those datasets the final feature map is reduced by a
-deterministic average pool, which preserves the paper's pre-head geometry at
-$224$~px and avoids an accidental parameter explosion in the dense head. The
-transforms and regularisation used on those datasets are local choices and are
-not reported as paper settings.
+\paragraph{H-CAST.} The CAST and H-CAST internals, segmentation path and losses
+are retained. The wrapper only converts outputs to the common coarse-to-fine
+order. For FGVC-Aircraft, the local hierarchy is built from the official
+manufacturer, family and variant annotations because the upstream helper relies
+on a repository-local, partly hard-coded taxonomy. Compatibility guards for
+current PyTorch and \texttt{timm} versions are covered by tests. HCC and
+lexicographic mode are local extensions.
 
-\paragraph{HT-CapsNet.} The most invasive case, since the source is a
-TensorFlow/Keras implementation and the local one is a PyTorch port. Ported with
-intent to preserve semantics: primary capsules, per-level secondary capsules, the
-hierarchical skip input, routing by agreement, taxonomy masking, cross-capsule
-attention, the margin loss, and the dynamic level weighting. Three decisions
-required evidence beyond the paper. First, the released code and the paper give
-different formulas for the dynamic level weights; the port follows the released
-callback, on the grounds that it is what produced the published numbers, and the
-weights are stored as checkpointed buffers so that each batch uses the weights
-computed after the preceding one, as the Keras callback does. Second, the
-attention block retains Keras semantics, in which heads have independent key and
-value widths, so the projection width does not depend on the capsule dimension;
-this is verified against an explicit reference implementation in the tests.
-Third, the constructor defaults of the source are internally inconsistent, and
-the local taxonomy temperature follows the saved run arguments of the released
-experiments instead. Two framework adaptations are deliberate failures rather
-than fallbacks: a missing taxonomy and missing pretrained weights both raise,
-because both would otherwise silently degrade the model --- into an ordinary
-capsule network and into a randomly initialised network labelled as pretrained.
-The local CUB taxonomy is the unified one of this framework rather than the
-paper's, and FGVC-Aircraft is an extrapolation, the paper having reported a
-different fine-grained dataset.
+\paragraph{LH-DNN.} The reconstruction follows the reported
+$8\to20\to100$ CIFAR hierarchy, large convolutional topology, detached branch
+projections, advantage connections, unweighted level losses and 15-epoch
+schedule. CUB-200-2011 and FGVC-Aircraft are extrapolations. On their larger
+$224$-pixel inputs, deterministic average pooling preserves the paper's
+pre-head geometry and prevents the dense head from growing with image area.
 
-\paragraph{HRN.} Aligned on the ResNet-50 trunk, the three residual feature
-branches, the sigmoid tree scores with a separate leaf cross-entropy head, the
-residual fusion path, and the evaluation rule in which the two coarser levels are
-read through sigmoids and the finest through a softmax. The fine-grained presets
-retain the source resize/crop geometry, normalisation, SGD schedule and reduced
-trunk learning rate. Divergences are protocol: complete evaluation batches and
-validation-only selection, as in \S\ref{ssec:fidelity_protocol}; the
-partial-label branch of the original is out of scope; mixup and cutmix are
-disabled for parity with the source objective. CIFAR-100 is an extrapolation
-which retains this framework's native $32$~px preprocessing rather than the
-source's fine-grained input geometry, chosen for cross-family comparability and
-labelled accordingly.
+\paragraph{HT-CapsNet.} The TensorFlow/Keras source was ported to PyTorch while
+retaining its capsule stages, routing, taxonomy mask, attention, margin loss and
+dynamic level weighting. Where the paper and code differ, the port follows the
+released training code: in particular, its dynamic-weight callback and saved
+taxonomy-temperature settings. The attention implementation is tested against
+the Keras projection semantics. The unified CUB hierarchy differs from the
+paper's hierarchy, and FGVC-Aircraft is an extrapolation.
 
-\paragraph{Hier-COS.} Aligned on the taxonomy-node coordinate system and its
-subspaces, the random orthonormal fixed frame, the objective combining the global
-path distribution with the level-wise regulariser, the backbone families, the
-dataset-specific preprocessing, and --- importantly for
-\S\ref{ssec:inference_readout} --- the inference rule, which ranks raw subspace
-projection norms directly and applies no softmax before prediction. One source
-ambiguity is recorded rather than resolved: the released launch scripts pass
-different feature-space flags for different datasets, so the fine-grained recipe
-cannot be described as an unambiguous instance of the published method; the local
-preset is a consistent adaptation and is labelled as such. The decomposed
-objectives of \S\ref{ssec:lhproj_hiercos} are local extensions introduced because
-the published objective exposes no per-level term, and the three-level CIFAR
-hierarchy is a deliberate departure from the upstream five-level protocol, taken
-so that all families in this thesis share one hierarchy depth.
+\paragraph{HRN.} The local model retains the ResNet-50 trunk, residual branches,
+tree scores, leaf classifier, residual fusion and native sigmoid/softmax readout.
+Fine-grained preprocessing and optimisation follow the source. The common
+protocol changes evaluation and checkpoint selection; partial-label training is
+out of scope, and mixup and cutmix are disabled. CIFAR-100 is an extrapolation
+and uses its native $32$-pixel inputs.
 
-\subsection{Verification}
+\paragraph{Hier-COS.} The taxonomy-node coordinates, fixed orthonormal frame,
+loss, backbones, preprocessing and subspace-norm inference are retained. The
+released scripts use inconsistent feature-space flags across datasets, so the
+local fine-grained preset is a documented adaptation. The decomposed objectives
+of \S\ref{ssec:lhproj_hiercos} are local extensions, and the three-level CIFAR
+hierarchy departs from the source's five-level setting.
+
+The unsupported family--dataset settings are therefore HRN on CIFAR-100;
+Hier-COS on CUB-200-2011 and on the three-level CIFAR hierarchy; HT-CapsNet on
+FGVC-Aircraft and on the unified CUB hierarchy; and LH-DNN on CUB-200-2011 and
+FGVC-Aircraft.
+
+\subsection{Verification and remaining limits}
 \label{ssec:fidelity_verification}
 
-Fidelity claims are asserted by an automated test suite rather than by
-inspection, and the same suite verifies the propositions of \cref{ch:methods}. It
-covers, on the port side, the capsule squashing and margin-loss equations against
-their source form, the attention projection shapes against an explicit reference,
-the taxonomy masking pattern, the HRN tree objective, its parameter grouping and
-its schedule, and the preset configurations of both fidelity families. On the
-mechanism side it verifies that the disabled HCC path is bitwise identical to
-the corresponding unconstrained run, that the projected
-scores satisfy the hierarchy constraints, that the correction shifts each sibling
-group by a single constant and leaves the coarsest level anchored ---
-\cref{cor:hcc_sibling_shift} --- that top-down decoding agrees with a
-naive reference loop, and that the subspace-norm readout reproduces native
-Hier-COS inference, as claimed in \S\ref{ssec:inference_readout}.
+Automated tests cover the ported capsule equations and attention shapes, the
+taxonomy mask, the HRN objective and schedule, and the model presets. They also
+verify that disabling HCC leaves the unconstrained computation unchanged, that
+HCC satisfies its hierarchy constraints, that top-down decoding matches a
+reference implementation, and that the subspace-norm readout reproduces native
+Hier-COS inference.
 
-What such tests establish is agreement at the level of equations, shapes and
-invariants. They cannot establish that a trained local model reproduces a
-published trained model, and no claim in this thesis depends on their doing so.
+These tests establish agreement of equations, shapes and invariants. They do not
+establish that a trained local model is numerically identical to a published
+checkpoint; the comparisons below do not rely on such an identity.
 
 % ======================================================================
-\section{Experimental design and protocol}
+\section{Experimental questions and comparison protocol}
 \label{sec:results_design}
 
-The apparatus is now complete. \Cref{ch:methods} derived the four
-mechanisms and established, in \S\ref{sec:methodology_axis}, that they form a
-five-way single choice rather than a factorial; \S\ref{sec:datasets} and
-\S\ref{ssec:inference_metrics} have fixed the data the comparison runs on and the
-quantities it is scored with. What remains is to state which questions the
-admissible configurations answer, and under what rules an observed difference is
-allowed to count as an answer.
+The experiments compare four interventions with an unmodified baseline: HCC,
+explicit lexicographic gradient ordering, the LH-projection, and direct
+supervision of taxonomy-subspace scores. These conditions are mutually
+exclusive (\S\ref{sec:methodology_axis}); the study evaluates one intervention
+at a time rather than their combinations.
 
-This section states them in the order in which they constrain each other. It
-first asks what the comparison \emph{runs on}, since two of the four mechanisms
-are only definable on particular substrates and the cost of moving to those
-substrates has to be charged somewhere (\S\ref{ssec:design_substrate}); it then
-states the questions the chapter was built to ask, about whether the locus at
-which priority is imposed makes a difference (\S\ref{ssec:design_locus}) and
-about the one mechanism that imposes no priority at all
-(\S\ref{ssec:design_objective}); it isolates the arms that exist solely to falsify an attribution rather than to
-support one (\S\ref{ssec:design_controls}); it records the variables held fixed
-and the threats that survive holding them (\S\ref{ssec:design_threats}); it fixes
-the reporting rules applied without exception (\S\ref{ssec:design_protocol}); and
-it closes with the inventory of what was actually run
-(\S\ref{sec:results_campaign}).
+Every main claim is based on a comparison within one model family, against a
+baseline with the same dataset and training recipe. Additional experiments test
+the model adaptations required by the LH-projection. Those adaptation costs are
+reported separately so that they are not mistaken for effects of the projection
+itself. The following subsections state the questions, controls, limitations and
+reporting rules in that order.
 
-One asymmetry between the two groups of questions is worth stating in advance.
-The substrate questions are, in part, preconditions: per-level normalisation and
-an identity frame are what make gradient-space ordering and the LH-projection
-definable at all, so their cost is the entry price of the mechanisms that follow
-and is reported as such, separately, before any mechanism is applied. The locus
-questions are the thesis proper. Reading a substrate result as though it were a
-mechanism result --- or absorbing it silently into a mechanism-versus-baseline
-delta --- is the specific error this ordering exists to prevent.
-
-\subsection{Substrate questions: what the comparison runs on}
-\label{ssec:design_substrate}
-
-Before the mechanisms can be compared, the platform they are compared on has to
-be characterised. Three questions do that. The first two carry a second reading
-as enabling conditions, which is what makes them part of the argument rather
-than preliminaries.
-
-\paragraph{Is Hier-COS's benefit the fixed frame, or the inference rule?} Hier-COS
-bundles three things that are usually credited as one: a frozen orthonormal frame
-over taxonomy nodes, a subspace-norm readout (\S\ref{ssec:inference_readout}), and
-a loss with a level regulariser. The published contribution narrative attaches to
-the frame. What tests it is a three-point ladder --- a dense random orthonormal
-frame, a per-level block-diagonal one, and the identity --- with the node-block
-layout, the readout and everything else held fixed. All three rungs are
-orthonormal, so the ladder varies exactly two things: cross-level coordinate
-mixing at the first step, and the within-level rotation at the second. If the
-identity matches the dense frame, the frame is not doing the work and the honest
-claim becomes one about the output parametrisation and the readout; if it does
-not, the middle rung says which of the two removals is responsible. The post-hoc
-grid sharpens this: the subspace-norm readout applies to any family
-(\S\ref{ssec:inference_readout}), so the readout half of the bundle can be
-tested on models never trained with a frame at all, without retraining
-anything.
-
-The second reading: the block-diagonal rung is a \emph{precondition} of the
-LH-projection, not an optional extra. Under a dense frame the coordinates of any
-level are mixtures of the outputs of all heads, so the map from the shared
-representation to a level's scores involves the finer heads' weights as well and
-conditions~1--2 of \S\ref{ssec:lhproj_setting} fail
-(\S\ref{ssec:lhproj_hiercos}(i)). This ladder is therefore a prerequisite for
-the locus comparison of \S\ref{ssec:design_locus} rather than a standalone
-ablation.
-
-\paragraph{Where must the softmax live?} Normalising across all taxonomy nodes at
-once, against normalising within each level, looks like a loss detail and is in
-fact the structural gate for part of the design (\S\ref{ssec:design_space}). It
-carries two questions. As a standalone ablation: does per-level normalisation cost
-accuracy relative to global, at matched frame and weights? As an enabling
-condition: the two scopes are not gates for the same thing. Decomposing the
-published objective into $L$ terms while keeping the global normaliser induces
-identical gradients (\S\ref{ssec:lhproj_hiercos}(ii)), and that decomposition is
-all lexicographic mode requires, which is why the Hier-COS lexicographic arm is
-run at the global scope and pays no entry price here. Scoping the normaliser to
-the level is a strictly further step, and it is the LH-projection that needs it:
-only then is each level term a function of its own branch alone, so that
-filtering what that branch reads determines the whole of its signal. Whatever
-per-level normalisation costs is therefore the \emph{entry price} of the
-LH-projection specifically, and must be reported as such rather than absorbed
-silently into a mechanism-versus-baseline delta. This is the reason the baseline
-is run in both scopes: a mechanism arm at per-level softmax compared against a
-baseline at global softmax confounds the mechanism with the normaliser.
-
-\paragraph{Does gradient-space ordering need a learnable transform to act on?}
-Progressively removing the learnable transformation between backbone and frame
---- from the full residual transform, to a batch-norm-plus-linear reduction, to
-none at all --- is a mechanism question, not a capacity question. Gradient
-projection acts on whatever parameters lie in the projected path. If the benefit
-shrinks as the transform shrinks, the effect is localised to a learned
-re-embedding; if it survives with no transform in the optimiser path, the
-mechanism is acting on the backbone itself, and the claim generalises to any
-architecture --- which is what the cross-family extension of
-Table~\ref{tab:framework_support} depends on.
-
-\subsection{Locus questions: does it matter where priority is imposed?}
+\subsection{Main mechanism comparisons}
 \label{ssec:design_locus}
 
-These are the questions the chapter was built to ask, and they map one-to-one onto
-the points of the computation at which the four mechanisms act, as classified in
-\S\ref{ssec:design_mechanisms}.
+Table~\ref{tab:design_overview} gives the comparison behind each main question.
+All rows use matched seeds where available, and all trained interventions are
+compared with the corresponding unmodified family.
 
-\paragraph{Does gradient-space ordering work, and is the \emph{ordering} what
-matters?} The first half is a comparison against the matched baseline. The second
-half is the harder one and requires the composition modes of
-\S\ref{ssec:lex_modes} to be treated as an experimental axis rather than an
-implementation choice: \texttt{coarse\_first} is the hypothesis and
-\texttt{fine\_first} inverts the priority while applying exactly the same
-quantity of gradient surgery. Without the second, an observed improvement is
-equally compatible with ``projecting gradients at all helps''. A third question
-concerns the scale rather than the direction of the level contributions: the
-projection fixes which directions a lower-priority objective may act in but not
-how large its surviving contribution is (\S\ref{ssec:problem_lr}), so the
-taxonomy-derived scalings of Table~\ref{tab:eta_branching} are treated as an
-axis of their own.
+\begin{table}[htbp]
+\centering
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{3.4cm}Y Y@{}}
+\toprule
+\textbf{Question} & \textbf{Comparison} & \textbf{Purpose} \\
+\midrule
+Does an output constraint help? & baseline, post-hoc HCC, trained HCC &
+separate the immediate correction at inference from changes learned during
+training \\
+Does coarse-first gradient ordering help? & baseline,
+\texttt{coarse\_first}, \texttt{fine\_first} & separate the proposed priority
+order from the generic effect of projecting gradients \\
+Do the two gradient implementations behave alike? & Hier-COS baseline,
+LH-projection, explicit lexicographic mode & compare an in-graph branch
+projection with explicit gradient composition at matched settings \\
+Where should hierarchy be enforced? & the four interventions, each against the
+shared \emph{none} condition & compare output constraints, gradient constraints
+and objective supervision without combining them \\
+\bottomrule
+\end{tabularx}
+\caption{Main experimental questions and the conditions required to answer
+them.}
+\label{tab:design_overview}
+\end{table}
 
-\paragraph{One principle, two implementations: LH-projection against lexicographic
-mode.} By \S\ref{ssec:lhproj_forward} these are not complementary methods but the
-same idea realised twice. The in-graph formulation is elegant and cheap --- the
-constraint is expressed once in the forward pass and the backward pass inherits it
---- but the guarantee it obtains is only what the graph gives: first-order, per
-sample, at the branch point, and conditional on the activation. The explicit
-formulation ignores how the graph is built, takes whatever gradients emerge and
-orthogonalises them directly; it costs \(L\) reverse-mode derivative evaluations
-and up to \(L\) simultaneous gradient copies, with no activation assumption.
-Its protection is exact on two-level blocks but applies only to the assembled
-higher-priority reference on a three-level block
-(\S\ref{ssec:lex_guarantee}). The question is therefore not whether they stack --- they
-cannot (\S\ref{ssec:design_axis}) --- but whether the cheap in-graph formulation
-produces the same empirical hierarchy consistency, or whether its branch-point
-restriction carries a measurable cost. The head-to-head runs at matched frame,
-loss, weights and seeds, scored primarily on TICE and AHD against the shared
-baseline. Two sub-variants of \S\ref{ssec:lhproj_hiercos} then probe where the
-in-graph guarantee is thinnest: the representation width, which sets how much
-room condition~4 of \S\ref{ssec:lhproj_setting} leaves above the reserved
-subspace, and the advantage parameterisation, which changes what that subspace
-is reserved against.
+\paragraph{HCC: training effect or inference correction?} HCC changes the
+forward computation both during training and at inference
+(\S\ref{ssec:inference_interaction}). Applying it post hoc to an unconstrained
+checkpoint measures the immediate correction; comparing that row with a model
+trained under HCC measures what training with the constraint adds.
 
-\paragraph{Output space against gradient space.} This is the contrast that keeps
-the thesis honest about what ``lexicographic'' means. HCC constrains outputs; the
-other two constrain gradients. Per \S\ref{ssec:design_axis} the achievable cells
-are exactly the four mechanism conditions of the single-choice axis, read
-against the shared \emph{none} baseline that completes it, so this is a clean
-between-arms comparison and the absence of combination arms is
-itself the result. One sub-question refines it decisively. HCC is part of the
-forward computation at inference as well as during training
-(\S\ref{ssec:inference_interaction}), so it can be applied at evaluation alone,
-at no training cost, to a checkpoint trained without it
-(\S\ref{ssec:inference_grid}). That separates a pure output correction from
-whatever training under the constraint adds, and no claim about HCC should be
-made before it is settled. The same section fixes which cells can register such
-an effect: with signed node scores only independent decoding can change, while
-magnitude and subspace-norm readouts may change under either decoder.
+\paragraph{Explicit lexicographic ordering.} The proposed
+\texttt{coarse\_first} mode is compared with the baseline and with
+\texttt{fine\_first}, which reverses priority while using the same projection
+operator (\S\ref{ssec:lex_modes}). Taxonomy-derived level scalings are varied
+separately, because projection changes gradient directions but does not fix the
+relative size of the surviving contributions (\S\ref{ssec:problem_lr}).
 
-\subsection{Objective question: does supervising the ranked quantity help?}
+\paragraph{LH-projection against explicit ordering.} Both methods implement
+coarse-to-fine protection, but at different points of the computation. The
+LH-projection acts inside the graph at a branch point; explicit lexicographic
+mode combines complete level gradients after backpropagation. They are compared
+on Hier-COS with matched frame, loss, weights and seeds. Representation width
+and advantage parameterisation are then varied to test the conditions on which
+the in-graph formulation depends (\S\ref{ssec:lhproj_setting}).
+
+\paragraph{Comparison across intervention points.} HCC constrains outputs, the
+two lexicographic methods constrain gradients, and direct subspace supervision
+changes the objective. Each is compared with the shared \emph{none} condition.
+The comparison concerns separate alternatives: their combinations are outside
+the design defined in \S\ref{ssec:design_axis}.
+
+\subsection{Direct supervision of the ranked quantity}
 \label{ssec:design_objective}
 
-Direct subspace supervision is the one mechanism of \cref{ch:methods} that
-imposes no ordering (Table~\ref{tab:framework_mechanisms}), so it does not
-belong to the locus family above and is not a competitor to it in the same
-sense. Its question is narrower and entirely internal to Hier-COS: the native
-objective supervises the taxonomy-node coordinates while the decoder ranks the
-subspace norms computed from them (\S\ref{ssec:problem_scores}), and the
-mechanism closes that gap by supervising the ranked quantity directly
-(\S\ref{sec:methodology_subspace}). Does training on what is ranked improve what
-is ranked?
+This experiment is internal to Hier-COS. Its native loss supervises taxonomy-node
+coordinates, whereas inference ranks the norms of taxonomy subspaces
+(\S\ref{ssec:problem_scores}). Direct subspace supervision trains the quantity
+that is ultimately ranked (\S\ref{sec:methodology_subspace}). The readout and
+decoder are unchanged, so any difference from the baseline must arise from the
+learned parameters rather than an inference-time correction.
 
-Two things must be kept apart when the answer is read. First, the mechanism is
-inactive at inference: the readout and decoders are unchanged, so any measured
-difference is a difference in the parameters learned. Second, the target of
-\eqref{eq:subspace_target} is reachable but its attainable margin shrinks with
-depth --- $1.000$, $0.423$ and $0.184$ from coarse to fine for $L=3$
-(\cref{prop:subspace_margin}) --- and the temperature $\tau$ is what rescales
-those margins inside the softmax. $\tau$ is therefore an experimental axis of
-the arm rather than a fixed constant, and an arm reported at a single $\tau$
-identifies nothing about the mechanism. The arm carries the further restrictions
-of \S\ref{ssec:subspace_setting}: hard path labels, so label smoothing, mixup
-and cutmix are disabled, and no combination with any of the other three
-mechanisms.
+The attainable target margin decreases from coarse to fine
+(\cref{prop:subspace_margin}); the temperature $\tau$ is therefore swept rather
+than fixed from a single run. This arm uses hard path labels, with label
+smoothing, mixup and cutmix disabled as required by
+\S\ref{ssec:subspace_setting}.
 
-\subsection{Controls and falsification arms}
-\label{ssec:design_controls}
+\subsection{Required adaptations to Hier-COS}
+\label{ssec:design_substrate}
 
-Two configurations exist solely to falsify an attribution, and are recorded here
-so that they are not mistaken for hypotheses.
+The LH-projection cannot be attached directly to published Hier-COS. It requires
+independent level heads, an orthonormal frame that does not mix levels, and a
+loss whose level terms depend only on their corresponding heads
+(\S\ref{ssec:lhproj_hiercos}). Three ablations measure the effect of introducing
+those requirements.
 
 \begin{enumerate}
-    \item \textbf{Inverted priority.} The \texttt{fine\_first} composition mode of
-    \S\ref{ssec:lex_modes} applies exactly the same quantity of gradient surgery
-    with the ordering reversed, on the same blocks, which are fixed by the
-    architecture and do not change with the priority. It is the only control the
-    operator admits, since \S\ref{ssec:lex_modes} defines exactly two composition
-    orders; consequently it alone carries the burden of separating ``coarse-first
-    ordering helps'' from ``projecting at all helps'', and the central claim of
-    \S\ref{ssec:design_locus} is not identified without it.
-    \item \textbf{Coarse-heavy weighting.} If the reported benefit of
-    gradient-space ordering is consistency rather than accuracy, then reweighting
-    the scalarised objective towards the coarse levels is a much cheaper way to buy
-    the same thing. A coarse-heavy weight vector tests exactly that. If it
-    reproduces the consistency gain without any projection, the claim about
-    gradient-space ordering weakens sharply --- it would mean the mechanism is one
-    way to move along an accuracy--consistency trade-off and simple reweighting is
-    another.
+    \item \textbf{Frame.} Dense, block-diagonal and identity frames are compared
+    with the readout and node layout fixed. This separates cross-level mixing
+    from within-level rotation and also establishes the cost of replacing the
+    dense frame before the LH-projection is enabled.
+    \item \textbf{Softmax scope.} Global and per-level normalisation are compared
+    at the same frame and weights. Explicit lexicographic training only requires
+    separate differentiable losses and can retain the global normaliser. The
+    LH-projection requires per-level normalisation, because each loss must depend
+    on its own branch alone.
+    \item \textbf{Learnable transform.} The full residual transform, a
+    batch-normalisation-plus-linear transform and no transform are compared. This
+    tests whether gradient ordering acts mainly on the learned re-embedding or
+    remains effective when it reaches the backbone directly.
 \end{enumerate}
 
-\subsection{Controlled variables and threats to validity}
+The baseline is evaluated on both sides of every required change. The difference
+between those baseline rows is the cost of adapting Hier-COS; only a comparison
+made after matching these settings is used to estimate the effect of the
+LH-projection.
+
+\subsection{Controls}
+\label{ssec:design_controls}
+
+Two controls test alternative explanations for a benefit attributed to
+coarse-first gradient ordering.
+
+\begin{enumerate}
+    \item \textbf{Inverted priority.} \texttt{fine\_first} applies the same
+    projection operator as \texttt{coarse\_first}, but reverses the order. It
+    separates the effect of coarse-first priority from the generic effect of
+    modifying gradients.
+    \item \textbf{Coarse-heavy weighting.} A scalar baseline with greater weight
+    on coarse losses tests whether simple reweighting can reproduce any observed
+    gain in hierarchical consistency. If it can, projection is not required to
+    reach that accuracy--consistency trade-off.
+\end{enumerate}
+
+\subsection{Controlled variables and limitations}
 \label{ssec:design_threats}
 
-\paragraph{Level weights.} The weighting $w_l$ of \S\ref{ssec:problem_objective}
-is the most consequential controlled variable, but its interaction with
-lexicographic mode is family-specific (\S\ref{ssec:lex_family_adaptation}).
-H-CAST and HT-CapsNet expose unweighted level tensors, so their lexicographic
-arms use unit participation; this differs from any matched-family baseline with
-dynamic weighting, notably the native HT-CapsNet baseline. Hier-COS instead
-embeds its level coefficients in the classification terms supplied to the
-projection, while HRN defines no analogous coefficient.
-A pair that differs in this respect changes two variables at once and is labelled
-accordingly; matched-objective and matched-weight controls are used wherever
-available. Two questions must be kept apart: whether the weight choice is a
-large effect, and whether the \emph{ranking of methods} is weight-dependent. The
-second is substantive --- a method that wins only at one weight setting has not
-been shown to win.
+The following limitations determine how the result tables may be read.
 
-\paragraph{Training budget.} The native HT-CapsNet baseline follows its
-paper-aligned 200-epoch schedule. Explicit lexicographic training is materially
-more expensive because it evaluates and combines the three level gradients, so
-the HT-CapsNet lexicographic arm is limited to 100 epochs. Its comparison with
-the native baseline is therefore not compute- or epoch-matched: a difference in
-final performance cannot be attributed to the gradient intervention alone.
-
-\paragraph{Backbone and pretraining.} A from-scratch, CIFAR-native wide residual
-backbone and an ImageNet-pretrained ResNet-50 bound every other conclusion. This
-axis is not a contribution; it exists to establish whether the frame, weighting
-and mechanism effects are conditional on the feature extractor. If they invert
-between the two, every conclusion in the thesis is conditional in the same way.
-
-\paragraph{Dataset scope and local extrapolations.} The three datasets differ in
-how much the hierarchy actually constrains the fine label: a coarse semantic
-grouping over small images, a fine-grained set with shallow semantic spread, and a
-genuinely hierarchical manufacturer--family--variant taxonomy. That is the property
-every mechanism here depends on, so a method that works on one and not another is
-reporting a requirement, not a failure. Separately, several settings used here
-depart from the configurations the original works evaluated --- among them HRN on
-CIFAR-100, Hier-COS on CUB, and this repository's construction of the CIFAR
-hierarchy. Results from those settings are reported separately from paper-aligned
-ones and are not used to support claims about the published methods.
-
-\paragraph{Cross-family comparisons are between implementations.} The families
-compared here do not differ only in their hierarchical mechanism. They differ in
-backbone, optimiser, augmentation, input geometry and, in the case of HRN, in the
-activation through which each level is read
-(\S\ref{ssec:fidelity_families}). Each family's settings were kept close to its
-own published recipe rather than forced into a common one, on the grounds that a
-family evaluated outside its own hyperparameter regime is not the published
-method; the consequence is that a difference between two families confounds the
-mechanism with the recipe. Cross-family rows are therefore read as evidence about
-implementations, and every mechanism claim in this thesis is instead identified
-\emph{within} a family, against that family's own matched baseline. This is the
-reason the head-to-head of \S\ref{ssec:design_locus} is run inside a single
-family.
-
-\paragraph{Hyperparameter effort is not uniform.} Hyperparameter search was
-carried out for one family on one dataset, by an automated study over its
-learning rate, weighting and transform settings; the remaining families and
-datasets use published or preset values. The asymmetry favours the searched cell
-and is disclosed wherever a table includes it. No mechanism arm was tuned
-separately from the baseline it is compared against, so the within-family
-comparisons of \S\ref{ssec:design_locus} are not affected; cross-family rows are.
-
-\paragraph{Statistical treatment and multiplicity.} Comparisons in this thesis
-are descriptive. Where more than one seed is available, the mean and sample
-standard deviation are reported with the seed count, and differences are computed
-per seed and then averaged wherever seeds are matched, which removes the
-seed-to-seed variance common to both arms; no significance test is applied, and
-no claim rests on a difference smaller than the observed seed spread. A second
-form of multiplicity arises from the inference grid: a checkpoint can be scored
-under eight cells, and selecting the most favourable one after the fact would
-convert evaluation freedom into an apparent effect. The rule stated in
-\S\ref{ssec:design_protocol} therefore fixes the native cell as the reported
-result and treats the remaining cells as diagnostics.
-
-\paragraph{Coverage.} The design above describes the space the apparatus admits,
-not a claim that every cell of it has been populated. What an unpopulated cell
-costs, and which claims it leaves undecided, is the subject of
-\cref{sec:results_coverage}.
+\begin{itemize}
+    \item \textbf{Level weights.} Whenever possible, an intervention and its
+    baseline use the same objective weights. H-CAST and HT-CapsNet expose
+    unweighted level losses to lexicographic mode, whereas the native HT-CapsNet
+    baseline uses dynamic weighting; comparisons that cannot match this variable
+    are labelled explicitly.
+    \item \textbf{Training budget.} The native HT-CapsNet baseline uses 200
+    epochs. Its explicit lexicographic configuration is limited to 100 because it
+    evaluates and combines three gradients per batch. Such a pair is neither
+    epoch- nor compute-matched and cannot isolate the gradient intervention.
+    \item \textbf{Backbone and pretraining.} CIFAR experiments use a
+    from-scratch wide residual network where supported, whereas fine-grained
+    experiments commonly use ImageNet-pretrained backbones. Effects that change
+    between these settings are reported as backbone-dependent.
+    \item \textbf{Dataset coverage.} The three taxonomies differ substantially,
+    and the unsupported family--dataset pairs listed in
+    \S\ref{ssec:fidelity_classes} are not used to make claims about the published
+    methods.
+    \item \textbf{Cross-family comparison.} Model families also differ in
+    backbone, optimiser, augmentation, input resolution and training budget.
+    Cross-family tables compare complete implementations; claims about an
+    intervention rely instead on matched comparisons within a family.
+    \item \textbf{Hyperparameter search.} One family--dataset setting received an
+    automated search over learning rate, weighting and transform choices; the
+    others use published or preset values. This asymmetry affects cross-family
+    rankings, although no intervention was tuned separately from its baseline.
+    \item \textbf{Statistical scope.} Results are descriptive. Means include the
+    sample standard deviation and seed count when multiple seeds exist; paired
+    differences are computed per seed where possible. No significance test is
+    applied, and the non-native cells of the inference grid are treated as
+    diagnostics rather than candidates for post-hoc selection.
+    \item \textbf{Incomplete coverage.} Not every supported configuration was
+    run. \Cref{sec:results_coverage} records the missing cells and the questions
+    that consequently remain unanswered.
+\end{itemize}
 
 \subsection{Protocol and reporting rules}
 \label{ssec:design_protocol}
 
-The following are applied without exception, and several of them exist to prevent
-a specific error that the apparatus of \cref{ch:methods} makes possible.
+The following rules are applied throughout the chapter.
 
 \begin{itemize}
     \item \textbf{One mechanism at a time.} The main experiments vary a single
-    mechanism against a matched baseline, so that an effect can be attributed to a
-    locus. By \S\ref{ssec:design_axis} the mechanism axis is a single choice among
-    five conditions, no combination arm exists, and none is planned.
-    \item \textbf{Both decoders are always reported}, for every configuration,
-    each from its own checkpoint (\S\ref{ssec:inference_selection}): a top-down row
-    from the top-down-selected checkpoint, an independent row from the
-    independent-selected one. Mixing them would confound the decoder comparison
-    with a checkpoint comparison. A decoder is never treated as a property of a
-    method.
-    \item \textbf{The structural preconditions of the LH-projection are not
-    ablations of it.} The identity frame and the decomposed level objective are
-    what make the mechanism definable on Hier-COS at all
-    (\S\ref{ssec:lhproj_hiercos}). Their comparison against the published
-    configuration measures the cost of adapting the baseline, and is reported
-    before, and separately from, any comparison involving the projection itself.
-    \item \textbf{Mechanism activation is verified from diagnostics, not from
-    configuration.} That a run was configured with a mechanism does not establish
-    that the mechanism was active. HCC activation is read from the logged
-    \texttt{proj\_constraint\_alpha}, which records that the cascade was in force
-    for the batches of the reported epoch; claims about gradient-space ordering
-    are grounded in the logged pre- and post-projection cosines, the removed
-    norms, and the firing rate of the degeneracy guard of
-    \S\ref{ssec:lex_projection}, on which \cref{prop:lex_firstorder} is
-    conditional. A directory name or a preset name records the intent and not the
-    outcome.
-    \item \textbf{Metric directionality is fixed.} Full-path accuracy, weighted
-    average precision and per-level accuracy are higher-is-better; average
-    hierarchical distance and tree-induced consistency error are lower-is-better.
-    Differences between percentages are reported in percentage points.
-    \item \textbf{The reported cell is the native one.} A result is quoted under
-    the family's own readout, with the remaining cells of the grid of
-    \S\ref{ssec:inference_grid} used as diagnostics and labelled as such. The
-    most favourable cell is never promoted to the headline number after the fact.
-    \item \textbf{Seeds are reported, never assumed.} Seed coverage is uneven
-    across the arms, so every aggregate carries its seed count, and the mean is
-    accompanied by the sample standard deviation whenever more than one seed
-    exists. A single-seed arm is labelled as such and supports no claim of stable
-    superiority; the seed count of every configuration is stated in the
-    inventory of \S\ref{sec:results_campaign} and repeated with each table.
-    Epoch-level curves are filtered for runs whose logs terminate early before
-    being averaged, since a truncated log is not a truncated run.
+    intervention against a matched baseline. Required changes to Hier-COS are
+    evaluated separately before the LH-projection is enabled.
+    \item \textbf{Both decoders are reported.} Independent and top-down results
+    use checkpoints selected for their respective decoding modes
+    (\S\ref{ssec:inference_selection}); a decoder is not treated as an intrinsic
+    property of a model family.
+    \item \textbf{Activation is checked from logs.}\par HCC is verified through
+    \texttt{proj\_constraint\_alpha}. Gradient ordering is verified through the
+    logged cosine similarities, removed norms and degeneracy-guard rate. A
+    configuration name alone is not evidence that an intervention was active.
+    \item \textbf{Metric direction is fixed.} FPA, weighted average precision and
+    per-level accuracy are higher-is-better; AHD and TICE are lower-is-better.
+    Percentage differences are expressed in percentage points.
+    \item \textbf{Native inference is the headline result.} Each family is
+    reported under its native readout. Other cells of the inference grid are
+    labelled as diagnostics and are not selected post hoc.
+    \item \textbf{Seed coverage is explicit.} Every aggregate reports its seed
+    count and, for multiple seeds, the sample standard deviation. A single-seed
+    result is not used to claim stable superiority. Truncated epoch logs are
+    excluded before curves are averaged.
 \end{itemize}
 
 \subsection{Organisation of the experimental campaign}
 \label{sec:results_campaign}
 
-The remaining sections report what the protocol of \S\ref{ssec:design_protocol}
-produced, in the order in which the results become readable rather than in the
-order in which the mechanisms were introduced.
+The results are presented in the order needed to interpret them:
 
-\Cref{sec:results_baselines} establishes the reference point: every family run
-under the unified protocol with no mechanism active. Nothing in the chapter is
-interpretable without it, since every mechanism claim is identified within a
-family against that family's own matched baseline
-(\S\ref{ssec:design_threats}). \Cref{sec:results_inference} then scores those
-same frozen checkpoints under the eight cells of the inference grid
-(\S\ref{ssec:inference_grid}). It comes second because it retrains nothing and
-because its outcome fixes how every subsequent number is to be read: it
-separates what a readout rule contributes from what a representation
-contributes, and it establishes what the HCC constraint is worth as a pure
-output correction before any run trained with it is discussed.
-\Cref{sec:results_hcc}, \cref{sec:results_lex} and \cref{sec:results_subspace}
-report three of the four mechanisms against their matched baselines, each with
-the controls that make an observed effect attributable. The fourth, the
-LH-projection, is reported in \cref{sec:results_ablations} instead, because it
-is definable only once the structural preconditions of
-\S\ref{ssec:lhproj_hiercos} have been measured in their own right, and reading
-its arm before that cost is known would charge the preconditions to the
-mechanism. \Cref{sec:results_mechanisms} collects the mechanism axis of
-\S\ref{ssec:design_axis} --- one choice among five conditions, the shared
-\emph{none} baseline included --- into a single comparison.
-\Cref{sec:results_ablations} reports the substrate and locus ablations, which
-are run only where the preceding sections give a reason to run them. Finally,
-\cref{sec:results_coverage} states which cells of the design are unpopulated and
-which claims are consequently unidentified, and \cref{sec:results_summary}
-collects what the chapter supports.
+\begin{enumerate}
+    \item \Cref{sec:results_baselines} establishes the unmodified reference for
+    each family.
+    \item \Cref{sec:results_inference} applies alternative readouts, HCC and both
+    decoders to frozen checkpoints. This isolates inference-time effects before
+    trained interventions are considered.
+    \item \Cref{sec:results_hcc,sec:results_lex,sec:results_subspace} compare the
+    three directly trained interventions with their matched baselines.
+    \item \Cref{sec:results_mechanisms} places the mutually exclusive
+    interventions in one comparison, while \cref{sec:results_ablations} reports
+    the Hier-COS adaptations and the LH-projection.
+    \item \Cref{sec:results_coverage,sec:results_summary} state what remains
+    untested and summarise the supported conclusions.
+\end{enumerate}
 
-Table~\ref{tab:results_inventory} is the inventory of the campaign. It is the
-reference for how many seeds stand behind every aggregate quoted later, and its
-\na{} entries are structural: they mark configurations excluded by
-\S\ref{ssec:design_support} or by the mutual exclusivity of
-\S\ref{ssec:design_axis}, not runs that were planned and not performed.
+Table~\ref{tab:results_inventory} reports the completed seed coverage. An
+\na{} entry denotes a configuration excluded by the method definition; zero
+denotes a supported configuration that was not run. Missing but supported cells
+are interpreted in \cref{sec:results_coverage}.
 
 \begin{table}[htbp]
 \centering
-\caption{Inventory of the experimental campaign: number of seeds completed per
-configuration. \na{} marks a configuration that does not exist by construction,
-as recorded in the support matrix (Table~\ref{tab:framework_support}); the
-LH-projection is constitutive of LH-DNN rather than an arm applied to it, and
-direct subspace supervision is confined to Hier-COS, the only family that
-exposes taxonomy-subspace scores as a training quantity. Missing runs, as opposed to impossible ones,
-are listed in Table~\ref{tab:results_coverage}.}
+\caption{Completed seeds per configuration. \na{} denotes an unsupported
+configuration (Table~\ref{tab:framework_support}); zero denotes a supported
+configuration that was not run. Counts refer to native inference settings;
+Hier-COS lexicographic runs retain global softmax as explained in
+\S\ref{ssec:design_substrate}.}
 \label{tab:results_inventory}
-\small
-\begin{tabular}{@{}llccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.5cm}YCCC@{}}
 \toprule
 \textbf{Family} & \textbf{Arm} & \textbf{CIFAR-100} & \textbf{CUB-200-2011} & \textbf{FGVC-Aircraft} \\
 \midrule
-H-CAST     & baseline        & \tbd & \tbd & \tbd \\
-           & HCC             & \tbd & \tbd & \tbd \\
-           & lexicographic   & \tbd & \tbd & \tbd \\
-           & subspace sup.   & \na  & \na  & \na  \\
+H-CAST     & baseline                 & 3 & 3 & 3 \\
+           & HCC                      & 3 & 3 & 3 \\
+           & lexicographic            & 3 & 3 & 3 \\
+           & inverted priority (ctrl) & 3 & 3 & 3 \\
+           & subspace sup.            & \na & \na & \na \\
 \midrule
-Hier-COS   & baseline        & \tbd & \tbd & \tbd \\
-           & HCC             & \tbd & \tbd & \tbd \\
-           & lexicographic   & \tbd & \tbd & \tbd \\
-           & LH-projection   & \tbd & \tbd & \tbd \\
-           & subspace sup.   & \tbd & \tbd & \tbd \\
+Hier-COS   & baseline                 & 3 & 3 & 3 \\
+           & HCC                      & 3 & 3 & 3 \\
+           & lexicographic            & 3 & 3 & 3 \\
+           & inverted priority (ctrl) & 0 & 0 & 0 \\
+           & LH-projection            & 3 & 3 & 3 \\
+           & subspace sup.            & 3 & 3 & 3 \\
 \midrule
-HRN        & baseline        & \tbd & \tbd & \tbd \\
-           & HCC             & \tbd & \tbd & \tbd \\
-           & lexicographic   & \tbd & \tbd & \tbd \\
-           & subspace sup.   & \na  & \na  & \na  \\
+HRN        & baseline                 & 3 & 3 & 3 \\
+           & HCC                      & 0 & 0 & 0 \\
+           & lexicographic            & 2 & 3 & 3 \\
+           & inverted priority (ctrl) & 0 & 0 & 0 \\
+           & subspace sup.            & \na & \na & \na \\
 \midrule
-HT-CapsNet & baseline        & \tbd & \tbd & \tbd \\
-           & HCC             & \tbd & \tbd & \tbd \\
-           & lexicographic   & \tbd & \tbd & \tbd \\
-           & subspace sup.   & \na  & \na  & \na  \\
+HT-CapsNet & baseline                 & 1 & 3 & 3 \\
+           & HCC                      & 0 & 0 & 0 \\
+           & lexicographic            & 0 & 0 & 0 \\
+           & inverted priority (ctrl) & 0 & 0 & 0 \\
+           & subspace sup.            & \na & \na & \na \\
 \midrule
-LH-DNN     & baseline        & \tbd & \tbd & \tbd \\
-           & HCC             & \na  & \na  & \na  \\
-           & lexicographic   & \na  & \na  & \na  \\
-           & subspace sup.   & \na  & \na  & \na  \\
+LH-DNN     & baseline                 & 3 & 3 & 3 \\
+           & HCC                      & \na & \na & \na \\
+           & lexicographic            & \na & \na & \na \\
+           & subspace sup.            & \na & \na & \na \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % ======================================================================
 \section{Baselines under the unified protocol}
 \label{sec:results_baselines}
 
-This section reports the five families with no mechanism active, under the
-splits of \S\ref{sec:dataset_analysis} and the taxonomies of
-\S\ref{sec:hierarchy_construction}. Two readings are available from it, and they
-must be kept apart. Within a family, the numbers are the reference against which
-every later arm is measured, and that comparison is clean because the arm and its
-baseline differ in one configured quantity. Across families, the numbers compare
-\emph{implementations} and not mechanisms: the families differ in backbone,
-optimiser, augmentation and input geometry, and were deliberately kept close to
-their own published recipes rather than forced into a common one
-(\S\ref{ssec:fidelity_families}), so a difference between two rows confounds the
-hierarchical mechanism with the recipe that surrounds it.
+This section establishes the no-mechanism reference for H-CAST, LH-DNN, HRN and
+Hier-COS on the common splits and taxonomies. HT-CapsNet is deliberately omitted
+from the present analysis. Each family--dataset cell contains three seeds. The
+results below use independent decoding and the checkpoint selected by the
+independent validation criterion (\S\ref{ssec:inference_selection}); top-down
+decoding is introduced separately in \S\ref{ssec:results_decoder}. Here
+\emph{baseline} means that neither HCC nor explicit lexicographic gradient
+projection is active. For Hier-COS it is the registered matched reference with
+global-softmax CE plus regularisation and \texttt{kl\_leaf} weights, rather than
+the paper's node-wide KL objective.
 
-\subsection{Per-dataset results}
+Within a family these rows are the controls for the later mechanism experiments.
+Across families they compare complete implementations, not isolated hierarchy
+mechanisms: backbone, optimiser, augmentation, resolution and budget remain
+family-specific (\S\ref{ssec:fidelity_families}). The most consequential
+differences are HRN's $448\times448$ fine-grained input, against $224\times224$
+for the other pretrained families, and LH-DNN's fifteen-epoch from-scratch
+schedule. Cross-family rankings are therefore descriptive.
+
+\subsection{Results}
 \label{ssec:results_baseline_datasets}
 
-% One table per dataset. Rows are families; each family contributes two rows,
-% one per decoder, read from that decoder's own selected checkpoint.
-% TICE is zero by construction in every top-down row (\cref{prop:topdown_consistency});
-% it is printed as 0.00 rather than left blank, since the value is a check that
-% the decoder behaved as specified and not a measurement.
+% One table per dataset. Rows are families under independent decoding, read
+% from the independently selected checkpoint. Best means are bold and
+% second-best means are underlined within each metric.
+\newcommand{\baselinemeanstd}[2]{\(#1\,{\scriptstyle\pm #2}\)}
+%
+% Tables and figures in this section are produced by
+% notebooks/model_comparison_all_datasets.ipynb, section "Figures for the thesis
+% baseline section", which writes the PDFs into docs/images/experiments/baseline/.
+% The \includegraphics paths below assume they are copied into
+% images/experiments/baseline/ of the thesis tree. Figures are authored at the
+% printed text width (425.2 x 340.6 bp, aspect ratio 0.80). At that size a
+% single figure plus its caption occupies about 387 pt of the 674 pt text
+% height, so two of them cannot share a float page even with no caption at all.
+% They are therefore included at \basefigwidth (defined in main.tex, currently
+% 0.84\linewidth), which brings two per page at the cost of font sizes about a
+% sixth smaller than the body text. The proper fix is to re-export them from the
+% notebook with figsize height <= 3.94 in, which restores the font match; until
+% then do not raise \basefigwidth without re-checking that the float pages still
+% carry two figures each (0.88 already breaks it).
 
 \begin{table}[htbp]
 \centering
 \caption{Baseline results on CIFAR-100 ($8\to20\to100$). Each family is reported
-under its native readout and under both decoders, each from its own selected
-checkpoint. Higher is better except for AHD and TICE.}
+under its native readout and independent decoding, at the independently selected
+checkpoint. Accuracies, wAP and TICE are in percent and AHD in levels; entries
+are mean $\pm$ sample standard deviation over three seeds. Arrows indicate the
+direction of improvement. Entries with the best mean are bold and those with
+the second-best mean are underlined; ties at the displayed precision receive
+the same emphasis. Only the mean is highlighted; the sample standard deviation
+remains in regular weight. The highlighting is descriptive and does not imply
+statistical significance.}
 \label{tab:results_baseline_cifar}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccccc@{}}
+\experimenttablesetup
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
-\textbf{Family} & \textbf{Dec.} & $\mathrm{Acc}_1$ & $\mathrm{Acc}_2$ & $\mathrm{Acc}_3$ & \textbf{wAP} & \textbf{FPA} & \textbf{AHD} & \textbf{TICE} \\
+\textbf{Family} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
 \midrule
-H-CAST     & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-Hier-COS   & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-HRN        & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-HT-CapsNet & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-LH-DNN     & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
+H-CAST   & \baselinemeanstd{\underline{90.82}}{0.32} & \baselinemeanstd{\underline{85.20}}{0.39} & \baselinemeanstd{\underline{75.94}}{0.20} & \baselinemeanstd{\underline{78.31}}{0.14} & \baselinemeanstd{\underline{73.48}}{0.19} & \baselinemeanstd{\underline{0.511}}{0.008} & \baselinemeanstd{\underline{7.61}}{0.29} \\
+Hier-COS & \baselinemeanstd{\mathbf{91.35}}{0.06} & \baselinemeanstd{\mathbf{86.87}}{0.21} & \baselinemeanstd{\mathbf{77.80}}{0.21} & \baselinemeanstd{\mathbf{80.07}}{0.20} & \baselinemeanstd{\mathbf{77.52}}{0.16} & \baselinemeanstd{\mathbf{0.444}}{0.003} & \baselinemeanstd{\mathbf{1.04}}{0.04} \\
+HRN      & \baselinemeanstd{88.03}{0.31} & \baselinemeanstd{82.03}{0.19} & \baselinemeanstd{75.13}{0.16} & \baselinemeanstd{77.01}{0.10} & \baselinemeanstd{68.45}{0.11} & \baselinemeanstd{0.646}{0.007} & \baselinemeanstd{15.71}{0.72} \\
+LH-DNN   & \baselinemeanstd{74.43}{0.49} & \baselinemeanstd{63.25}{0.65} & \baselinemeanstd{51.40}{0.58} & \baselinemeanstd{54.69}{0.58} & \baselinemeanstd{45.57}{0.48} & \baselinemeanstd{1.199}{0.015} & \baselinemeanstd{17.90}{0.44} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \begin{table}[htbp]
 \centering
 \caption{Baseline results on CUB-200-2011 ($13\to38\to200$). Conventions as in
-Table~\ref{tab:results_baseline_cifar}.}
+Table~\ref{tab:results_baseline_cifar}; three seeds throughout.}
 \label{tab:results_baseline_cub}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccccc@{}}
+\experimenttablesetup
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
-\textbf{Family} & \textbf{Dec.} & $\mathrm{Acc}_1$ & $\mathrm{Acc}_2$ & $\mathrm{Acc}_3$ & \textbf{wAP} & \textbf{FPA} & \textbf{AHD} & \textbf{TICE} \\
+\textbf{Family} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
 \midrule
-H-CAST     & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-Hier-COS   & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-HRN        & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-HT-CapsNet & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-LH-DNN     & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
+H-CAST   & \baselinemeanstd{\mathbf{98.49}}{0.14} & \baselinemeanstd{\underline{94.36}}{0.11} & \baselinemeanstd{\underline{83.09}}{0.16} & \baselinemeanstd{\underline{85.59}}{0.13} & \baselinemeanstd{\underline{81.27}}{0.33} & \baselinemeanstd{\underline{0.262}}{0.002} & \baselinemeanstd{5.24}{0.41} \\
+Hier-COS & \baselinemeanstd{\underline{96.85}}{0.11} & \baselinemeanstd{90.51}{0.13} & \baselinemeanstd{76.38}{0.41} & \baselinemeanstd{79.58}{0.34} & \baselinemeanstd{76.15}{0.42} & \baselinemeanstd{0.366}{0.006} & \baselinemeanstd{\mathbf{0.60}}{0.19} \\
+HRN      & \baselinemeanstd{\mathbf{98.49}}{0.19} & \baselinemeanstd{\mathbf{94.85}}{0.29} & \baselinemeanstd{\mathbf{85.06}}{0.42} & \baselinemeanstd{\mathbf{87.24}}{0.38} & \baselinemeanstd{\mathbf{83.10}}{0.69} & \baselinemeanstd{\mathbf{0.242}}{0.011} & \baselinemeanstd{\underline{4.72}}{0.13} \\
+LH-DNN   & \baselinemeanstd{71.30}{0.54} & \baselinemeanstd{30.62}{1.09} & \baselinemeanstd{5.41}{0.55} & \baselinemeanstd{12.64}{0.61} & \baselinemeanstd{2.33}{0.23} & \baselinemeanstd{1.996}{0.015} & \baselinemeanstd{63.05}{1.97} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \begin{table}[htbp]
 \centering
 \caption{Baseline results on FGVC-Aircraft ($30\to70\to100$). Conventions as in
-Table~\ref{tab:results_baseline_cifar}.}
+Table~\ref{tab:results_baseline_cifar}; three seeds throughout.}
 \label{tab:results_baseline_aircraft}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccccc@{}}
+\experimenttablesetup
+\footnotesize
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
-\textbf{Family} & \textbf{Dec.} & $\mathrm{Acc}_1$ & $\mathrm{Acc}_2$ & $\mathrm{Acc}_3$ & \textbf{wAP} & \textbf{FPA} & \textbf{AHD} & \textbf{TICE} \\
+\textbf{Family} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
 \midrule
-H-CAST     & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-Hier-COS   & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-HRN        & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-HT-CapsNet & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
-\midrule
-LH-DNN     & ind. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-           & t.d. & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & 0.00 \\
+H-CAST   & \baselinemeanstd{\underline{93.31}}{0.12} & \baselinemeanstd{87.57}{0.51} & \baselinemeanstd{72.90}{1.05} & \baselinemeanstd{81.09}{0.61} & \baselinemeanstd{70.73}{1.04} & \baselinemeanstd{0.492}{0.013} & \baselinemeanstd{9.09}{0.10} \\
+Hier-COS & \baselinemeanstd{92.22}{0.05} & \baselinemeanstd{\underline{88.10}}{0.33} & \baselinemeanstd{\underline{81.55}}{0.52} & \baselinemeanstd{\underline{85.44}}{0.37} & \baselinemeanstd{\underline{81.40}}{0.52} & \baselinemeanstd{\underline{0.384}}{0.008} & \baselinemeanstd{\mathbf{0.78}}{0.13} \\
+HRN      & \baselinemeanstd{\mathbf{95.60}}{0.11} & \baselinemeanstd{\mathbf{92.09}}{0.19} & \baselinemeanstd{\mathbf{85.15}}{0.17} & \baselinemeanstd{\mathbf{89.15}}{0.14} & \baselinemeanstd{\mathbf{83.25}}{0.18} & \baselinemeanstd{\mathbf{0.303}}{0.001} & \baselinemeanstd{\underline{6.59}}{0.30} \\
+LH-DNN   & \baselinemeanstd{26.65}{0.49} & \baselinemeanstd{13.42}{0.17} & \baselinemeanstd{7.13}{0.37} & \baselinemeanstd{12.26}{0.20} & \baselinemeanstd{1.96}{0.23} & \baselinemeanstd{2.615}{0.004} & \baselinemeanstd{80.71}{1.31} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-% [ANALYSIS] Per-dataset reading of the three tables above. Constrain the
-% discussion to: (i) which families separate at all, and by how much relative to
-% the seed spread of Table~\ref{tab:results_inventory}; (ii) the size of the
-% independent/top-down gap at the fine level, since that gap is the quantity the
-% mechanism sections will move; (iii) TICE in the independent column, which is
-% the only place a family's native coherence is visible. No cross-family claim
-% about mechanisms here: those rows compare implementations.
+\begin{figure}[p]
+\centering
+\includegraphics[width=\basefigwidth]{images/experiments/baseline/comparison_cifar100_validation_curves.pdf}
+\caption{CIFAR-100 validation metrics under independent decoding. Curves are
+means over three seeds, bands are one sample standard deviation and circles mark
+the independently selected checkpoints. LH-DNN ends at its configured epoch
+$15$.}
+\label{fig:baseline_validation_cifar}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\basefigwidth]{images/experiments/baseline/comparison_cub200_validation_curves.pdf}
+\caption{CUB-200-2011 validation metrics under independent decoding. Plotting
+conventions are those of \cref{fig:baseline_validation_cifar}.}
+\label{fig:baseline_validation_cub}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\basefigwidth]{images/experiments/baseline/comparison_aircraft_validation_curves.pdf}
+\caption{FGVC-Aircraft validation metrics under independent decoding. Plotting
+conventions are those of \cref{fig:baseline_validation_cifar}.}
+\label{fig:baseline_validation_aircraft}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\basefigwidth]{images/experiments/baseline/comparison_final_level_accuracy.pdf}
+\caption{Independent-decoding test accuracy at the independently selected
+checkpoint, resolved by hierarchy level. Each line denotes one model family;
+points are means over three seeds and error bars are one sample standard
+deviation. The shared vertical scale permits direct comparison of the
+coarse-to-fine degradation across datasets.}
+\label{fig:baseline_final_level_accuracy}
+\end{figure}
+
+The three competitive families change rank with the dataset. Under independent
+decoding, Hier-COS leads CIFAR-100 at $77.52\%$ FPA, whereas HRN leads CUB and
+Aircraft at $83.10\%$ and $83.25\%$; H-CAST is second on CIFAR-100 and CUB and
+third on Aircraft. These rankings must be read with the recipe caveat above:
+HRN's fine-grained advantage is confounded by its $448$-pixel input. More
+robustly, \cref{fig:baseline_final_level_accuracy} shows a depth-dependent
+separation on both fine-grained datasets. Among H-CAST,
+Hier-COS and HRN under independent decoding, the coarse-to-fine test spread
+grows from $1.64$ to $8.68$~pp on CUB and from $3.38$ to $12.25$~pp on
+Aircraft. CIFAR-100 does not share this pattern: its fine-level spread is only
+$2.67$~pp. The complete per-level validation trajectories are reported in
+\cref{fig:app_baseline_levels_cifar,fig:app_baseline_levels_cub,fig:app_baseline_levels_aircraft}.
+
+LH-DNN is competitive only on CIFAR-100. Its independent fine accuracy falls to
+$5.41\%$ on CUB and $7.13\%$ on Aircraft. This supports the narrower conclusion
+that the paper-aligned fifteen-epoch, from-scratch recipe does not transfer to
+the fine-grained datasets; a longer schedule was not tested. The rows remain
+useful as within-family controls but are excluded from claims about the three
+competitive baselines.
+
+Independent TICE exposes native consistency before any path constraint is
+imposed. Hier-COS is consistently lowest ($0.60$--$1.04\%$), followed
+by H-CAST ($5.24$--$9.09\%$) and HRN ($4.72$--$15.71\%$); LH-DNN reaches
+$63.05\%$ and $80.71\%$ on the two fine-grained datasets. The accuracy and TICE
+curves in
+\cref{fig:baseline_validation_cifar,fig:baseline_validation_cub,fig:baseline_validation_aircraft}
+also show that consistency is not a proxy for recognition accuracy: on
+Aircraft, HRN has higher fine accuracy than Hier-COS ($85.15\%$ versus
+$81.55\%$) but much higher TICE ($6.59\%$ versus $0.78\%$). Per-level
+training-loss curves are placed in
+\cref{fig:app_baseline_losses_cifar,fig:app_baseline_losses_cub,fig:app_baseline_losses_aircraft};
+decoder-delta and mechanism plots are reserved for the corresponding later
+sections.
 
 \subsection{Relation to the published results}
 \label{ssec:results_baseline_published}
 
-A reproduction under a unified protocol is not a replication, and the numbers
-above are not directly comparable with the ones in the original papers: the
-splits, the input geometry, the taxonomies and, in several cases, the dataset
-itself differ from what each work evaluated.
-Table~\ref{tab:results_baseline_published} records the comparison that can be
-made, together with the class of deviation (\S\ref{ssec:fidelity_classes}) that
-separates the two columns. Rows classified as unsupported extrapolations ---
-HRN on CIFAR-100, Hier-COS on CUB-200-2011 and on the three-level CIFAR
-hierarchy, HT-CapsNet on FGVC-Aircraft and on this framework's CUB taxonomy,
-LH-DNN on CUB-200-2011 and FGVC-Aircraft --- have no published counterpart by
-definition and are marked as such.
+A unified-protocol reproduction is not a strict replication: splits, schedules,
+augmentation and, in one case, the taxonomy differ from the source settings.
+\Cref{tab:results_baseline_published} therefore compares only supported cells
+and only like-for-like metrics; unsupported extrapolations are omitted.
 
 \begin{table}[htbp]
 \centering
 \caption{Published against reproduced results, where a published counterpart
-exists. The metric column names the quantity as the original work reports it;
-where that work reports a metric not used here, the comparison is made on the
-closest available quantity and the difference is stated. The deviation column
-gives the class of \S\ref{ssec:fidelity_classes} that accounts for the gap.}
+exists. Each row is read under the metric named in the third column, which is the
+one its source reports. Reproduced values use native independent predictions
+from the independently selected checkpoint (\S\ref{ssec:inference_selection})
+and are means over three seeds from
+Tables~\ref{tab:results_baseline_cifar}--\ref{tab:results_baseline_aircraft}. The
+deviation column gives the class of \S\ref{ssec:fidelity_classes} that accounts
+for the gap.}
 \label{tab:results_baseline_published}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}lllccl@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.5cm}L{1.5cm}CCY@{}}
 \toprule
 \textbf{Family} & \textbf{Dataset} & \textbf{Metric} & \textbf{Published} & \textbf{Here} & \textbf{Deviation class} \\
 \midrule
-H-CAST     & CUB-200-2011  & \tbd & \tbd & \tbd & \tbd \\
-H-CAST     & FGVC-Aircraft & \tbd & \tbd & \tbd & verified correction (hierarchy) \\
-Hier-COS   & CIFAR-100     & \tbd & \tbd & \tbd & extrapolation (3-level hierarchy) \\
-Hier-COS   & FGVC-Aircraft & \tbd & \tbd & \tbd & \tbd \\
-HRN        & CUB-200-2011  & \tbd & \tbd & \tbd & \tbd \\
-HRN        & FGVC-Aircraft & \tbd & \tbd & \tbd & \tbd \\
-HT-CapsNet & CIFAR-100     & \tbd & \tbd & \tbd & \tbd \\
-HT-CapsNet & CUB-200-2011  & \tbd & \tbd & \tbd & extrapolation (taxonomy) \\
-LH-DNN     & CIFAR-100     & \tbd & \tbd & \tbd & port \\
+H-CAST     & CUB-200-2011  & FPA  & 83.28 & 81.27 & framework adapt.\ (protocol) \\
+H-CAST     & FGVC-Aircraft & FPA  & 83.72 & 70.73 & hierarchy; protocol \\
+Hier-COS   & FGVC-Aircraft & FPA  & 81.56 & 81.40 & objective; protocol \\
+HRN        & CUB-200-2011  & $\mathrm{Acc}_3$ & 86.60 & 85.06 & budget; augmentation; protocol \\
+HRN        & FGVC-Aircraft & $\mathrm{Acc}_3$ & 92.58 & 85.15 & budget; augmentation; protocol \\
+LH-DNN     & CIFAR-100     & $\mathrm{Acc}_{1}$ & 75.07 & 74.43 & port (no official code) \\
+           &               & $\mathrm{Acc}_{2}$ & 64.00 & 63.25 & \\
+           &               & $\mathrm{Acc}_{3}$ & 52.47 & 51.40 & \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-% [ANALYSIS] State, for each row, whether the reproduction lands close enough to
-% the published number for the family to be treated as faithfully reproduced,
-% and where it does not, which of the five deviation classes accounts for it.
-% This paragraph carries the fidelity argument of
-% \S\ref{ssec:fidelity_verification} into the results; it must not conclude that
-% a family "underperforms" when the cause is a protocol difference already
-% recorded in the deviation column.
+The closest agreements are Hier-COS on Aircraft ($81.40$ versus published
+$81.56\pm1.02$ FPA) \cite{sani2025hiercos}, LH-DNN on CIFAR-100 (within
+$1.07$~pp at every level) \cite{fiaschi2024informed}, and HRN on CUB
+($85.06$ versus $86.60$ fine accuracy) \cite{chen2022label}. H-CAST on CUB is
+$2.01$~pp below its published FPA \cite{park2024visually}. The larger H-CAST
+Aircraft gap ($12.99$~pp) is not a clean fidelity measure because the local
+$30/70/100$ hierarchy is reconstructed from the official annotations rather
+than the upstream repository's unavailable local mapping. HRN's Aircraft gap
+($7.43$~pp) combines a shorter budget, disabled mixup/cutmix and the common
+validation protocol; these effects are not separated here. Accordingly, the
+table is a fidelity check for the local implementations, not evidence for
+cross-family superiority or for any hierarchy mechanism.
+
 
 % ======================================================================
 \section{Inference: readout, transform and decoder}
@@ -1402,8 +1413,8 @@ each read from its own selected checkpoint. $\Delta$ columns are top-down minus
 independent, in percentage points; a negative $\Delta\mathrm{Acc}_3$ is the cost
 of enforcing consistency at decoding time.}
 \label{tab:results_decoder}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llcccccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}CCCCCCCC@{}}
 \toprule
 & & \multicolumn{3}{c}{\textbf{Independent}} & \multicolumn{3}{c}{\textbf{Top-down}} & \multicolumn{2}{c}{$\Delta$} \\
 \cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(l){9-10}
@@ -1429,7 +1440,7 @@ LH-DNN     & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \
            & CUB-200   & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & Aircraft  & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Relate the size of each Delta to the independent-column TICE of
@@ -1458,8 +1469,8 @@ independent decoding and with no transform. The rightmost column names the
 family's native readout, under which its headline results are reported; the
 other group is the transplanted rule.}
 \label{tab:results_readout}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccccl@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{1.8cm}CCCCCCL{2.6cm}@{}}
 \toprule
 & & \multicolumn{3}{c}{\texttt{node\_score}} & \multicolumn{3}{c}{\texttt{subspace\_norm}} & \\
 \cmidrule(lr){3-5}\cmidrule(lr){6-8}
@@ -1481,7 +1492,7 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \texttt{node\
            & CUB-200   & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \texttt{node\_score} \\
            & Aircraft  & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \texttt{node\_score} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] The claim available here is narrow and should be stated narrowly:
@@ -1512,8 +1523,8 @@ change the transform produces under top-down decoding. For signed node-score
 rows it must be exactly zero; for magnitude or subspace-norm rows it is an
 ordinary measured result and may be non-zero.}
 \label{tab:results_posthoc_hcc}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}CCCCCCC@{}}
 \toprule
 & & \multicolumn{3}{c}{\textbf{No transform}} & \multicolumn{3}{c}{\textbf{HCC transform}} & \textbf{Check} \\
 \cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(l){9-9}
@@ -1539,7 +1550,7 @@ LH-DNN     & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & CUB-200   & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & Aircraft  & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % Note: the post-hoc transform applies to LH-DNN even though LH-DNN carries no
@@ -1589,8 +1600,8 @@ decoder, and each column is read from that decoder's own selected checkpoint.
 $n$ is the number of seeds; entries with $n>1$ are mean $\pm$ sample standard
 deviation.}
 \label{tab:results_hcc_cifar}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llcccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}CCCCCC@{}}
 \toprule
 \textbf{Family} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{Acc}_3^{\text{t.d.}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1606,7 +1617,7 @@ HRN        & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & HCC                    & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \begin{table}[htbp]
@@ -1614,8 +1625,8 @@ HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \caption{HCC against the matched baseline on CUB-200-2011. Conventions as in
 Table~\ref{tab:results_hcc_cifar}.}
 \label{tab:results_hcc_cub}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llcccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}CCCCCC@{}}
 \toprule
 \textbf{Family} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{Acc}_3^{\text{t.d.}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1631,7 +1642,7 @@ HRN        & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & HCC                    & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \begin{table}[htbp]
@@ -1639,8 +1650,8 @@ HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \caption{HCC against the matched baseline on FGVC-Aircraft. Conventions as in
 Table~\ref{tab:results_hcc_cifar}.}
 \label{tab:results_hcc_aircraft}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llcccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}CCCCCC@{}}
 \toprule
 \textbf{Family} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{Acc}_3^{\text{t.d.}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1656,7 +1667,7 @@ HRN        & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & HCC                    & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Report the effect per family and dataset, always as a delta against
@@ -1691,8 +1702,8 @@ scores the evaluation-only arm is identical to the baseline under top-down
 decoding; magnitude and subspace-norm top-down effects belong to the separate
 inference-grid analysis.}
 \label{tab:results_hcc_when}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.6cm}L{1.6cm}L{3.5cm}CCCC@{}}
 \toprule
 \textbf{Family} & \textbf{Dataset} & \textbf{Enforcement} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1700,7 +1711,7 @@ inference-grid analysis.}
 \tbd & \tbd & evaluation only      & \tbd & \tbd & \tbd & \tbd \\
 \tbd & \tbd & training and evaluation & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] This is the paragraph that licenses or withholds the central HCC
@@ -1731,15 +1742,15 @@ fraction of samples whose fine argmax the projection changes; \emph{GT parent
 mass} is evaluated on the raw and on the effective logits; \emph{sibling rank}
 is the control, and is expected to be unchanged.}
 \label{tab:results_hcc_diagnostics}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}CCCCC@{}}
 \toprule
 \textbf{Family} & \textbf{Dataset} & \textbf{Active} & $\ell_1$ \textbf{displ.} & \textbf{Flip rate} & \textbf{GT parent mass (raw $\to$ eff.)} & \textbf{Sibling rank} \\
 \midrule
 \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Use this table to answer "how much work is the constraint doing",
@@ -1764,8 +1775,8 @@ is the control, and is expected to be unchanged.}
 \section{Gradient-space lexicographic optimisation}
 \label{sec:results_lex}
 
-Lexicographic mode imposes the same coarse-to-fine priority at a different
-locus: on the assembled update, per batch, with no effect at inference
+Lexicographic mode imposes coarse-to-fine priority on the assembled gradient
+update, once per batch, with no effect at inference
 (Table~\ref{tab:framework_mechanisms}). Two consequences shape this section.
 First, the arm can claim no inference-time repair, so a change in TICE here is
 necessarily a change in what the model learned. Second, activating the mechanism
@@ -1785,8 +1796,8 @@ baseline, at matched weighting where available. $\Delta$ columns are the arm
 minus its baseline, computed per seed and then averaged where the seeds are
 matched.}
 \label{tab:results_lex_main}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{1.7cm}CCCCCCC@{}}
 \toprule
 \textbf{Family} & \textbf{Dataset} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $\Delta$FPA & $\Delta$TICE & $n$ \\
 \midrule
@@ -1806,7 +1817,7 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & CUB-200   & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
            & Aircraft  & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Report the effect and, immediately, its size relative to the seed
@@ -1836,8 +1847,8 @@ accuracy--consistency trade-off which simple reweighting also buys.
 dataset and seeds. The last row carries no projection at all: it is the
 scalarised objective with a coarse-heavy weight vector.}
 \label{tab:results_lex_controls}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.4cm}L{3.2cm}CCCCC@{}}
 \toprule
 \textbf{Family / dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1846,7 +1857,7 @@ scalarised objective with a coarse-heavy weight vector.}
 \tbd & \texttt{fine\_first}          & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \tbd & coarse-heavy weighting        & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Read the rows as a decision procedure and state the outcome in
@@ -1872,7 +1883,7 @@ and reusing the weights tuned for the scalarised baseline is a choice rather
 than a neutral default: those weights balance an unprojected sum, whereas the
 quantities actually added here are the projected residuals.
 
-The arms are the four assignments of Table~\ref{tab:eta_branching} against
+The arms are the four assignments of Table~\ref{tab:kappa_branching} against
 uniform scale, all fixed before training and derived from the class counts
 alone. Cumulative branching scales a level by $C_l^\beta$, so the exponent
 controls how strongly the finest level dominates; marginal branching scales by
@@ -1886,12 +1897,12 @@ informative one for this ablation.
 \centering
 \caption{Relative gradient scale under \texttt{coarse\_first}, at matched
 family, dataset, weighting and seeds. The scale column names the assignment of
-Table~\ref{tab:eta_branching}; \emph{uniform} is the reference and is the
+Table~\ref{tab:kappa_branching}; \emph{uniform} is the reference and is the
 scaling that activating lexicographic mode imposes by default
 (\S\ref{ssec:design_threats}).}
 \label{tab:results_lex_scaling}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.4cm}L{3.0cm}CCCCC@{}}
 \toprule
 \textbf{Family / dataset} & \textbf{Scale} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1901,7 +1912,7 @@ scaling that activating lexicographic mode imposes by default
 \tbd & cumulative, $\beta=1.5$      & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \tbd & marginal                     & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] The question is narrow: does any taxonomy-derived scaling beat
@@ -1937,8 +1948,8 @@ block's own reference is expected to vanish on every selected block, while the
 residual cosine between the projected fine gradient and the coarse gradient is
 expected to vanish on a two-level block and \emph{not} on a three-level one.}
 \label{tab:results_lex_diagnostics}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llcccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.4cm}L{4.0cm}CCCC@{}}
 \toprule
 \textbf{Family / dataset} & \textbf{Mode / block} & \textbf{Pre-proj.\ cos.} & \textbf{Post-proj.\ cos.} & \textbf{Norm removed} & \textbf{Guard skips} \\
 \midrule
@@ -1946,7 +1957,7 @@ expected to vanish on a two-level block and \emph{not} on a three-level one.}
 \tbd & \texttt{coarse\_first}, two-level     & \tbd & \tbd & \tbd & \tbd \\
 \tbd & \texttt{fine\_first}, \texttt{p123}   & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Two things must be established before any claim in
@@ -1982,8 +1993,8 @@ at matched backbone, frame, weighting and seeds, with label smoothing, mixup and
 cutmix disabled in both arms. $\Delta$ columns are the arm minus its baseline,
 computed per seed and then averaged where the seeds are matched.}
 \label{tab:results_subspace_main}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{1.7cm}CCCCCCC@{}}
 \toprule
 \textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $\Delta$FPA & $\Delta$TICE & $n$ \\
 \midrule
@@ -1996,7 +2007,7 @@ CUB-200   & baseline        & \tbd & \tbd & \tbd & \tbd & ---  & ---  & \tbd \\
 Aircraft  & baseline        & \tbd & \tbd & \tbd & \tbd & ---  & ---  & \tbd \\
           & subspace sup.   & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] The claim available here is narrow and must be stated narrowly:
@@ -2021,8 +2032,8 @@ a constant to be picked once.
 frame, weighting and seeds. The margin column repeats the attainable coarse,
 middle and fine gaps of \cref{prop:subspace_margin}, which $\tau$ rescales.}
 \label{tab:results_subspace_tau}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{1.0cm}L{4.3cm}CCCC@{}}
 \toprule
 \textbf{Dataset} & $\tau$ & \textbf{Margins} $(\gamma_1,\gamma_2,\gamma_3)$ & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2030,7 +2041,7 @@ middle and fine gaps of \cref{prop:subspace_margin}, which $\tau$ rescales.}
 \tbd & \tbd & $(1.000,\,0.423,\,0.184)$ & \tbd & \tbd & \tbd & \tbd \\
 \tbd & \tbd & $(1.000,\,0.423,\,0.184)$ & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Two failure modes to name if they occur. A loss that reaches its own
@@ -2066,12 +2077,12 @@ differences from the shared \emph{none} baseline of
 are improvements. Direct subspace supervision imposes no ordering, so its
 $\Delta$TICE is an unintended side effect and not a claim of the mechanism.}
 \label{tab:results_mechanism_axis}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llcccccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{1.8cm}CCCCCCCC@{}}
 \toprule
 & & \multicolumn{2}{c}{\textbf{HCC}} & \multicolumn{2}{c}{\textbf{Lexicographic}} & \multicolumn{2}{c}{\textbf{LH-projection}} & \multicolumn{2}{c}{\textbf{Subspace sup.}} \\
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}\cmidrule(l){9-10}
-\textbf{Family} & \textbf{Dataset} & $\Delta$FPA & $\Delta$TICE & $\Delta$FPA & $\Delta$TICE & $\Delta$FPA & $\Delta$TICE & $\Delta$FPA & $\Delta$TICE \\
+\textbf{Family} & \textbf{Dataset} & $\Delta$FPA & \shortstack{$\Delta$\\TICE} & $\Delta$FPA & \shortstack{$\Delta$\\TICE} & $\Delta$FPA & \shortstack{$\Delta$\\TICE} & $\Delta$FPA & \shortstack{$\Delta$\\TICE} \\
 \midrule
 H-CAST     & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
            & CUB-200   & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
@@ -2089,12 +2100,12 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
            & CUB-200   & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
            & Aircraft  & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-% [ANALYSIS] The question is whether the locus matters, and it is answered
+% [ANALYSIS] The question is whether the point of intervention matters, and it is answered
 % within a family, never across families. Three readings are worth separating:
-% whether the two loci move the same metric; whether they cost the same
+% whether the two intervention points move the same metric; whether they cost the same
 % fine-level accuracy to do it; and whether their per-dataset pattern is the
 % same --- two mechanisms that both improve consistency but fail on different
 % datasets are not interchangeable even when their average effect coincides.
@@ -2103,41 +2114,31 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
 % (\cref{ssec:results_posthoc}) first.
 
 % ======================================================================
-\section{Substrate and locus ablations}
+\section{Configuration and mechanism ablations}
 \label{sec:results_ablations}
 
-The ablations in this section are conditional by design. Each is expensive, and
-each is informative only where the preceding sections have established that
-there is an effect to localise, so they are run on the family--dataset pairs
-those results select rather than on the full grid. The selection rule is stated
-here in advance, so that it is not read as a choice made after seeing the
-ablations themselves: an ablation is run where the mechanism it decomposes
-produced, in \cref{sec:results_hcc} or \cref{sec:results_lex}, an effect
-exceeding the seed spread; the pairs that satisfied the rule are named at the
-start of each subsection. Two subsections are exempt and run unconditionally,
-because they are preconditions rather than decompositions: the frame ladder of
-\cref{ssec:results_frame} and the softmax scope of \cref{ssec:results_softmax}.
-Between them they price the substitutions the LH-projection requires, and that
-price has to be known before its arm in \cref{ssec:results_lhproj} can be read
-at all.
+Most ablations are run only on family--dataset pairs for which
+\cref{sec:results_hcc,sec:results_lex} report an effect larger than the seed
+spread. Each subsection names the pairs selected by this rule. The frame and
+softmax experiments are exceptions: they are run independently of prior results
+because they measure changes required before the LH-projection can be applied.
 
 \subsection{The Hier-COS frame ladder}
 \label{ssec:results_frame}
 
 The three rungs are the dense random orthonormal frame, the per-level
 block-diagonal frame and the identity, at matched backbone, loss, weighting and
-readout; what each step removes, and what follows from each outcome, is set out
-in \S\ref{ssec:design_substrate}. The middle rung is also the precondition that
-makes \cref{ssec:results_lhproj} definable at all, which is why the ladder is
-run whether or not the frame turns out to matter.
+readout; \S\ref{ssec:design_substrate} explains what each step removes. A
+level-independent frame is also required by the LH-projection, so the ladder is
+run whether or not the frame improves the baseline.
 
 \begin{table}[htbp]
 \centering
 \caption{Frame ladder on Hier-COS, at matched backbone, loss, weighting and
 readout.}
 \label{tab:results_frame}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}YCCCCC@{}}
 \toprule
 \textbf{Dataset} & \textbf{Frame} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2145,17 +2146,17 @@ readout.}
 \tbd & per-level block-diagonal & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \tbd & identity                 & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-\subsection{Where the softmax lives}
+\subsection{Global or per-level softmax}
 \label{ssec:results_softmax}
 
-The two rows are the global node-wide normaliser and the level-scoped one, at
-matched frame and weighting. Both are baseline rows: as \S\ref{ssec:design_substrate}
-sets out, the lexicographic arm needs only the decomposition into $L$ terms and
-runs at the global scope, so what separates these two rows is the entry price of
-the LH-projection and of nothing else.
+The global node-wide and per-level normalisers are compared at matched frame and
+weighting. Both rows are baselines. Explicit lexicographic training can retain
+the global normaliser, whereas the LH-projection requires the per-level one
+(\S\ref{ssec:design_substrate}); their difference therefore measures an
+adaptation cost, not a projection effect.
 
 \begin{table}[htbp]
 \centering
@@ -2164,26 +2165,24 @@ the two rows is the entry price paid by the LH-projection arm of
 \cref{ssec:results_lhproj}; the lexicographic arm of \cref{sec:results_lex} runs
 at the global scope and does not pay it.}
 \label{tab:results_softmax}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}YCCCCC@{}}
 \toprule
 \textbf{Dataset} & \textbf{Softmax scope} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
 \tbd & global (all nodes) & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \tbd & per level          & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-\subsection{Does gradient-space ordering need a learnable transform?}
+\subsection{Effect of the learnable transform}
 \label{ssec:results_transform}
 
-Three rungs between backbone and frame --- the full residual transform, a
-batch-norm-plus-linear reduction, and none --- each run with and without
-lexicographic mode. The question, as \S\ref{ssec:design_substrate} puts it, is
-where the projection is acting: a benefit that shrinks with the transform is
-localised to a learned re-embedding, one that survives its removal is acting on
-the backbone itself.
+The full residual transform, a batch-normalisation-plus-linear reduction and no
+transform are each evaluated with and without lexicographic mode. If the
+lexicographic effect shrinks with the transform, it depends on the learned
+re-embedding; if it survives removal, it acts through the backbone.
 
 \begin{table}[htbp]
 \centering
@@ -2191,8 +2190,8 @@ the backbone itself.
 and weighting. The quantity of interest is the difference between the two arms
 at each rung, not the absolute values down a column.}
 \label{tab:results_transform}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}lllcccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{2.3cm}L{2.5cm}CCCC@{}}
 \toprule
 \textbf{Dataset} & \textbf{Transform} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2203,13 +2202,13 @@ at each rung, not the absolute values down a column.}
 \tbd & none          & baseline      & \tbd & \tbd & \tbd & \tbd \\
 \tbd & none          & lexicographic & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \subsection{One principle, two implementations: LH-projection against lexicographic mode}
 \label{ssec:results_lhproj}
 
-The two arms impose one principle at two points, and cannot be combined
+The two arms impose one principle at different points and cannot be combined
 (\S\ref{ssec:design_locus}). Hier-COS is the only family supporting both, so the
 contrast runs inside a single family at matched backbone, frame, loss, weighting
 and seeds --- cleaner than any cross-family comparison could be. What is at
@@ -2224,8 +2223,8 @@ backbone, frame, loss, weighting and seeds. The two arms are the same principle
 imposed inside the computational graph and on the assembled gradient
 respectively.}
 \label{tab:results_lhproj}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{4.0cm}CCCCC@{}}
 \toprule
 \textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2233,7 +2232,7 @@ respectively.}
 \tbd & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \tbd & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \subsection{Where the in-graph guarantee is thin}
@@ -2261,8 +2260,8 @@ is reserved \emph{against}.
 representation width $D$ together with the number of non-leaf classes
 $\sum_{l<L}C_l$ it must exceed by condition~4 of \S\ref{ssec:lhproj_setting}.}
 \label{tab:results_lhproj_variants}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}llccccc@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}YCCCCC@{}}
 \toprule
 \textbf{Dataset} & \textbf{Variant} & $D$ \textbf{/ non-leaf} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2270,14 +2269,14 @@ $\sum_{l<L}C_l$ it must exceed by condition~4 of \S\ref{ssec:lhproj_setting}.}
 \tbd & reduced width                & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \tbd & advantage parameterisation   & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % [ANALYSIS] Keep the two axes apart. Width is a statement about condition 4: if
 % the arm degrades only as D approaches the non-leaf count, the constraint is
 % binding and the mechanism needs headroom, which is a requirement and not a
 % failure. The advantage parameterisation changes the model, not the projection,
-% so it is reported as a variant of the substrate and never folded into the
+% so it is reported as a model variant and never folded into the
 % LH-projection-versus-lexicographic contrast of \cref{ssec:results_lhproj}.
 
 % ======================================================================
@@ -2289,18 +2288,17 @@ admits, not a claim that every cell of it has been populated. Where an arm
 required by a question has not been run, the corresponding claim is reported as
 \emph{unidentified} rather than as unsupported: the distinction matters, because
 an unidentified claim is one the evidence cannot yet decide, not one the
-evidence decides against. Table~\ref{tab:results_coverage} states, for each
-question of \S\ref{ssec:design_substrate}, \S\ref{ssec:design_locus} and
-\S\ref{ssec:design_objective}, the arms it requires, whether they exist, and
-what their absence costs.
+evidence decides against. Table~\ref{tab:results_coverage} states the runs
+required by each question, whether those runs exist, and what their absence
+prevents the chapter from concluding.
 
 \begin{table}[htbp]
 \centering
 \caption{Coverage of the design. A question is identified only if every arm in
 the second column exists at the same family, dataset and seeds.}
 \label{tab:results_coverage}
-\fontsize{8}{11}\selectfont
-\begin{tabular}{@{}p{0.25\textwidth}p{0.27\textwidth}cp{0.27\textwidth}@{}}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}YYCY@{}}
 \toprule
 \textbf{Question} & \textbf{Arms required} & \textbf{Status} & \textbf{Cost of the absence} \\
 \midrule
@@ -2315,7 +2313,7 @@ Output space against gradient space & the cells of the mechanism axis & \tbd & \
 What is inference-time versus training-induced in HCC? & baseline, post-hoc HCC, trained HCC & \tbd & \tbd \\
 Does supervising the ranked quantity help? & Hier-COS baseline and subspace-supervision arm, over $\tau$ & \tbd & \tbd \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 % ======================================================================

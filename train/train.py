@@ -144,10 +144,6 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
     if start_epoch >= stop_epoch:
         print(f"[train] resume start_epoch={start_epoch} >= stop_epoch={stop_epoch}; skipping train loop.")
 
-    checkpoint_selection_strategy = str(
-        cfg.train.get("checkpoint_selection", "hierarchical_metrics")
-    )
-
     for epoch in range(start_epoch, stop_epoch):
         train_outputs = train_one_epoch(
             model,
@@ -171,19 +167,11 @@ def run_training(cfg: Any, cfg_resolved: Dict[str, Any]) -> None:
         )
 
         candidate_selection = {
-            mode: selection_components(
-                val_outputs,
-                mode=mode,
-                strategy=checkpoint_selection_strategy,
-            )
+            mode: selection_components(val_outputs, mode=mode)
             for mode in BEST_SELECTION_MODES
         }
         candidate_keys = {
-            mode: selection_key(
-                val_outputs,
-                mode=mode,
-                strategy=checkpoint_selection_strategy,
-            )
+            mode: selection_key(val_outputs, mode=mode)
             for mode in BEST_SELECTION_MODES
         }
         primary_scores = {

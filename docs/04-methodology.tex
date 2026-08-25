@@ -170,7 +170,7 @@ contributions must still be added, and a much larger contribution can dominate
 that sum. Relative gradient scale is therefore an empirical degree of freedom of
 the lexicographic approach even though it does not change the priority order.
 
-A first candidate is to set $\eta_l=w_l$, reusing the coefficients of the
+A first candidate is to set $\kappa_l=w_l$, reusing the coefficients of the
 scalarised baselines. This provides a natural controlled comparison between the
 two optimisation approaches. However, there is no reason for coefficients
 defined or tuned for the scalarised objective to be optimal for lexicographic
@@ -185,22 +185,22 @@ sequential composition also depends on the scale of the intermediate
 resultants. A vector that balances the unprojected gradient sum may therefore
 leave the projected contributions poorly balanced.
 
-The per-level factors $\eta_l$ are introduced to study this point: they test
+The per-level factors $\kappa_l$ are introduced to study this point: they test
 whether changing the relative magnitudes supplied to the projection makes
 lexicographic training more effective than reusing the baseline weights.
 
 For the decomposed Hier-COS objective used in this ablation,
 \[
-g_l(\eta_l)=\nabla_\theta\!\left[\eta_l\,\ell_l^{\mathrm{CE}}+\alpha\,\mathcal{R}_l\right],
+g_l(\kappa_l)=\nabla_\theta\!\left[\kappa_l\,\ell_l^{\mathrm{CE}}+\lambda\,\mathcal{R}_l\right],
 \qquad
-\Delta\theta=-\,\mathcal{A}\!\left(g_1(\eta_1),\dots,g_L(\eta_L)\right),
+\Delta\theta=-\,\mathcal{A}\!\left(g_1(\kappa_1),\dots,g_L(\kappa_L)\right),
 \]
 where $\mathcal{A}$ denotes the projection and composition of
-\S\ref{ssec:lex_modes}. The regulariser coefficient $\alpha$ remains fixed, so
-changing $\eta_l$ changes the balance between classification and regularisation
+\S\ref{ssec:lex_modes}. The regulariser coefficient $\lambda$ remains fixed, so
+changing $\kappa_l$ changes the balance between classification and regularisation
 within that level as well as the magnitude of the level contribution.
 
-Two new assignments of $\eta$ are introduced, both defined directly from the
+Two new assignments of $\kappa$ are introduced, both defined directly from the
 structure of the taxonomy. Introduce a virtual root at level $0$, with $C_0=1$,
 and define the average branching factor into level $l$ as
 \[
@@ -220,7 +220,7 @@ q_l:=\prod\limits_{j=1}^{l}b_j
 The resulting scale is normalised and equipped with an exponent $\beta$,
 \[
 \begin{aligned}
-\eta_l^{\mathrm{cum}}(\beta)
+\kappa_l^{\mathrm{cum}}(\beta)
 &:=\frac{q_l^\beta}{\sum_{k=1}^{L}q_k^\beta}
 =\frac{C_l^\beta}{\sum_{k=1}^{L}C_k^\beta}\\[0.4ex]
 &\;=\operatorname{softmax}_l\!\big(\beta\log C\big),
@@ -243,7 +243,7 @@ its local average branching factor:
 \begin{aligned}
 s_1 &:= 1, \qquad
 s_l := b_l=\frac{C_l}{C_{l-1}}\ \ (l>1), \\[0.6ex]
-\eta_l^{\mathrm{marg}} &:=\frac{s_l}{\sum_{k=1}^{L}s_k} .
+\kappa_l^{\mathrm{marg}} &:=\frac{s_l}{\sum_{k=1}^{L}s_k} .
 \end{aligned}
 \]
 Unlike cumulative branching, this rule need not increase with depth: it assigns
@@ -254,7 +254,7 @@ the largest scale to the level whose transition has the largest average fan-out.
 \caption{Taxonomy-derived gradient-scaling vectors, ordered coarse to fine.
 Values follow directly from the class counts and are rounded to three decimal
 places.}
-\label{tab:eta_branching}
+\label{tab:levelscale_branching}
 \small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lccc@{}}
@@ -294,16 +294,28 @@ processed before fine ones.
 
 The defining feature of \eqref{eq:hc_lmop} is that
 a lower-priority objective may act only \emph{within the level set already fixed
-by the higher-priority ones}. The priority mechanisms in this chapter
-approximate or encode that restriction at different points of the computation.
-Their guarantees are stated separately; none should be read as solving the
-nested optimisation problem in \eqref{eq:hc_lmop} exactly.
+by the higher-priority ones}. The mechanisms in this chapter approximate that
+restriction rather than impose it; their guarantees are stated separately, and none
+should be read as solving the nested problem in \eqref{eq:hc_lmop} exactly.
 
 As established in \cref{sec:lexico-real}, no positive real weight vector encodes a lexicographic
 order (\cref{prop:debreu}), and for any fixed $w$ there are level-wise changes
 under which the scalarised objective improves while the lexicographic order
 worsens (\cref{cor:compensation}). The coefficients of
 \S\ref{ssec:problem_objective} therefore express a trade-off between levels, not a lexicographic priority.
+
+\Cref{sec:nsa-bridge} settles what can be done about this and fixes the shape of
+every mechanism in this chapter. Weighting \eqref{eq:hc_lmop} with infinitesimal
+coefficients does encode the priority exactly, but the resulting gradient
+\eqref{eq:ns-gradient} cannot be descended by a real network --- one step leaves
+$\mathbb{R}^{P}$ \eqref{eq:ns-step} --- while its standard part collapses to the
+coarse gradient alone and deletes levels $2,\dots,L$ \eqref{eq:st-collapse}. What
+survives the return to $\mathbb{R}$ is not the nested problem \eqref{eq:hc_lmop} but
+a first-order surrogate for it, and the mechanisms below differ precisely in where
+they enforce that surrogate: in parameter space (\S\ref{sec:methodology_lex}), at the
+branch point (\S\ref{sec:methodology_lhproj}), in the representation
+(\S\ref{sec:methodology_subspace}), or in the output space
+(\S\ref{sec:methodology_hcc}).
 
 \paragraph{Order of priority.} The ordering in \eqref{eq:hc_lmop} is an
 assumption rather than a consequence of the taxonomy. Under a
@@ -330,10 +342,13 @@ The first mechanism imposes priority directly on the \emph{update direction} in
 parameter space. The gradients of the level objectives are computed separately
 and each lower-priority gradient is orthogonalised against the current resultant
 of the levels processed before it. This thesis refers to the procedure as
-\emph{lexicographic mode}. It reads the priority ordering of
-\S\ref{ssec:problem_priority} as a rule for constructing the gradient supplied to
-the optimiser; \S\ref{ssec:lex_guarantee} states precisely what that rule does
-and does not protect.
+\emph{lexicographic mode}. It is the assembler $\mathcal{A}$ of
+\eqref{eq:assembler}: its inputs are the $L$ real level gradients that
+\eqref{eq:ns-gradient} carries as coefficients of $\eta^{\,l-1}$, and its output is a
+single real direction. It generalises the two-objective sketch
+\eqref{eq:nsa-projection-sketch} in two ways, to $L$ levels and to the parameter
+blocks on which the levels actually overlap. \S\ref{ssec:lex_guarantee} states
+precisely what the resulting rule does and does not protect.
 
 \subsection{Setting and requirements}
 \label{ssec:lex_setting}
@@ -597,13 +612,16 @@ Only coarse-to-fine priority is discussed explicitly from here on.
 \subsection{Guarantee and scope}
 \label{ssec:lex_guarantee}
 
-The guarantee is local: it concerns the change predicted for one sufficiently
+The guarantee is the first-order non-interference property
+\eqref{eq:nsa-noninterference}, established there for two objectives and extended
+here to $L$ levels and to arbitrary gradient supports. It is local: it concerns the
+change predicted for one sufficiently
 small update. Consider first the idealised gradient step
-$\theta^+=\theta-\eta d$, where $d$ is the assembled gradient. Differentiability
+$\theta^+=\theta-\mu d$, where $d$ is the assembled gradient. Differentiability
 of $\ell_l$ gives
 \[
 \ell_l(\theta^+)
-=\ell_l(\theta)-\eta\,\langle g_l,d\rangle+o(\eta).
+=\ell_l(\theta)-\mu\,\langle g_l,d\rangle+o(\mu).
 \]
 Thus $\langle g_l,d\rangle$ with a positive value predicts a decrease in $\ell_l$, zero predicts no first-order
 change, and a negative value predicts an increase. The purpose of the projection
@@ -722,8 +740,8 @@ g_1=(1,0),\qquad g_2=(0,1),\qquad g_3=(-2,2).
 Here $g_2\perp g_1$, so $m=g_2$ and $h=(1,1)$. Moreover,
 $g_3\perp h$, so $\tilde g_3=g_3$. The assembled direction is therefore
 $d=(-1,3)$ and $\langle g_1,d\rangle=-1$. For the idealised step
-$\theta^+=\theta-\eta d$, this block contributes
-$-\eta\langle g_1,d\rangle=+\eta$ to the first-order change in the coarse
+$\theta^+=\theta-\mu d$, this block contributes
+$-\mu\langle g_1,d\rangle=+\mu$ to the first-order change in the coarse
 objective. It is an increasing contribution, even though both projections have
 been applied exactly. Replacing $g_3$ by $(2,-2)$ gives the opposite sign for
 $\rho$, confirming that the projection itself imposes no sign constraint.
@@ -793,7 +811,10 @@ The second mechanism originates in the lexicographic hybrid deep neural network 
 \cite{fiaschi2024informed}, which combines lexicographic multi-objective
 optimisation with non-standard analysis
 \cite{benci2022nonstandard,benci2019measure} and equips a hierarchical classifier
-with projection operators before each output layer. It is referred to here as the
+with projection operators before each output layer. It answers the question of
+\cref{ssec:nsa-what-retained} --- which real direction to descend, given that the
+non-standard one cannot be --- at a different point of the computation from
+\S\ref{sec:methodology_lex}, and the two are compared on that basis. It is referred to here as the
 \emph{LH-projection}. Both it and lexicographic mode remove from a lower-priority
 level's learning signal the part that lies in a subspace already claimed by the
 levels above; they differ in where they read that subspace and where they apply

@@ -10,7 +10,6 @@ train:
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/<run_name> # Run artifact directory
   smoothing: 0.1                    # Label smoothing in CE-based losses
   stop_epoch: 100                   # Optional early stop epoch; must satisfy 1 <= stop_epoch <= epochs
-  checkpoint_selection: hierarchical_metrics # hierarchical_metrics | deepest_accuracy
 
   # Optional linear LR scaling by batch size.
   scale_lr: false                   # If true, final LR = optim.lr * batch_size / reference_batch_size
@@ -52,7 +51,7 @@ train:
     eps: 1.0e-12                    # Numerical epsilon for the shared score scale
 
 optim:
-  name: adamw                       # adam | keras_adam (Keras 2.8 epsilon-hat) | adamw | sgd
+  name: adamw                       # adam | adamw | sgd
   lr: 0.0005                        # Base LR (or scaled base LR if train.scale_lr=true)
   weight_decay: 0.05
   momentum: 0.9                     # Used by sgd

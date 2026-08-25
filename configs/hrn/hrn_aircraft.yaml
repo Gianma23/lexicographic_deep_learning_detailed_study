@@ -52,7 +52,9 @@ dataloader:
   drop_last_eval: false
 
 train:
-  epochs: 200
+  # Unified 100-epoch budget (upstream HRN uses 200); the cosine schedule
+  # below is parameterised by train.epochs, so it is compressed, not truncated.
+  epochs: 100
   seed: 0
   device: ${oc.env:TRAIN_DEVICE,cuda}
   amp: false
