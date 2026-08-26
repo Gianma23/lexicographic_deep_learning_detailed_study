@@ -137,10 +137,10 @@ def validate_lexicographic_requirements(cfg: Any, level_losses: List[torch.Tenso
             "differentiable per-level losses."
         )
 
-    if model_name == "hrn" and model_cfg.get("loss", "native") != "level_marginal":
+    if model_name == "hrn" and model_cfg.get("loss", "native") != "level_conditional":
         raise ValueError(
             "train.lexicographic.enabled=true with model.name='hrn' requires "
-            "`model.loss: level_marginal` to expose coarse, middle, and fine objectives."
+            "`model.loss: level_conditional` to expose coarse, middle, and fine objectives."
         )
 
     if len(level_losses) != 3:

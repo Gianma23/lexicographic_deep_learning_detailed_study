@@ -128,12 +128,12 @@ hard_target_overrides=(
 
 run_output_dir() {
   local dataset="$1"
-  echo "$OUTPUTS_ROOT/hrn_${dataset}_level_marginal_lex_${LEX_PROJECTION_MODE}"
+  echo "$OUTPUTS_ROOT/hrn_${dataset}_level_conditional_lex_${LEX_PROJECTION_MODE}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
-printf 'HRN loss mode: level_marginal\n'
+printf 'HRN loss mode: level_conditional\n'
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
 printf 'HRN lex training epochs: 100\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
@@ -145,7 +145,7 @@ for dataset in "${DATASETS[@]}"; do
   config="$(config_for_dataset "$dataset")"
   run_seeded_train "$config" "$(run_output_dir "$dataset")" \
     "${hard_target_overrides[@]}" \
-    "model.loss=level_marginal" \
+    "model.loss=level_conditional" \
     "train.epochs=100" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \

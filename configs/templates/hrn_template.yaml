@@ -2,7 +2,7 @@
 # Constraint: HRN supports exactly three hierarchy levels.
 model:
   name: hrn                         # Model registry id. Must be exactly: hrn
-  loss: native                      # native | level_marginal; HRN lex requires level_marginal
+  loss: native                      # native | level_conditional; HRN lex requires level_conditional
   backbone: resnet50                # resnet50 | wide_resnet (CIFAR-native adaptation)
   pretrained: true                  # ResNet-50 only; wide_resnet requires false
   wide_depth: 28                    # WideResNet only; must satisfy (depth - 4) % 6 == 0

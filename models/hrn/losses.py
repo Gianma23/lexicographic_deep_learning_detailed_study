@@ -30,8 +30,8 @@ def _resolve_loss_mode(cfg: Any) -> str:
     raw_mode = model_cfg.get("loss", "native") if hasattr(model_cfg, "get") else "native"
     if raw_mode is None:
         raw_mode = "native"
-    if not isinstance(raw_mode, str) or raw_mode not in {"native", "level_marginal"}:
-        raise ValueError("HRN model.loss must be one of ['native', 'level_marginal'].")
+    if not isinstance(raw_mode, str) or raw_mode not in {"native", "level_conditional"}:
+        raise ValueError("HRN model.loss must be one of ['native', 'level_conditional'].")
     return raw_mode
 
 
@@ -157,22 +157,64 @@ def _hierarchical_loss(tree_scores_per_level: List[torch.Tensor], observed_globa
     return (-torch.log(marginal / z)).to(dtype=torch.float64).mean()
 
 
-def _level_marginal_tree_losses(
+def _level_conditional_tree_losses(
     tree_scores_per_level: List[torch.Tensor],
     hard_targets: torch.Tensor,
     state_space: torch.Tensor,
     fine_tree_loss: torch.Tensor,
 ) -> List[torch.Tensor]:
+    """Split the native tree loss into three conditional negative log-likelihoods.
+
+    `_hierarchical_loss` returns `-log P(state in subtree(u))` for an observed
+    node `u`. The observed nodes of one sample are nested,
+    `subtree(coarse) ⊇ subtree(middle) ⊇ {leaf}`, so the chain rule gives
+
+        -log P(leaf) = -log P(sub(coarse))
+                       - log P(sub(middle)) / P(sub(coarse))
+                       - log P(leaf)        / P(sub(middle)),
+
+    that is, the successive differences of the three marginal terms. The three
+    returned tensors therefore sum exactly to `fine_tree_loss`: with projection
+    disabled the decomposed mode reproduces the `native` objective, gradients
+    included, and each term is a proper conditional NLL of its own level.
+
+    Each marginal is evaluated with the levels finer than its own detached. They
+    enter that term only through the state-space normaliser and through the deep
+    states inside the observed subtree, so without the detach every term reads
+    every level's scores and `-log P(sub(coarse))` carries gradient into the fine
+    head at the same order as into its own. Detaching leaves all three values
+    untouched, so the telescoping identity and the native-gradient equality both
+    survive, and makes the level gradients triangular: term `l` is supported on
+    the parameters of levels `0..l` only. That is what gives lexicographic
+    ordering a well-defined subject -- without it `grad(l_0)` spans every branch,
+    including a fine head that cannot move the coarse logits at all.
+
+    The detach acts on the gradient, not on the value: the normaliser still sums
+    over states of every depth, so a fine-only step still moves the coarse term's
+    value. The guarantee is that `l_0` is stationary along its own coordinates,
+    not that the coarse objective is unchanged.
+    """
     offsets = _level_offsets([int(scores.size(-1)) for scores in tree_scores_per_level])
-    higher_level_losses = [
-        _hierarchical_loss(
-            tree_scores_per_level=tree_scores_per_level,
+
+    def _marginal_at(level: int) -> torch.Tensor:
+        detached_scores = [
+            scores if score_level <= level else scores.detach()
+            for score_level, scores in enumerate(tree_scores_per_level)
+        ]
+        return _hierarchical_loss(
+            tree_scores_per_level=detached_scores,
             observed_global=hard_targets[:, level].long() + int(offsets[level]),
             state_space=state_space,
         )
-        for level in range(2)
+
+    # `fine_tree_loss` is the deepest marginal, which has nothing to detach.
+    marginal_losses = [_marginal_at(level) for level in range(2)]
+    marginal_losses.append(fine_tree_loss)
+    return [
+        marginal_losses[0],
+        marginal_losses[1] - marginal_losses[0],
+        marginal_losses[2] - marginal_losses[1],
     ]
-    return [*higher_level_losses, fine_tree_loss]
 
 
 def compute_loss(
@@ -206,7 +248,8 @@ def compute_loss(
         raise ValueError("HRN output must provide `tree_scores_per_level` with 3 tensors.")
 
     # If effective_tree_scores_per_level is present, the hierarchical marginal
-    # loss trains on HCC-corrected tree scores; otherwise it uses raw scores.
+    # loss trains on the HCC-corrected coarse and middle activations; the fine
+    # tree head is not part of the constrained triple and keeps its raw score.
     _, tree_scores_per_level = select_effective_logits(
         output,
         raw_key="tree_scores_per_level",
@@ -218,6 +261,12 @@ def compute_loss(
         if not has_logits_per_level:
             raise ValueError("HRN output must provide `species_ce_logits` or a 3-level `logits_per_level`.")
         species_ce_logits = logits_per_level[2]
+
+    # HCC constrains the emitted triple, whose fine entry is this head, so the
+    # leaf cross-entropy trains on the corrected logits whenever it is active.
+    effective_logits_per_level = output.get("effective_logits_per_level")
+    if isinstance(effective_logits_per_level, list) and len(effective_logits_per_level) == 3:
+        species_ce_logits = effective_logits_per_level[2]
 
     num_classes_per_level = [int(x.size(-1)) for x in tree_scores_per_level]
     parent_of = _normalize_parent_of(taxonomy)
@@ -246,8 +295,8 @@ def compute_loss(
     else:
         ce_loss = fine_tree_loss.new_zeros(())
 
-    if loss_mode == "level_marginal":
-        tree_level_losses = _level_marginal_tree_losses(
+    if loss_mode == "level_conditional":
+        tree_level_losses = _level_conditional_tree_losses(
             tree_scores_per_level=tree_scores_per_level,
             hard_targets=hard_targets,
             state_space=state_space,
@@ -258,6 +307,8 @@ def compute_loss(
             tree_level_losses[1],
             tree_level_losses[2] + ce_loss,
         ]
+        # The conditional terms telescope, so `hier_loss` and `total` here are
+        # numerically the `native` tree loss and the `native` total.
         hier_loss = torch.stack(tree_level_losses).sum()
         total = torch.stack(level_losses).sum()
 

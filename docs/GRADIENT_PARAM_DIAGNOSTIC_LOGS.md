@@ -37,9 +37,11 @@ model requirements are:
 - HT-CapsNet exposes its three raw capsule margin losses. Its lex launcher uses
   `model.loss.weight_mode: none` for unit weights; other configured scalar
   weights do not change the raw tensors consumed by lex projection.
-- HRN requires `model.loss: level_marginal`, which exposes coarse and middle
-  tree-marginal NLLs plus a fine tree-marginal NLL with the original leaf CE
-  term.
+- HRN requires `model.loss: level_conditional`, which exposes the three
+  conditional tree NLLs (coarse subtree; middle given coarse; leaf given middle)
+  with the original leaf CE term added to the fine one. They telescope to the
+  `native` objective, so the projection is the only difference from a `native`
+  baseline.
 - Hier-COS requires `model.loss: global_softmax_ce_reg` or
   `level_softmax_ce_reg`; plain `kl_reg` does not expose per-level loss tensors.
   Both decomposed modes use weighted target CE plus the same unweighted level

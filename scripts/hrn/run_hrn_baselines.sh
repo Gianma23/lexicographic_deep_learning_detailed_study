@@ -41,7 +41,7 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
+parse_choice_list DATASETS "aircraft" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -117,7 +117,7 @@ hard_target_overrides=(
 
 run_output_dir() {
   local ds="$1"
-  echo "$OUTPUTS_ROOT/hrn_${ds}"
+  echo "$OUTPUTS_ROOT/hrn_${ds}_level_conditional"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -131,6 +131,7 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
     "${hard_target_overrides[@]}" \
+    "model.loss=level_conditional" \
     "train.lexicographic.enabled=false" \
     "train.gradient_blocks=[p123]"
 done

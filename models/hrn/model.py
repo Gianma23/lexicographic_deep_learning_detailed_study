@@ -225,25 +225,36 @@ class HRNModel(nn.Module):
             F.softmax(species_ce_logits, dim=-1),
         ]
 
-        # HCC corrects the pre-sigmoid tree branch (classifier_1/2/3), the
-        # affine logits that actually drive `_hierarchical_loss`; the separate
-        # leaf-only `species_ce_logits` head (classifier_3_1) is untouched.
+        # HCC constrains the emitted score triple: the coarse and middle tree
+        # logits and `species_ce_logits` (classifier_3_1), the head that produces
+        # HRN's reported fine score. Constraining the fine tree head instead
+        # would leave the reported prediction untouched, and its logits carry a
+        # large shared negative offset that makes the children sum sit far from
+        # the parent. The corrected middle logits re-enter the tree branch, whose
+        # own fine head keeps its raw logits.
         tree_logits_per_level = [order_logits, family_logits, species_tree_logits]
-        hcc_output = self.hcc.apply(tree_logits_per_level)
-        effective_tree_logits_per_level = hcc_output["effective_logits_per_level"]
-        effective_tree_scores_per_level = (
-            [torch.sigmoid(logits) for logits in effective_tree_logits_per_level]
-            if effective_tree_logits_per_level is not None
-            else None
-        )
+        hcc_output = self.hcc.apply(logits_per_level)
+        effective_logits_per_level = hcc_output["effective_logits_per_level"]
+        effective_tree_scores_per_level = None
+        if effective_logits_per_level is not None:
+            effective_probs_per_level = [
+                torch.sigmoid(effective_logits_per_level[0]),
+                torch.sigmoid(effective_logits_per_level[1]),
+                F.softmax(effective_logits_per_level[2], dim=-1),
+            ]
+            effective_tree_scores_per_level = [
+                torch.sigmoid(effective_logits_per_level[0]),
+                torch.sigmoid(effective_logits_per_level[1]),
+                species_sig,
+            ]
 
         return {
             "logits_per_level": logits_per_level,
+            "effective_logits_per_level": effective_logits_per_level,
             "effective_probs_per_level": effective_probs_per_level,
             "tree_scores_per_level": [order_sig, family_sig, species_sig],
             "tree_logits_per_level": tree_logits_per_level,
-            "projected_tree_logits_per_level": hcc_output["projected_logits_per_level"],
-            "effective_tree_logits_per_level": effective_tree_logits_per_level,
+            "projected_logits_per_level": hcc_output["projected_logits_per_level"],
             "effective_tree_scores_per_level": effective_tree_scores_per_level,
             "hcc_diagnostics": hcc_output["hcc_diagnostics"],
             "species_ce_logits": species_ce_logits,

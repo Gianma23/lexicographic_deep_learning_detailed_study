@@ -5,6 +5,7 @@ set -euo pipefail
 # - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
+# - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
 # - model.projection.feature_dim=${FEATURE_DIM}
 # - model.transform_mode=full
 # - train.lexicographic.enabled=false
@@ -25,6 +26,7 @@ MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
+FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-true}"
 FEATURE_DIM="${FEATURE_DIM:-0}"
 
 case "$LOSS_MODE" in
@@ -53,6 +55,22 @@ case "$FIXED_FRAME_MODE" in
     exit 1
     ;;
 esac
+
+case "$FIXED_FRAME_PER_LEVEL" in
+  0|1|true|false|True|False) ;;
+  *)
+    echo "Unsupported FIXED_FRAME_PER_LEVEL: $FIXED_FRAME_PER_LEVEL" >&2
+    echo "Expected 0, 1, true, or false." >&2
+    exit 1
+    ;;
+esac
+normalize_bool_like "$FIXED_FRAME_PER_LEVEL" FIXED_FRAME_PER_LEVEL_OVERRIDE
+
+if [[ "$FIXED_FRAME_MODE" == "identity" && "$FIXED_FRAME_PER_LEVEL_OVERRIDE" == "true" ]]; then
+  echo "FIXED_FRAME_PER_LEVEL=true is redundant with FIXED_FRAME_MODE=identity." >&2
+  echo "Use FIXED_FRAME_MODE=identity FIXED_FRAME_PER_LEVEL=false." >&2
+  exit 1
+fi
 
 if [[ ! "$FEATURE_DIM" =~ ^[0-9]+$ ]]; then
   echo "Unsupported FEATURE_DIM: $FEATURE_DIM" >&2
@@ -87,6 +105,9 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_baselines.sh
 #   LOSS_MODE=level_softmax_ce_reg WEIGHT_MODE=equal FIXED_FRAME_MODE=identity FEATURE_DIM=512 \
 #     ./scripts/hiercos/run_hiercos_baselines.sh
+#   FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=true \
+#     ./scripts/hiercos/run_hiercos_baselines.sh
+# Each invocation selects one frame: identity, dense random, or block random.
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
 DATASETS=(aircraft cub200 cifar100)
@@ -160,7 +181,9 @@ run_output_dir() {
   if [[ "$FEATURE_DIM" != "0" ]]; then
     dimension_suffix="_d${FEATURE_DIM}"
   fi
-  if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
+  if [[ "$FIXED_FRAME_PER_LEVEL_OVERRIDE" == "true" ]]; then
+    frame_suffix="_block"
+  elif [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
   echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_baseline_${WEIGHT_MODE}${dimension_suffix}${frame_suffix}"
@@ -171,6 +194,7 @@ printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
+printf 'Fixed frame per level: %s\n' "$FIXED_FRAME_PER_LEVEL_OVERRIDE"
 if [[ "$FEATURE_DIM" == "0" ]]; then
   printf 'Projection feature dimension: auto (sum of classes across levels)\n'
 else
@@ -191,6 +215,7 @@ for ds in "${DATASETS[@]}"; do
     "model.weight_mode=$WEIGHT_MODE" \
     "model.transform_mode=full" \
     "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
+    "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
     "model.projection.feature_dim=$FEATURE_DIM" \
     "train.lexicographic.enabled=false" \
     "train.gradient_blocks=[p123]"

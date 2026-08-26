@@ -57,7 +57,7 @@ tractable, and several of them *are themselves findings* about how the mechanism
 2. **LH-DNN admits no mechanism arms — it is a baseline only.** Lex is rejected
    ([config.py:132-133](train/lexicographic/config.py#L132-L133)) and HCC is rejected
    ([config_validation.py:756-759](train/config_validation.py#L756-L759)). See C.0 for the argument.
-3. **Lex on HRN requires `model.loss: level_marginal`.** [config.py:171-175](train/lexicographic/config.py#L171-L175)
+3. **Lex on HRN requires `model.loss: level_conditional`.** [config.py:171-175](train/lexicographic/config.py#L171-L175)
 4. **Lex on H-CAST requires `model.loss.globalkl: false`.** [config.py:152-158](train/lexicographic/config.py#L152-L158)
 5. **LH projection requires `level_softmax_ce_reg`** — the per-level softmax is what gives
    each branch its own loss. [config_validation.py:836-846](train/config_validation.py#L836-L846)
@@ -66,8 +66,10 @@ tractable, and several of them *are themselves findings* about how the mechanism
    [model.py:378-386](models/hiercos/model.py#L378-L386)
 7. **LH projection is non-trivial only if `feature_dim > sum(classes[:-1])`.**
    [model.py:310-317](models/hiercos/model.py#L310-L317)
-8. **HCC requires exactly three levels**; HRN + HCC requires `level_marginal`.
-   [config_validation.py:759-775](train/config_validation.py#L759-L775)
+8. **HCC requires exactly three levels.** No loss-mode requirement: on HRN it constrains
+   the emitted `logits_per_level` triple (coarse/middle tree logits plus the auxiliary
+   leaf head), which both loss modes leave in place.
+   [config_validation.py:854-880](train/config_validation.py#L854-L880)
 Constraint 5 is worth stating in the thesis as a design consequence rather than a config
 detail: *global* softmax couples all nodes into one normalizer, so there is no such thing
 as a separable per-level gradient to project. Constraints 1 and 5 are the same fact seen
@@ -399,7 +401,7 @@ mechanism arm. Everything else below is scoped to the other four models.
 |---|---|---|---|
 | H-CAST | yes (`globalkl: false`) | yes | primary method model |
 | Hier-COS | yes ({global,level}`_softmax_ce_reg`) | yes | primary method model |
-| HRN | yes (`level_marginal`) | yes (`level_marginal`) | baseline + extension |
+| HRN | yes (`level_conditional`) | yes (`level_conditional`) | baseline + extension |
 | HT-CapsNet | yes | yes | baseline + extension |
 | **LH-DNN** | **no — rejected** | **no — rejected** | **baseline only** |
 
@@ -450,7 +452,7 @@ cross-architecture weight. Each new model arm should carry at minimum the RQ4 co
 |---|---|
 | H-CAST | run (`hcast_lex_*`, incl. step@80) |
 | Hier-COS | run |
-| HRN | **not run** — needs `model.loss: level_marginal` |
+| HRN | **not run** — needs `model.loss: level_conditional` |
 | HT-CapsNet | **not run** |
 
 ## C.2 HCC — cross-model over the same four
@@ -458,13 +460,13 @@ cross-architecture weight. Each new model arm should carry at minimum the RQ4 co
 HCC lives in `models/common/hcc.py` and is supported for exactly
 `{hcast, hrn, ht_capsnet, hiercos}` — the same four models as lex, and for the same reason:
 LH-DNN is excluded (C.0). Requires exactly three levels; HRN additionally requires
-`level_marginal`.
+`level_conditional`.
 
 | Model | Status |
 |---|---|
 | H-CAST | run extensively; only the always-on arm (historically `step@0`) remains reachable — `step@80`, `inversestep@80`, `linear`, `cond2` were schedule variants and are historical records only |
 | Hier-COS | **not run** (see A.3 — arm recently widened) |
-| HRN | **not run** — needs `level_marginal` |
+| HRN | **not run** — needs `level_conditional` |
 | HT-CapsNet | **not run** |
 
 That HCC and lex are supported on precisely the same four models is convenient: RQ7's

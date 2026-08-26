@@ -3,7 +3,7 @@
 Every notebook under ``notebooks/tradeoff_analysis`` follows the same shape:
 declare a run matrix, discover the completed seed directories under
 ``OUTPUTS_ROOT``, aggregate the selected test checkpoints, and draw the same
-three figures. This module holds everything that is not model-specific.
+two trade-off figures. This module holds everything that is not model-specific.
 
 All of it reads the **independently selected** checkpoint and the independent
 metric family. Top-down decoding is deliberately not offered here: its predicted
@@ -1566,70 +1566,6 @@ def _bar_kwargs(spec):
         "hatch": spec["hatch"],
         "linewidth": 0.9 if hollow else (1.1 if spec["ring"] else 0.35),
     }
-
-
-def plot_level_accuracy(
-    rows,
-    datasets,
-    figure_dir,
-    save_figures=False,
-    label_key="label",
-    legend_ncol=3,
-    panel_height=1.55,
-    stem="level_accuracy",
-):
-    """Draw absolute coarse/middle/fine accuracy per run of the focal family.
-
-    This is the view that stays informative when a model family has a single arm,
-    where the delta figure below has nothing to compare against.
-
-    Cross-model references are deliberately not drawn. They were trained with
-    their own recipes and epoch budgets, so a side-by-side bar invites a
-    controlled reading the data does not support; the trade-off figure already
-    places them, and the summary tables carry their numbers. Leaving them out
-    also keeps the bars wide enough to stay readable as the run matrix grows.
-    """
-    x = np.arange(3)
-    series = [_bar_series(row, label_key)
-              for row in {row["key"]: row for row in rows}.values()]
-    if not series:
-        print("No runs available for the level-accuracy figure.")
-        return
-    width = min(0.22, 0.86 / len(series))
-    # Per-bar value labels stop being readable once the bars get thin.
-    annotate = len(series) <= 6
-
-    nrow = math.ceil(len(series) / max(1, legend_ncol))
-    figure_height = len(datasets) * panel_height + _legend_height_in(nrow)
-    fig, axes = plt.subplots(
-        len(datasets), 1, figsize=(TEXT_WIDTH_IN, figure_height), sharex=True, sharey=True
-    )
-    axes = np.atleast_1d(axes)
-    for ax, dataset in zip(axes, datasets.values()):
-        for index, spec in enumerate(series):
-            row = next((r for r in rows if r["dataset"] == dataset and r["key"] == spec["key"]), None)
-            if row is None:
-                continue
-            means = [row[f"acc_level_{level}"] for level in range(3)]
-            stds = [row[f"acc_level_{level}_std"] for level in range(3)]
-            positions = x + (index - (len(series) - 1) / 2) * width
-            bars = ax.bar(
-                positions, means, width=width, zorder=2, **_bar_kwargs(spec),
-                yerr=stds if np.all(np.isfinite(stds)) else None, capsize=1.6,
-                error_kw={"linewidth": 0.6},
-            )
-            if annotate:
-                ax.bar_label(bars, fmt="%.1f", fontsize=BAR_LABEL_FONTSIZE, padding=1.5)
-        ax.set_title(dataset)
-        ax.set_xticks(x, LEVEL_LABELS)
-        ax.set_ylim(0, 108)
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
-        ax.grid(True, axis="y", alpha=0.25)
-    fig.supylabel("Independent accuracy (%)", fontsize=SUPLABEL_FONTSIZE)
-    handles = [plt.Rectangle((0, 0), 1, 1, label=spec["label"], **_bar_kwargs(spec))
-               for spec in series]
-    fig.legend(handles=handles, loc="outside lower center", ncol=legend_ncol, frameon=True)
-    save_figure(fig, figure_dir, stem, save_figures)
 
 
 def plot_level_accuracy_deltas(

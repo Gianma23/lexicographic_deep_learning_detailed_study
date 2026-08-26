@@ -201,6 +201,9 @@ Runtime modules:
 - `scripts/hiercos/` — decomposed-loss baselines, lexicographic priority modes,
   transform ablation, the LH-projected learnable-head study, and the
   direct-subspace supervision launcher.
+- `scripts/stage_thesis_figures.py` — stages the selected baseline and
+  direct-subspace analysis PDFs under `docs/images/experiments/` and removes
+  raster duplicates from those destination directories.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
   nesting migration.
 
@@ -245,7 +248,7 @@ helpers under `notebooks/utils/`.
   the two resolved configs of every pair, which is what surfaces a second change
   travelling with the mechanism - H-CAST's lexicographic mode requires
   `model.loss.globalkl: false`, and the HRN arms also switch the objective to
-  `level_marginal`.
+  `level_conditional` (which is `native` regrouped, not a different objective).
 - `notebooks/posthoc_hiercos_inference_comparison.ipynb` — the original
   single-family post-hoc inference notebook, superseded by
   `notebooks/inference_analysis/`.
@@ -374,7 +377,8 @@ Figures are authored for the thesis, not for the screen. `use_paper_style()` in
 `current_run_plot_utils.py` applies the same rcParams as
 `notebooks/datasets_analysis.ipynb` (DejaVu Serif, 9 pt base, 400 dpi raster,
 `pdf.fonttype=42`, constrained layout), and `save_figure()` writes a PDF and a
-PNG at the authored size without `bbox_inches='tight'`. Every figure is 6.3 in
+PNG at the authored size without `bbox_inches='tight'` for runtime outputs;
+destinations under `docs/` receive PDF only. Every figure is 6.3 in
 wide — an A4 text block with 2.5 cm margins — and must be included at
 `\linewidth` with no further scaling, since resizing in LaTeX would shrink the
 fonts along with the artwork. Figure titles are omitted on purpose; they belong

@@ -761,7 +761,7 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         _require_enum(
             model.get("loss", "native"),
             "model.loss",
-            {"native", "level_marginal"},
+            {"native", "level_conditional"},
         )
         dropout = _finite_float(model.get("dropout", 0.0), "model.dropout")
         if dropout < 0.0 or dropout >= 1.0:
@@ -866,11 +866,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         if hcc_enabled:
             if _finite_float(hcc.get("eps", 0.0), "hcc.eps") <= 0.0:
                 raise ValueError("Enabled HCC requires hcc.eps > 0.")
-            if model_name == "hrn" and model.get("loss", "native") != "level_marginal":
-                raise ValueError(
-                    "hcc.enabled=true with model.name='hrn' requires `model.loss: level_marginal` "
-                    "so HCC corrects the tree logits that actually drive the hierarchical loss."
-                )
             if model_name == "hiercos":
                 projection = model.get("projection")
                 projection_enabled = (
@@ -1007,9 +1002,9 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         elif model_name == "hiercos":
             if model.get("loss") not in {"global_softmax_ce_reg", "level_softmax_ce_reg"}:
                 raise ValueError("Lexicographic Hier-COS requires a decomposed CE loss.")
-        elif model_name == "hrn" and model.get("loss", "native") != "level_marginal":
+        elif model_name == "hrn" and model.get("loss", "native") != "level_conditional":
             raise ValueError(
-                "Lexicographic HRN requires model.loss=level_marginal to expose "
+                "Lexicographic HRN requires model.loss=level_conditional to expose "
                 "coarse, middle, and fine objectives."
             )
 

@@ -161,14 +161,24 @@ running lex at `dynamic` silently produces a unit-weight run.
 ### 3.4 HRN (`model.name: hrn`)
 
 **Level objectives.** `level_losses = [tree_0, tree_1, tree_2 + ce_loss]`
-(`models/hrn/losses.py:257-261`) — the three tree-marginal NLLs, with the
-auxiliary leaf CE head folded into the fine level.
+(`models/hrn/losses.py`) — the three *conditional* tree NLLs produced by
+`_level_conditional_tree_losses`, with the auxiliary leaf CE head folded into the
+fine level.
+
+`_hierarchical_loss` returns `-log P(state ∈ subtree(u))` for an observed node
+`u`. Within one sample the observed nodes are nested, so the chain rule splits
+the leaf term into three conditionals — the coarse subtree, the middle subtree
+given the coarse one, the leaf given the middle one — computed as the successive
+differences of the three marginal terms. They telescope: the three tensors sum
+exactly to the `native` total, and `autograd.grad` of that sum matches
+`native`'s gradient to `0.0`. With projection disabled, `level_conditional` and
+`native` are the same run.
 
 **Required config.**
 
 ```yaml
 model:
-  loss: level_marginal    # required; `native` exposes no per-level tensors
+  loss: level_conditional # required; `native` exposes no per-level tensors
 ```
 
 Launcher: `scripts/hrn/run_hrn_lex.sh:163`.
@@ -180,9 +190,11 @@ of the fine hierarchical objective and will orthogonalize it against the coarse
 and mid gradients. This is a modelling choice, not a neutral wiring detail, and
 should be stated when reporting HRN lex results.
 
-**Comparability warning.** `level_marginal` is not HRN's paper-aligned objective
-(`native`: leaf-observed joint tree marginal plus leaf CE). An HRN lex-vs-baseline
-comparison is only clean if the baseline also runs at `level_marginal`.
+**Comparability.** Unlike the previous `level_marginal` mode (removed), which
+summed the three *cumulative* marginals and so optimised a `(3, 2, 1)`-weighted
+objective, `level_conditional` leaves the objective untouched. The matched
+baseline for an HRN lex run is therefore a plain `native` run, and the projection
+is the only difference between the two.
 
 ### 3.5 LH-DNN — not supported
 
@@ -280,5 +292,5 @@ training objective.
 | H-CAST | yes | `loss.globalkl: false` | `p123`+`p12`+`p1` | no (unweighted tensors) |
 | Hier-COS | yes | `loss: global_softmax_ce_reg` or `level_softmax_ce_reg`; `projection.enabled: false` | `p123` only | yes |
 | HT-CapsNet | yes | none enforced; launcher sets `weight_mode: none` | `p123`+`p23`+`p3` | no (unweighted tensors) |
-| HRN | yes | `loss: level_marginal` | `p123` only | n/a (unweighted objective) |
+| HRN | yes | `loss: level_conditional` | `p123` only | n/a (unweighted objective) |
 | LH-DNN | **no** | — | — | — |

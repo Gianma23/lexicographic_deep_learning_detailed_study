@@ -20,6 +20,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+THESIS_DOCS_DIR = REPO_ROOT / "docs"
+
+
 # The thesis text block, from the `geometry` options in main.tex:
 #
 #     a4paper, top=3cm, bottom=3cm, inner=3cm, outer=2.5cm, bindingoffset=0.5cm
@@ -199,6 +203,9 @@ def save_figure(fig, figure_dir, stem, formats=("pdf", "png")):
     changes the physical width, which would break the one-to-one relationship
     between the authored figure size and the printed text width.
 
+    Runtime output directories retain every requested format. A destination
+    below ``docs/`` is a thesis asset directory and receives PDF only.
+
     Returns ``(stem, width_in, height_in)`` so a caller can assert that nothing
     drifted off the page.
     """
@@ -206,7 +213,12 @@ def save_figure(fig, figure_dir, stem, formats=("pdf", "png")):
     if figure_dir is not None:
         figure_dir = Path(figure_dir)
         figure_dir.mkdir(parents=True, exist_ok=True)
-        for suffix in formats:
+        try:
+            figure_dir.resolve().relative_to(THESIS_DOCS_DIR.resolve())
+            selected_formats = ("pdf",)
+        except ValueError:
+            selected_formats = formats
+        for suffix in selected_formats:
             fig.savefig(figure_dir / f"{stem}.{suffix}")
     return (str(stem), width_in, height_in)
 

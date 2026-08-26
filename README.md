@@ -252,9 +252,13 @@ full-label only, and requested ResNet-50 ImageNet initialization never falls
 back to random weights.
 When omitted, `model.loss` defaults to the paper-aligned `native` objective
 (leaf-observed joint tree marginal plus leaf CE). The local
-`model.loss: level_marginal` mode exposes coarse, middle, and fine tree-marginal
-objectives; the fine objective also retains the unit-weight leaf CE. Native HRN
-lexicographic training requires this decomposed mode.
+`model.loss: level_conditional` mode splits that same objective into three
+conditional negative log-likelihoods - the coarse subtree, the middle subtree
+given the coarse one, and the leaf given the middle one - with the unit-weight
+leaf CE added to the fine term. The three terms sum to the `native` total and
+carry the same gradient, so without lexicographic projection the two modes train
+identically; the split exists so lexicographic mode has three level objectives
+to project. HRN lexicographic training requires this mode.
 
 ### Hier-COS
 
@@ -516,7 +520,7 @@ scripts/hiercos/run_hiercos_hcc.sh
 Each defaults to all three datasets. HCC output directories use
 `<model>_<dataset>[_<special-setting>]_hcc`; for example,
 `hcast_cifar100_hcc`, `capsnet_cub200_hcc`,
-`hrn_aircraft_level_marginal_hcc`, and
+`hrn_aircraft_level_conditional_hcc`, and
 `hiercos_cifar100_global_softmax_ce_reg_hcc`.
 
 Hier-COS launchers similarly accept `LEX_PROJECTION_MODES` and

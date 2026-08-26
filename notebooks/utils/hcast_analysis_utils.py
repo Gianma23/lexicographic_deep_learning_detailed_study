@@ -1402,6 +1402,40 @@ def _test_metric_stats(run_data: Mapping[str, Any], metric_key: str) -> Tuple[fl
     return mean, std, count
 
 
+def _adaptive_percentage_limits(values: Sequence[float]) -> Tuple[float, float]:
+    """Fit a readable shared axis to percentage values and their uncertainty.
+
+    The limits stay inside the slightly extended 0--102 percent plotting range,
+    retain at least five percentage points of context, and leave visible space
+    around the observed extrema. An empty/non-finite input keeps the full range.
+    """
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if not finite.size:
+        return 0.0, 102.0
+
+    value_min = float(np.min(finite))
+    value_max = float(np.max(finite))
+    padding = max(1.5, 0.08 * (value_max - value_min))
+    lower = value_min - padding
+    upper = value_max + padding
+
+    minimum_span = 5.0
+    if upper - lower < minimum_span:
+        midpoint = 0.5 * (lower + upper)
+        lower = midpoint - 0.5 * minimum_span
+        upper = midpoint + 0.5 * minimum_span
+
+    if lower < 0.0:
+        upper -= lower
+        lower = 0.0
+    if upper > 102.0:
+        lower -= upper - 102.0
+        upper = 102.0
+
+    return max(0.0, lower), min(102.0, upper)
+
+
 def _fmt_value_stats(metric_key: str, mean: float, std: float, count: int) -> str:
     mean_text = _fmt_value(metric_key, mean)
     if count > 1 and np.isfinite(std):
@@ -1693,6 +1727,10 @@ FAMILY_PROFILES: Dict[str, FamilyProfile] = {
         baseline_template="hiercos_{dataset}_global_softmax_ce_reg_baseline_kl_leaf",
         baseline_label="Hier-COS baseline (global softmax, kl_leaf)",
         comparison_templates=(
+            (
+                "hiercos_{dataset}_global_softmax_ce_reg_baseline_kl_leaf_block",
+                "Hier-COS baseline (block random frame)",
+            ),
             ("hiercos_{dataset}_global_softmax_ce_reg_hcc", "Hier-COS + HCC"),
             (
                 "hiercos_{dataset}_global_softmax_ce_reg_lex_coarse_first_kl_leaf",
@@ -3214,11 +3252,12 @@ class HCastAnalysis:
     ) -> None:
         """Plot selected-checkpoint test accuracy across levels for all datasets.
 
-        The three dataset panels share a row and a 0--100 percent axis. Each
-        curve is one configured run, points are seed means and error bars are
-        one sample standard deviation when more than one seed contributed.
-        Values are read strictly from the checkpoint selected for the requested
-        decoder; no fallback between independent and top-down results is used.
+        The dataset panels share a row and one adaptive percentage axis fitted
+        to all visible means and error bars. Each curve is one configured run,
+        points are seed means and error bars are one sample standard deviation
+        when more than one seed contributed. Values are read strictly from the
+        checkpoint selected for the requested decoder; no fallback between
+        independent and top-down results is used.
         """
         view = _normalize_decoder_view(decoder_view)
         modes = decoder_modes(view)
@@ -3252,6 +3291,7 @@ class HCastAnalysis:
             squeeze=False,
         )
         axes_flat = axes.reshape(-1)
+        accuracy_extents: List[float] = []
 
         for panel_idx, dataset_key in enumerate(dataset_keys):
             ax = axes_flat[panel_idx]
@@ -3303,6 +3343,7 @@ class HCastAnalysis:
                     finite = np.isfinite(mean_values)
                     if not np.any(finite):
                         continue
+                    accuracy_extents.extend(mean_values[finite].tolist())
 
                     mode_label = _MODE_SPECS[mode][2]
                     label = (
@@ -3322,6 +3363,12 @@ class HCastAnalysis:
                     )
                     error_mask = finite & np.isfinite(std_values) & (count_values > 1)
                     if np.any(error_mask):
+                        accuracy_extents.extend(
+                            (mean_values[error_mask] - std_values[error_mask]).tolist()
+                        )
+                        accuracy_extents.extend(
+                            (mean_values[error_mask] + std_values[error_mask]).tolist()
+                        )
                         ax.errorbar(
                             x_values[error_mask],
                             mean_values[error_mask],
@@ -3339,9 +3386,9 @@ class HCastAnalysis:
             ]
             ax.set_xticks(x_values, level_labels)
             ax.set_xlim(float(x_values.min()) - 0.15, float(x_values.max()) + 0.15)
-            ax.set_ylim(0.0, 102.0)
             ax.set_title(dataset_display_name(dataset_key))
 
+        axes_flat[0].set_ylim(*_adaptive_percentage_limits(accuracy_extents))
         axes_flat[0].set_ylabel("Test accuracy (%)")
         handles_by_label: Dict[str, Any] = {}
         for ax in axes_flat:

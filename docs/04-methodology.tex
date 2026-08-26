@@ -254,7 +254,7 @@ the largest scale to the level whose transition has the largest average fan-out.
 \caption{Taxonomy-derived gradient-scaling vectors, ordered coarse to fine.
 Values follow directly from the class counts and are rounded to three decimal
 places.}
-\label{tab:levelscale_branching}
+\label{tab:kappa_branching}
 \small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lccc@{}}
@@ -287,35 +287,24 @@ is absolute:
 \lexmin_{\theta}\ \ \ell_1(z_1,y_1),\ \ell_2(z_2,y_2),\ \dots,\ \ell_L(z_L,y_L),
 \label{eq:hc_lmop}
 \end{equation}
-that is, the sequence of problems of \cref{def:lmop}, in which level $l+1$ is
-minimised only over the minimisers of the levels $1,\dots,l$. Accordingly,
-$\ell_1$ has the highest priority and $\ell_L$ the lowest: coarse levels are
-processed before fine ones.
+This notation denotes a sequence of constrained problems: $\ell_1$ is minimised
+first, and each loss $\ell_{l+1}$ is then minimised only over the minimisers of
+$\ell_1,\dots,\ell_l$~\cite{fiaschi2024informed}. Accordingly, $\ell_1$ has the
+highest priority and $\ell_L$ the lowest: coarse levels are processed before fine
+ones.
 
 The defining feature of \eqref{eq:hc_lmop} is that
 a lower-priority objective may act only \emph{within the level set already fixed
-by the higher-priority ones}. The mechanisms in this chapter approximate that
-restriction rather than impose it; their guarantees are stated separately, and none
-should be read as solving the nested problem in \eqref{eq:hc_lmop} exactly.
+by the higher-priority ones}. The priority mechanisms in this chapter
+approximate or encode that restriction at different points of the computation.
+Their guarantees are stated separately; none should be read as solving the
+nested optimisation problem in \eqref{eq:hc_lmop} exactly.
 
 As established in \cref{sec:lexico-real}, no positive real weight vector encodes a lexicographic
 order (\cref{prop:debreu}), and for any fixed $w$ there are level-wise changes
 under which the scalarised objective improves while the lexicographic order
 worsens (\cref{cor:compensation}). The coefficients of
 \S\ref{ssec:problem_objective} therefore express a trade-off between levels, not a lexicographic priority.
-
-\Cref{sec:nsa-bridge} settles what can be done about this and fixes the shape of
-every mechanism in this chapter. Weighting \eqref{eq:hc_lmop} with infinitesimal
-coefficients does encode the priority exactly, but the resulting gradient
-\eqref{eq:ns-gradient} cannot be descended by a real network --- one step leaves
-$\mathbb{R}^{P}$ \eqref{eq:ns-step} --- while its standard part collapses to the
-coarse gradient alone and deletes levels $2,\dots,L$ \eqref{eq:st-collapse}. What
-survives the return to $\mathbb{R}$ is not the nested problem \eqref{eq:hc_lmop} but
-a first-order surrogate for it, and the mechanisms below differ precisely in where
-they enforce that surrogate: in parameter space (\S\ref{sec:methodology_lex}), at the
-branch point (\S\ref{sec:methodology_lhproj}), in the representation
-(\S\ref{sec:methodology_subspace}), or in the output space
-(\S\ref{sec:methodology_hcc}).
 
 \paragraph{Order of priority.} The ordering in \eqref{eq:hc_lmop} is an
 assumption rather than a consequence of the taxonomy. Under a
@@ -342,13 +331,10 @@ The first mechanism imposes priority directly on the \emph{update direction} in
 parameter space. The gradients of the level objectives are computed separately
 and each lower-priority gradient is orthogonalised against the current resultant
 of the levels processed before it. This thesis refers to the procedure as
-\emph{lexicographic mode}. It is the assembler $\mathcal{A}$ of
-\eqref{eq:assembler}: its inputs are the $L$ real level gradients that
-\eqref{eq:ns-gradient} carries as coefficients of $\eta^{\,l-1}$, and its output is a
-single real direction. It generalises the two-objective sketch
-\eqref{eq:nsa-projection-sketch} in two ways, to $L$ levels and to the parameter
-blocks on which the levels actually overlap. \S\ref{ssec:lex_guarantee} states
-precisely what the resulting rule does and does not protect.
+\emph{lexicographic mode}. It reads the priority ordering of
+\S\ref{ssec:problem_priority} as a rule for constructing the gradient supplied to
+the optimiser; \S\ref{ssec:lex_guarantee} states precisely what that rule does
+and does not protect.
 
 \subsection{Setting and requirements}
 \label{ssec:lex_setting}
@@ -372,8 +358,9 @@ interpretation of every experiment using this mechanism.
 \paragraph{Need of level losses.} Lexicographic mode combines the three per-level
 gradients directly. Any objective term that cannot be assigned to a level
 therefore lies outside this construction. This requires several model-specific
-adaptations. H-CAST excludes its global KL term; HRN uses the decomposed
-level-marginal objective and assigns leaf cross-entropy to the fine level;
+adaptations. H-CAST excludes its global KL term; HRN splits its native tree
+objective into three conditional level terms and assigns leaf cross-entropy to
+the fine level;
 Hier-COS replaces its coupled node-wide KL objective with separate differentiable
 level objectives; and HT-CapsNet uses its three level-wise capsule margin losses.
 LH-DNN is excluded because it does not expose three independent differentiable
@@ -439,21 +426,106 @@ lexicographic arm therefore disables this ambiguity by using unit weighting; a
 run that retained the native dynamic setting would still be, operationally, a
 unit-weight lexicographic run.
 
-\paragraph{HRN.} The native HRN objective combines a joint tree-marginal loss
-with a separate leaf cross-entropy and does not expose three level objectives.
-The \texttt{level\_marginal} adaptation instead supplies the coarse, middle and
-fine tree-marginal negative log-likelihoods and adds the auxiliary leaf
-cross-entropy to the fine objective,
+\paragraph{HRN.} The native HRN objective does not expose three level
+objectives, but it can be split into three without being changed. Its tree
+branch emits one score $f_v\in(0,1)$ per taxonomy node, the sigmoid of the
+corresponding head logit, and the objective is a distribution over a set
+$\mathcal{S}$ of \emph{states}: one state per node $v$, namely the set of nodes
+on the root-to-$v$ path, together with the empty state. A state's probability is
 \[
-\ell_1=\ell_1^{\mathrm{tree}},\qquad
-\ell_2=\ell_2^{\mathrm{tree}},\qquad
-\ell_3=\ell_3^{\mathrm{tree}}+\ell^{\mathrm{leaf\text{-}CE}}.
+P(s)=\frac{1}{Z}\exp\Big(\sum_{v\in s} f_v\Big),\qquad
+Z=\sum_{s'\in\mathcal{S}}\exp\Big(\sum_{v\in s'} f_{v}\Big).
 \]
-The auxiliary classifier is therefore treated as part of the lowest-priority
-objective and its gradient is projected wherever it shares parameters with the
-coarse and middle objectives. Since \texttt{level\_marginal} is a local
-decomposition rather than HRN's paper-aligned training objective, the matched
-baseline for attributing a lexicographic effect must use the same mode.
+Writing $\mathcal{D}(v):=\{s\in\mathcal{S}:v\in s\}$ for the states whose path
+passes through $v$, that is $v$ together with its descendants, the paper-aligned
+objective observes the leaf only:
+\[
+\ell^{\mathrm{tree}}=-\log P\big(\mathcal{D}(y_3)\big),
+\qquad
+\ell^{\mathrm{native}}=\ell^{\mathrm{tree}}+\ell^{\mathrm{leaf\text{-}CE}},
+\]
+with $\ell^{\mathrm{leaf\text{-}CE}}$ the cross-entropy of the separate
+auxiliary leaf classifier.
+
+The three observed nodes of one sample are nested,
+$\mathcal{D}(y_1)\supseteq\mathcal{D}(y_2)\supseteq\mathcal{D}(y_3)$, so the
+chain rule splits $\ell^{\mathrm{tree}}$ into three conditional negative
+log-likelihoods. The \texttt{level\_conditional} adaptation takes these as the
+level objectives and adds the auxiliary cross-entropy to the finest one:
+\[
+\ell_1=-\log P\big(\mathcal{D}(y_1)\big),\qquad
+\ell_2=-\log \frac{P(\mathcal{D}(y_2))}{P(\mathcal{D}(y_1))},\qquad
+\ell_3=-\log \frac{P(\mathcal{D}(y_3))}{P(\mathcal{D}(y_2))}
++\ell^{\mathrm{leaf\text{-}CE}}.
+\]
+Each term is non-negative and expresses one level's decision given the level
+above it: which coarse subtree, which of its middle children, which leaf. The
+sum telescopes,
+\[
+\ell_1+\ell_2+\ell_3=\ell^{\mathrm{native}},
+\qquad\text{hence}\qquad
+g_1+g_2+g_3=\nabla_\theta\ell^{\mathrm{native}} .
+\]
+
+As written, each conditional term is not yet a statement about its own level.
+Both $P(\mathcal{D}(y_l))$ and the normaliser $Z$ sum over states of every
+depth, and the two do not cancel: the numerator sums over one subtree, the
+denominator over the whole state space. Writing $f^{(l)}$ for the scores of the
+nodes at level $l$, the coarse term $\ell_1$ is therefore a function of
+$f^{(3)}$ as well as of $f^{(1)}$, and the dependence is not a small residual
+--- measured on the implementation, $\lVert\partial\ell_1/\partial
+f^{(3)}\rVert$ is of the same order as $\lVert\partial\ell_1/\partial
+f^{(1)}\rVert$. The consequence for a gradient-space method is direct: $g_1$
+then carries substantial mass on the fine branch, whose parameters cannot move
+the coarse logits at all. Ordering $g_3$ against such a $g_1$ would constrain
+the fine head in directions that protect nothing, while leaving the
+highest-priority objective free to drive that same head.
+
+The level objectives are therefore evaluated with the levels finer than their
+own held fixed. With $\operatorname{sg}(\cdot)$ denoting the stop-gradient
+operator, the identity in value and zero in derivative, $\ell_l$ is computed
+from
+\[
+\big(f^{(1)},\dots,f^{(l)},\;\operatorname{sg}(f^{(l+1)}),\dots,\operatorname{sg}(f^{(3)})\big),
+\]
+so each term reads the finer scores as context but does not differentiate
+through them. This finer-level detach acts on the objective, and is distinct
+from the previous-level detach introduced later for the HCC projection, which
+acts on representations.
+
+Because $\operatorname{sg}(\cdot)$ is the identity in value, the three terms
+keep the values they had, so the telescoping identity and the gradient equality
+above hold exactly as stated. What the detach changes is the support of the
+level gradients, which becomes triangular: $g_l$ is supported on the parameters
+of levels $1$ to $l$ together with the shared trunk, and on nothing finer.
+Verified on the implementation, $g_1$ reaches the coarse branch and the trunk
+only, $g_2$ adds the middle branch, and $g_3$ reaches every branch.
+
+This support partition is what the ordering acts on, and it is not a separation
+of the branches. The coupling that remains is genuine: the fine objective
+reaches the coarse branch both through the cumulative embedding, in which the
+coarse projection is a summand, and through the shared trunk, and those
+parameters do determine the fine prediction. The lexicographic step orders that
+coupling rather than removing it; removing it would leave three independent
+networks sharing an input.
+
+One limitation follows from the same construction. The detach acts on the
+gradient and not on the value: the normaliser still sums over states of every
+depth, so a step taken on the fine objective alone still moves the value of
+$\ell_1$. The property established is that $\ell_1$ is stationary along its own
+coordinates, not that the coarse objective is left unchanged.
+
+Two consequences follow. First, with the projection disabled the arm reproduces
+a paper-aligned HRN run exactly, so its matched baseline is the native model
+itself and the projection is the only difference between the two; among the
+families studied here HRN therefore permits the cleanest attribution of a
+lexicographic effect, since no second change travels with the mechanism.
+Second, treating the conditional terms as the level objectives remains a
+modelling decision: HRN supervises the leaf alone, and the split names the
+intermediate decisions its objective leaves implicit. As in the other families,
+the auxiliary classifier belongs to the lowest-priority objective, so its
+gradient is projected wherever it shares parameters with the coarse and middle
+objectives.
 
 \paragraph{LH-DNN.} No lexicographic arm is defined. LH-DNN's constitutive
 branch-point operation already removes a higher-level component from a
@@ -612,16 +684,13 @@ Only coarse-to-fine priority is discussed explicitly from here on.
 \subsection{Guarantee and scope}
 \label{ssec:lex_guarantee}
 
-The guarantee is the first-order non-interference property
-\eqref{eq:nsa-noninterference}, established there for two objectives and extended
-here to $L$ levels and to arbitrary gradient supports. It is local: it concerns the
-change predicted for one sufficiently
+The guarantee is local: it concerns the change predicted for one sufficiently
 small update. Consider first the idealised gradient step
-$\theta^+=\theta-\mu d$, where $d$ is the assembled gradient. Differentiability
+$\theta^+=\theta-sd$, where $s>0$ is the step size and $d$ is the assembled gradient. Differentiability
 of $\ell_l$ gives
 \[
 \ell_l(\theta^+)
-=\ell_l(\theta)-\mu\,\langle g_l,d\rangle+o(\mu).
+=\ell_l(\theta)-s\,\langle g_l,d\rangle+o(s).
 \]
 Thus $\langle g_l,d\rangle$ with a positive value predicts a decrease in $\ell_l$, zero predicts no first-order
 change, and a negative value predicts an increase. The purpose of the projection
@@ -740,8 +809,8 @@ g_1=(1,0),\qquad g_2=(0,1),\qquad g_3=(-2,2).
 Here $g_2\perp g_1$, so $m=g_2$ and $h=(1,1)$. Moreover,
 $g_3\perp h$, so $\tilde g_3=g_3$. The assembled direction is therefore
 $d=(-1,3)$ and $\langle g_1,d\rangle=-1$. For the idealised step
-$\theta^+=\theta-\mu d$, this block contributes
-$-\mu\langle g_1,d\rangle=+\mu$ to the first-order change in the coarse
+$\theta^+=\theta-sd$, this block contributes
+$-s\langle g_1,d\rangle=+s$ to the first-order change in the coarse
 objective. It is an increasing contribution, even though both projections have
 been applied exactly. Replacing $g_3$ by $(2,-2)$ gives the opposite sign for
 $\rho$, confirming that the projection itself imposes no sign constraint.
@@ -811,10 +880,7 @@ The second mechanism originates in the lexicographic hybrid deep neural network 
 \cite{fiaschi2024informed}, which combines lexicographic multi-objective
 optimisation with non-standard analysis
 \cite{benci2022nonstandard,benci2019measure} and equips a hierarchical classifier
-with projection operators before each output layer. It answers the question of
-\cref{ssec:nsa-what-retained} --- which real direction to descend, given that the
-non-standard one cannot be --- at a different point of the computation from
-\S\ref{sec:methodology_lex}, and the two are compared on that basis. It is referred to here as the
+with projection operators before each output layer. It is referred to here as the
 \emph{LH-projection}. Both it and lexicographic mode remove from a lower-priority
 level's learning signal the part that lies in a subspace already claimed by the
 levels above; they differ in where they read that subspace and where they apply
@@ -1630,14 +1696,20 @@ coordinates. It takes their magnitudes in the objective and aggregates them into
 ancestor--self--descendant subspace norms at inference. HCC is inserted before
 both operations: the fixed-frame node-coordinate vector is split into its
 contiguous level blocks, those signed blocks are projected, and the corrected
-blocks are concatenated before the unchanged Hier-COS loss and subspace readout
-are evaluated. The affine constraint is therefore imposed on the signed node
+blocks are concatenated before the Hier-COS objective and subspace readout are
+evaluated. HCC changes the coordinates those two operations receive; it does not
+change their form. The affine constraint is therefore imposed on the signed node
 coordinates, not in general on their absolute values, subspace norms or
 softmax probabilities. In particular, the sibling-order invariance of
 \cref{cor:hcc_sibling_shift} applies directly to the coordinates but need not
 survive a magnitude-based readout. The experimental HCC arm disables both the
 optional LH-style branch projection and direct subspace supervision, in
-accordance with the single-mechanism design of \S\ref{ssec:design_axis}.
+accordance with the single-mechanism design of \S\ref{ssec:design_axis}. It is
+trained on the decomposed \texttt{global\_softmax\_ce\_reg} objective at
+\texttt{kl\_leaf} level weights rather than on the published node-wide
+\texttt{kl\_reg} term, and its baseline row uses the same objective and the same
+weights, so that the reported difference isolates the constraint and not the
+decomposition.
 
 \paragraph{HT-CapsNet.} The projected quantities are the scalar capsule-length
 scores produced after routing at the three stages, not the capsule vectors
@@ -1647,19 +1719,54 @@ need not themselves be Euclidean lengths; HCC consequently constrains the
 length-derived output interface without altering routing or the internal capsule
 representations.
 
-\paragraph{HRN.} HRN has two distinct fine-level outputs: a sigmoid tree branch
-used by the hierarchical objective and an auxiliary softmax classifier used for
-leaf cross-entropy and native fine prediction. Training-time HCC acts on the
-pre-sigmoid logits of the three tree heads. The corrected logits are passed
-through the sigmoid and used by the \texttt{level\_marginal} tree losses, while
-the auxiliary leaf classifier and its cross-entropy are left unchanged. HCC is
-therefore enabled on HRN only with \texttt{level\_marginal}, so that the
-corrected branch contributes explicitly to the decomposed hierarchical
-objective. The constraint is defined among the pre-sigmoid logits and is not
-preserved by the subsequent sigmoid. Moreover, the post-hoc inference grid
-projects HRN's emitted auxiliary leaf scores rather than reconstructing this
-tree-loss path; that distinction is made explicit in
-\S\ref{ssec:inference_grid}.
+\paragraph{HRN.} HRN is the only family studied here whose fine-level decision is
+read from a different tensor than the one its hierarchical objective consumes.
+Its tree branch emits a pre-sigmoid logit per node at all three levels and drives
+the objective of \S\ref{ssec:lex_family_adaptation}, while a separate auxiliary
+softmax classifier supplies the leaf cross-entropy and the model's reported fine
+prediction. The constrained triple therefore has to be chosen, and it is the
+triple the model decodes: the coarse and middle tree logits together with the
+auxiliary leaf logits.
+
+The corrected values re-enter the model at both points where they are used. The
+coarsest level is the anchor and is returned unchanged. The corrected middle
+logits pass through the sigmoid and enter the tree objective in place of the raw
+ones, and the corrected leaf logits are used by the auxiliary cross-entropy and
+by evaluation. The fine head of the tree branch is not part of the constrained
+triple and keeps its raw logits. No loss mode is required: because the level
+terms telescope to the paper-aligned objective
+(\S\ref{ssec:lex_family_adaptation}), the conditional split and the native mode
+optimise the same quantity, and the arm remains comparable to a native baseline
+under either.
+
+Constraining the tree branch's fine head instead was rejected on two grounds.
+First, it would leave the reported prediction untouched, because the model
+decodes the auxiliary classifier; the arm would forfeit exactly the property
+that separates HCC from the gradient-space mechanisms
+(\S\ref{ssec:inference_interaction}). Second, the tree logits sit far from the
+constraint. Trained through the sigmoid, they carry a large negative offset
+shared by nearly every node, so a parent's children sum to a value nowhere near
+it. Measured on the unconstrained baseline checkpoints of the three datasets,
+the projection would move each fine tree logit by $1.9$ to $2.6$ times that
+head's own standard deviation, against $0.4$ to $0.6$ for the auxiliary
+classifier; the same figure for H-CAST, whose scores the cascade constrains
+natively, is about $1.0$.
+
+Two qualifications remain. The constraint relates a softmax logit to two
+pre-sigmoid tree logits, which are not scores of the same kind: the former is
+defined only up to a per-sample additive constant, the latter are not. What the
+correction does to the auxiliary classifier is nevertheless the behaviour the
+cascade is defined by, since it adds a common scalar within each sibling group
+(\cref{cor:hcc_sibling_shift}) and therefore re-ranks classes across sibling
+groups while preserving the order inside each one. The coarse-to-middle
+transition, common to either choice, is also a larger intervention here than
+elsewhere: about $1.0$ to $1.5$ times the middle head's standard deviation,
+against $0.3$ to $0.7$ for H-CAST. Of the families studied, HRN is the one whose
+emitted scores sit furthest from the cascade's constraint.
+
+Because the constrained triple is the emitted one, the post-hoc projection of
+\S\ref{ssec:inference_grid} reconstructs the training-time correction exactly,
+as it does for the other families.
 
 \paragraph{LH-DNN.} No trained HCC arm is attached to LH-DNN. Its output
 structure is retained as the baseline expression of its built-in branch
@@ -1961,10 +2068,14 @@ The argument no longer applies once node magnitudes are used, as in Hier-COS: a
 common shift need not preserve the order of absolute values. It also fails for
 the subspace-norm readout because each norm combines coordinates from more than
 one level. In either case, HCC can affect both independent and top-down
-predictions. HRN requires one further qualification. Its post-hoc projection is
-applied to the auxiliary leaf cross-entropy scores, whereas HCC training uses
-the sigmoid tree branch. That condition is therefore an analysis of the output
-space rather than a reconstruction of HRN's HCC training path.
+predictions.
+
+In every family the transform is applied to the scores the model emits, which
+are the same quantities a trained HCC arm constrains
+(\S\ref{ssec:hcc_family_adaptation}). The post-hoc condition therefore performs
+exactly the correction such an arm performs inside its own forward pass, and the
+difference between the two isolates what training under the constraint changed
+rather than a difference in what was projected.
 
 \subsection{Model-state selection}
 \label{ssec:inference_selection}
@@ -2146,8 +2257,8 @@ comparison.
 \textbf{HCC} & \textbf{Condition} \\
 \midrule
 H-CAST   & yes & no  & no  & yes & three levels; no global KL term for lex.\ mode \\
-Hier-COS & yes & yes & yes & yes & decomposed loss for lex.; level softmax and identity frame for LH-proj. \\
-HRN      & yes & no  & no  & yes & exactly three levels; decomposed level-marginal loss \\
+Hier-COS & yes & yes & yes & yes & decomposed loss for lex.\ and for the HCC arm; level softmax and identity frame for LH-proj. \\
+HRN      & yes & no  & no  & yes & exactly three levels; conditional split of the native loss for lex.\ mode \\
 HT-CapsNet & yes & no & no & yes & three capsule margin losses \\
 LH-DNN   & no  & built in & no & no & no three independent level objectives \\
 \bottomrule
@@ -2185,18 +2296,26 @@ considered independently of HRN, are defined for arbitrary $L$.
 \label{ssec:design_space}
 
 The pattern in Table~\ref{tab:framework_support} is largely determined by the
-decomposition of the training objective. A single loss coupled across all
-taxonomy nodes --- the published Hier-COS KL objective and H-CAST's global KL
-term are the relevant examples --- cannot supply the separate gradients needed
-by either gradient-space method. A global softmax is still compatible with
+decomposition of the training objective. A loss coupled across all taxonomy
+nodes does not, as it stands, supply the separate gradients that either
+gradient-space method requires. Whether it can be regrouped so that it does
+receives three different answers here. The published Hier-COS KL objective and
+HRN's native tree loss regroup exactly: their level terms sum to the original
+objective --- up to a parameter-independent constant in the Hier-COS case --- so
+the gradient-space arm can be compared against the unmodified baseline
+(\S\ref{ssec:lex_family_adaptation}). H-CAST's global KL term also regroups
+exactly, but each resulting term would share one normaliser over the
+concatenated hierarchy, collapsing the support partition the experiment is meant
+to observe; it is therefore excluded rather than decomposed. Only LH-DNN offers
+no usable regrouping at all. A global softmax is thus still compatible with
 lexicographic mode when its three level-specific terms remain available as
 differentiable scalars, even though they share a normaliser. The LH-projection
 demands stricter separation: each loss must be a function of its own branch, so
 normalisation must be carried out within the corresponding level block
 (\S\ref{ssec:lhproj_hiercos}).
 
-Moving from one coupled loss to several level losses, or replacing global with
-level-wise normalisation, is itself a change to the model. For that reason, the
+Replacing global with level-wise normalisation, unlike an exact regrouping, does
+change the objective and not merely its presentation. For that reason, the
 identity frame and the per-level softmax are evaluated as structural adaptations
 before the LH-projection is added. This prevents an effect caused by the revised
 objective from being attributed to the projection.

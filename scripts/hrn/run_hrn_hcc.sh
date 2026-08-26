@@ -3,18 +3,20 @@ set -euo pipefail
 
 # Runs the HRN + HCC arm (HCC generalized from H-CAST, see
 # models/common/hcc.py) on top of the plain HRN baseline configs:
-# - hrn_<dataset>_level_marginal_hcc
+# - hrn_<dataset>_level_conditional_hcc
 # for: cifar100, cub200, aircraft.
 #
 # HCC is a binary on/off switch; there is no onset/alpha/temperature ablation.
-# HRN's real hierarchical training signal is a combinatorial marginal loss
-# over sigmoid tree scores (_hierarchical_loss/_level_marginal_tree_losses),
-# not the `logits_per_level` field. HCC intercepts the pre-sigmoid tree
-# logits (classifier_1/2/3) and re-sigmoids the corrected values before they
-# reach that loss; the separate leaf-only species_ce_logits head is
-# untouched. model.loss=level_marginal is required so the loss decomposes
-# into 3 per-level terms matching HCC's 3-level design (the same requirement
-# already used by train.lexicographic for HRN, for the same reason).
+# HCC constrains HRN's emitted score triple `logits_per_level`: the coarse and
+# middle pre-sigmoid tree logits (classifier_1/2) and the auxiliary leaf head
+# species_ce_logits (classifier_3_1), which is the head HRN decodes at the fine
+# level. The corrected coarse/middle values are re-sigmoided before they reach
+# the combinatorial marginal loss (_hierarchical_loss); the fine tree head
+# (classifier_3) keeps its raw logits, and the corrected triple is also what
+# evaluation decodes, so the constraint is active at train and test time.
+# model.loss is not constrained by HCC: level_conditional telescopes to the
+# `native` objective, so without lexicographic projection this arm optimises
+# exactly what `native` would, while also logging the three per-level terms.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -170,7 +172,7 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  echo "$OUTPUTS_ROOT/hrn_${ds}_level_marginal_hcc"
+  echo "$OUTPUTS_ROOT/hrn_${ds}_level_conditional_hcc"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
@@ -186,7 +188,7 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
-    "model.loss=level_marginal" \
+    "model.loss=level_conditional" \
     "hcc.enabled=true" \
     "hcc.eps=1e-12" \
     "train.lexicographic.enabled=false" \
