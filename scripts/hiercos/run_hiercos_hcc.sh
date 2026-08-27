@@ -6,7 +6,6 @@ set -euo pipefail
 # - model.loss=global_softmax_ce_reg
 # - model.weight_mode=kl_leaf
 # - model.fixed_frame_mode=orthonormal_random
-# - model.transform_mode=full
 # - hiercos_<dataset>_global_softmax_ce_reg_hcc
 # for: cifar100, cub200, aircraft.
 #
@@ -185,7 +184,6 @@ printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
-printf 'Transform mode: full\n'
 printf 'Lexicographic mode: disabled\n'
 printf 'HCC: enabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
@@ -199,7 +197,6 @@ for ds in "${DATASETS[@]}"; do
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
     "model.loss=$LOSS_MODE" \
     "model.weight_mode=$WEIGHT_MODE" \
-    "model.transform_mode=full" \
     "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
     "model.projection.feature_dim=$FEATURE_DIM" \
     "model.projection.enabled=false" \

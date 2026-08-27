@@ -825,7 +825,7 @@ def best_cells(absolute_table, metric='fpa', decoder='independent',
 # Every figure is laid out in inches at the size it is printed at, so the font
 # sizes below are the sizes the reader sees on the page: include them with
 # \includegraphics[width=\textwidth]{...} and no rescaling. Each call saves a
-# PDF for LaTeX plus a PNG for previews and prints a figure environment.
+# PDF for LaTeX plus a PNG for previews.
 #
 # These are module-level settings on purpose: a notebook overrides them with
 # ``posthoc.THESIS_STYLE = False`` and every figure follows.
@@ -837,6 +837,9 @@ from thesis_style import TEXT_WIDTH_IN  # noqa: E402
 # True: no in-figure title or explanatory paragraph, because in a thesis both
 # belong to the LaTeX caption. False: keep them, for reading in the notebook.
 THESIS_STYLE = True
+# Keep notebook output focused on the analysis. Set this to True only when a
+# ready-to-paste LaTeX figure environment is explicitly wanted.
+PRINT_LATEX_BLOCKS = False
 
 # What thesis mode leaves behind is an unlabelled figure on screen: these grids
 # carry no title, and a notebook that renders five of them gives the reader
@@ -931,7 +934,9 @@ def seeds_phrase(table):
 
 
 def latex_block(path, caption, label, width=r'\textwidth'):
-    """Print a figure environment to paste into the thesis."""
+    """Optionally print a figure environment to paste into the thesis."""
+    if not PRINT_LATEX_BLOCKS:
+        return
     print('\n% ---- LaTeX ----------------------------------------------------')
     print('\\begin{figure}[tbp]\n  \\centering')
     print(f'  \\includegraphics[width={width}]{{figures/{Path(path).stem}}}')
@@ -1257,7 +1262,7 @@ ABS_SYMLOG_METRICS = ('tice',)
 
 
 def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series=None,
-                  show_spread=True, shade_scope='dataset', save_path=None,
+                  show_spread=True, shade_scope='dataset', show_footer=True, save_path=None,
                   width_in=None, caption_note=''):
     """Raw test values on the effect grid's geometry.
 
@@ -1271,7 +1276,10 @@ def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series
     because absolute levels are not comparable across datasets; ``'row'``
     rescales inside each series, which separates cells that a collapsed row
     would otherwise flatten; ``'panel'`` puts everything on one ramp. Darker is
-    always better, including for the lower-is-better metrics.
+    always better, including for the lower-is-better metrics. Set
+    ``show_footer=False`` for a compact thesis footer: it retains the colour
+    scale and any structurally omitted-decoder note, but removes the detailed
+    ramp-range list and the seed/native-readout explanation.
     """
     width_in = TEXT_WIDTH_IN if width_in is None else width_in
     assert shade_scope in ('dataset', 'row', 'panel'), shade_scope
@@ -1336,11 +1344,12 @@ def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series
     pad_r, gap = 0.12, 0.20
     head = 0.79
     grid_h = tile_h * len(rows)
-    note_lines = {'dataset': 1 + len(datasets), 'row': 3, 'panel': 1}[shade_scope] \
-        + 2 * max((len(p['dropped']) for p in panels), default=0)
-    note_h = 0.115 * note_lines + 0.10
-    legend_h = 0.52
-    foot_h = 0.30 if not THESIS_STYLE else 0.0
+    note_lines = ({'dataset': 1 + len(datasets), 'row': 3, 'panel': 1}[shade_scope]
+                  + 2 * max((len(p['dropped']) for p in panels), default=0))
+    note_h = (0.115 * note_lines + 0.10 if show_footer else
+              (0.30 if any(p['dropped'] for p in panels) else 0.0))
+    legend_h = 0.60
+    foot_h = 0.30 if show_footer and not THESIS_STYLE else 0.0
     top_pad = 0.05 if THESIS_STYLE else 0.28
     height = top_pad + head + grid_h + note_h + legend_h + foot_h + 0.05
 
@@ -1377,9 +1386,6 @@ def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series
                 native = native_of.get((ds, sr)) == cell
                 ax.add_patch(Rectangle((j, i), 1, 1, facecolor=face,
                                        edgecolor='white', linewidth=1.4, zorder=1))
-                if native:
-                    ax.add_patch(Rectangle((j + .04, i + .04), .92, .92, facecolor='none',
-                                           edgecolor=INK, linewidth=1.3, zorder=5))
                 ink = _text_on(face)
                 dy = -0.10 if show_spread else 0.0
                 ax.text(j + .5, i + .5 + dy, fmt.format(val), ha='center', va='center',
@@ -1431,41 +1437,51 @@ def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series
             note = [f'one ramp for the whole panel: {fmt.format(lo)}–{fmt.format(hi)}']
         note += [f'{DECODER_SHORT[d]} decoding omitted:'
                  f'\n{p["short"]} is constant, by construction' for d in p['dropped']]
-        ax.annotate('\n'.join(note), xy=(0, 0), xycoords='axes fraction',
-                    xytext=(0, -6), textcoords='offset points', ha='left', va='top',
-                    linespacing=1.3, fontsize=FS_NOTE, style='italic', color=INK_3)
+        if show_footer:
+            ax.annotate('\n'.join(note), xy=(0, 0), xycoords='axes fraction',
+                        xytext=(0, -6), textcoords='offset points', ha='left', va='top',
+                        linespacing=1.3, fontsize=FS_NOTE, style='italic', color=INK_3)
+        elif p['dropped']:
+            ax.annotate(
+                '\n'.join(f'{DECODER_SHORT[d]} decoding omitted:' for d in p['dropped'])
+                + f'\n{p["short"]} ≡ 0 for every cell, by construction',
+                xy=(1, 0), xycoords='axes fraction', xytext=(0, -7),
+                textcoords='offset points', ha='right', va='top', linespacing=1.25,
+                fontsize=FS_NOTE, style='italic', color=INK_3)
         x += w + gap
 
     _draw_row_labels(panels[0]['ax'], rows, datasets, series_list, dataset_offset_pt)
 
-    # ---- legend: one generic ramp, since every block has its own limits -----
-    bar_w = min(2.4, width_in - gutter - pad_r)
+    # One generic ramp, since each shading block has its own numerical limits.
+    # Its structure mirrors the relative grid's footer: scale, endpoint labels,
+    # and a concise statement of what the colour encodes.
+    bar_w = min(3.1, width_in - gutter - pad_r)
     bar_x = gutter + (width_in - gutter - pad_r - bar_w) / 2
-    bar_y = top_pad + head + grid_h + note_h + 0.16
+    bar_y = top_pad + head + grid_h + note_h + 0.20
     cax = fig.add_axes([bar_x / width_in, 1 - bar_y / height,
                         bar_w / width_in, 0.115 / height])
-    cax.imshow(np.linspace(0, 1, 256)[None, :], aspect='auto', cmap=SEQUENTIAL)
-    cax.set_xticks([]); cax.set_yticks([])
+    cax.imshow(np.linspace(0, 1, 256)[None, :], aspect='auto', cmap=SEQUENTIAL,
+               extent=(0, 1, 0, 1))
+    cax.set_yticks([])
+    scope_txt = {'dataset': 'its dataset block', 'row': 'its row',
+                 'panel': 'the panel'}[shade_scope]
+    cax.set_xticks([0, 1], [f'worst in {scope_txt}', 'best'])
+    cax.tick_params(axis='x', labelsize=FS_NOTE, colors=INK_2, length=2, pad=1.5)
+    cax.set_xlabel(f'raw metric shading, normalised within {scope_txt}; darker is better',
+                   fontsize=FS_NOTE, color=INK_2, labelpad=3)
     for spine in cax.spines.values():
         spine.set_visible(False)
-    scope_txt = {'dataset': 'worst in its dataset block', 'row': 'worst in its row',
-                 'panel': 'worst in the panel'}[shade_scope]
-    cax.annotate(scope_txt, xy=(0, 0), xycoords='axes fraction',
-                 xytext=(0, -3), textcoords='offset points', ha='left', va='top',
-                 fontsize=FS_NOTE, color=INK_2)
-    cax.annotate('best', xy=(1, 0), xycoords='axes fraction', xytext=(0, -3),
-                 textcoords='offset points', ha='right', va='top',
-                 fontsize=FS_NOTE, color=INK_2)
-    spread_txt = ('mean ± sample SD over ' if show_spread else 'mean over ')
-    fig.text(bar_x / width_in + bar_w / (2 * width_in), 1 - (bar_y + 0.30) / height,
-             f'{spread_txt}{seeds_phrase(A)}; a bold outline marks the '
-             'checkpoint’s own native readout',
-             ha='center', va='top', fontsize=FS_NOTE, color=INK_2)
+    if show_footer:
+        spread_txt = ('mean ± sample SD over ' if show_spread else 'mean over ')
+        fig.text(bar_x / width_in + bar_w / (2 * width_in), 1 - (bar_y + 0.46) / height,
+                 f'{spread_txt}{seeds_phrase(A)}; bold type marks the '
+                 'checkpoint’s own native readout',
+                 ha='center', va='top', fontsize=FS_NOTE, color=INK_2)
 
     _caption('Raw test values of every inference cell',
              _scope_note(datasets, series_list, decoders,
                          'metrics: ' + ', '.join(METRIC_SPECS[m][1] for m in metrics)))
-    if not THESIS_STYLE:
+    if show_footer and not THESIS_STYLE:
         fig.suptitle('Where the inference cells actually land',
                      fontsize=11, fontweight='bold', color=INK, y=1 - 0.06 / height)
         fig.text(0.5, 0.02,
@@ -1487,8 +1503,9 @@ def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series
                        'row': 'inside each row',
                        'panel': 'over the whole panel'}[shade_scope]
                     + ', and is direction-adjusted so that darker is always '
-                    'better; the span of every ramp is printed under the panel and '
-                    'the exact value in every tile. A bold outline marks the cell that '
+                    'better; ' + ('the span of every ramp is printed under the panel and '
+                                  if show_footer else '')
+                    + 'the exact value is printed in every tile. Bold type marks the cell that '
                     'reproduces the checkpoint\'s own inference.' + caption_note,
                     'posthoc-absolute-grid')
 
@@ -1786,13 +1803,14 @@ def relative_gain_limits(table, pad=0.30):
 
 
 def decoder_gain_figure(summary, readout, datasets=None, series=None, save_path=None,
-                        width_in=None, xlim=None, caption_note=''):
+                        width_in=None, xlim=None, show_footer=True, caption_note=''):
     """Relative independent -> top-down FPA change for one readout.
 
     One panel per dataset, one row per series, a bar from the zero line to the
     mean relative gain with the sample SD of the paired per-seed effect. Colour
     carries the sign with the same polarity as the effect grid: blue is a gain
-    for top-down decoding, red a loss.
+    for top-down decoding, red a loss. Set ``show_footer=False`` for a compact
+    thesis figure without the explanatory text below the panels.
     """
     width_in = TEXT_WIDTH_IN if width_in is None else width_in
     data = summary[summary['inference'].eq(readout)] if not summary.empty else summary
@@ -1818,10 +1836,10 @@ def decoder_gain_figure(summary, readout, datasets=None, series=None, save_path=
 
     left = max(0.78, _row_geometry(series_list)[0] - 0.20)
     right, top, gap = 0.10, 0.50, 0.14
-    bottom = 0.62 + (0.15 if offscale else 0.0)
+    bottom = (0.62 + (0.15 if offscale else 0.0)) if show_footer else 0.18
     panel_w = (width_in - left - right - gap * (len(datasets) - 1)) / len(datasets)
     panel_h = max(1.08, 0.36 * len(series_list))
-    foot_h = 0.24 if not THESIS_STYLE else 0.0
+    foot_h = 0.24 if show_footer and not THESIS_STYLE else 0.0
     height = top + panel_h + bottom + foot_h
     fig = plt.figure(figsize=(width_in, height))
 
@@ -1901,34 +1919,36 @@ def decoder_gain_figure(summary, readout, datasets=None, series=None, save_path=
                  f'Readout: {READOUT_LABELS[readout]}', ha='left', va='top',
                  fontsize=FS_TITLE, fontweight='bold', color=INK)
 
-    base = foot_h + (0.24 if offscale else 0.09)     # inches from the figure bottom
-    x_mid = (left + (width_in - left - right) / 2) / width_in
-    fig.text(x_mid, (base + 0.17) / height,
-             'Top-down decoding relative to independent decoding, '
-             '$100\\,(\\mathrm{td}-\\mathrm{ind})/\\mathrm{ind}$ (%)',
-             ha='center', va='bottom', fontsize=FS_GROUP, color=INK_2)
-    fig.text(x_mid, base / height,
-             f'paired per seed over {seeds_phrase(data)} · bars right of zero: '
-             'top-down wins · error bars: sample SD of the paired effect',
-             ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
-    if offscale:
-        parts = [f"{series_label(r['series'], short=True)} on {DATASET_SHORT[r['dataset']]} "
-                 f"{r['relative_gain']:+.1f}% from {r['independent_fpa']:.1f}%"
-                 for r in offscale]
-        # this line is the longest, so it is centred on the figure, not the panels
-        fig.text(0.5, (foot_h + 0.07) / height,
-                 f'collapsed baseline (< {MIN_BASELINE_FPA:g}% independent FPA), '
-                 'error bar omitted: ' + '; '.join(parts),
+    if show_footer:
+        base = foot_h + (0.24 if offscale else 0.09)  # inches from the figure bottom
+        x_mid = (left + (width_in - left - right) / 2) / width_in
+        fig.text(x_mid, (base + 0.17) / height,
+                 'Top-down decoding relative to independent decoding, '
+                 '$100\\,(\\mathrm{td}-\\mathrm{ind})/\\mathrm{ind}$ (%)',
+                 ha='center', va='bottom', fontsize=FS_GROUP, color=INK_2)
+        fig.text(x_mid, base / height,
+                 f'paired per seed over {seeds_phrase(data)} · bars right of zero: '
+                 'top-down wins · error bars: sample SD of the paired effect',
                  ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+        if offscale:
+            parts = [f"{series_label(r['series'], short=True)} on {DATASET_SHORT[r['dataset']]} "
+                     f"{r['relative_gain']:+.1f}% from {r['independent_fpa']:.1f}%"
+                     for r in offscale]
+            # this line is the longest, so it is centred on the figure, not the panels
+            fig.text(0.5, (foot_h + 0.07) / height,
+                     f'collapsed baseline (< {MIN_BASELINE_FPA:g}% independent FPA), '
+                     'error bar omitted: ' + '; '.join(parts),
+                     ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
     _caption(f'What top-down decoding buys under the {READOUT_LABELS[readout]} readout',
              _scope_note(datasets, series_list, extra='relative FPA change, paired per seed'))
     if not THESIS_STYLE:
         fig.suptitle(f'What top-down decoding buys under the {READOUT_LABELS[readout]} readout',
                      fontsize=11, fontweight='bold', color=INK, y=1 - 0.05 / height)
-        fig.text(0.5, 0.01,
-                 'Relative change, not percentage points: +5% means 5% more full paths '
-                 'are correct, whatever the absolute level.',
-                 ha='center', va='bottom', fontsize=FS_NOTE, color=INK_2)
+        if show_footer:
+            fig.text(0.5, 0.01,
+                     'Relative change, not percentage points: +5% means 5% more full paths '
+                     'are correct, whatever the absolute level.',
+                     ha='center', va='bottom', fontsize=FS_NOTE, color=INK_2)
     save_figure(fig, save_path)
     plt.show(); plt.close(fig)
     if save_path:
@@ -1951,8 +1971,9 @@ def decoder_gain_figure(summary, readout, datasets=None, series=None, save_path=
                        f'{MIN_BASELINE_FPA:g}\\% neither sets the axis nor shows an error '
                        'bar, because the ratio and its spread then describe the collapsed '
                        'baseline rather than the decoder; such a bar is drawn to the axis '
-                       'edge with an arrow, its value is printed inside it, and it is '
-                       'listed with its baseline under the axis.') + caption_note,
+                       'edge with an arrow and its value is printed inside it'
+                       + (', with its baseline listed under the axis' if show_footer else '')
+                       + '.') + caption_note,
                     f'posthoc-decoder-gain-{readout.replace("_", "-")}')
 
 

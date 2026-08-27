@@ -523,10 +523,9 @@ Each defaults to all three datasets. HCC output directories use
 `hrn_aircraft_level_conditional_hcc`, and
 `hiercos_cifar100_global_softmax_ce_reg_hcc`.
 
-Hier-COS launchers similarly accept `LEX_PROJECTION_MODES` and
-`TRANSFORM_MODES`. Each launcher prints the selected matrix. Narrow defaults
-remain narrow so invoking a script cannot unexpectedly start the full
-expensive grid.
+The Hier-COS lex launcher accepts `LEX_PROJECTION_MODES`. Each launcher prints
+the selected matrix. Narrow defaults remain narrow so invoking a script cannot
+unexpectedly start the full expensive grid.
 
 Run Hier-COS with direct subspace supervision using:
 

@@ -1,314 +1,328 @@
 # Hier-COS Ablation Run Checklist
 
-Run status re-audited on 2026-08-25. The full structural and mechanism campaign
-uses CIFAR-100, CUB-200, and Aircraft for every required condition.
+Audited 2026-08-27 from `config_resolved.yaml` and `test_metrics.yaml` under
+`/scratch/g.saggini1/outputs`, not from directory names.
 
-Use three training seeds (`0`, `1`, and `2`) and dataset split seed `0`. Keep
-`kl_leaf`, the `full` transform, and each dataset's standard backbone,
-pretraining, optimiser, augmentation, alpha, and input resolution fixed unless
-the research question explicitly varies one of them.
+3 seeds (`0`,`1`,`2`) + split seed `0` for any thesis-table row; 2 seeds allowed
+where marked *sensitivity*. Everything not named by the question stays fixed.
 
-## Contrast map: this is not a factorial
+## Run queue
 
-The required settings form a connected sequence. They do **not** require every
-frame, softmax scope, mechanism, weight, transform, and backbone combination.
+| P | Section | What | Seed-runs | Blocked by |
+|---|---|---|---|---|
+| 0 | C | `equal` x `{none, lex}` on all datasets | 10 | baseline dataset matrix; CIFAR lex seed 2 |
+| 0 | C | cumulative beta=1 x `{none, lex}` on all datasets | 18 | weight-mode/beta launcher support |
+| 0 | C | Aircraft marginal x `{none, lex}` | 6 | weight-mode launcher support |
+| 1 | D | LH projection at the weighting fixed after C | TBD | section C complete and analysed |
+| 2 | E | LH representation-width sensitivity | 3 + 5 | section D reference row |
+| 3 | F | CIFAR-100 WRN ladder at dense/global, 2 seeds | 8 | — |
 
-| Question | Matched conditions |
-|---|---|
-| Frame ladder | dense/global/none; block/global/none; identity/global/none |
-| Softmax adaptation cost | identity/global/none; identity/level/none |
-| Main explicit-lex effect | dense/global/none; dense/global/coarse-first lex |
-| LH versus explicit lex | identity/level/none; identity/level/coarse-first lex; identity/level/LH |
+Sections A and B are complete. Finish and analyse section C before launching
+new LH-projection rows in D.
 
-Here `dense` means `fixed_frame_mode=orthonormal_random` with
-`fixed_frame_per_level=false`; `block` means the canonical
-`fixed_frame_mode=orthonormal_random` with `fixed_frame_per_level=true`;
-`identity` means the identity frame; `global` means
-`global_softmax_ce_reg`; and `level` means `level_softmax_ce_reg`. The legacy
-`orthonormal_block_random` mode is only an alias for the canonical block pair
-and should not be used for new runs.
+## Vocabulary
 
-All required frame, softmax, and mechanism comparisons cover CIFAR-100,
-CUB-200, and Aircraft. Only separately labelled optional diagnostics, such as a
-width or backbone sensitivity study, may use a prespecified subset.
+`dense` = `orthonormal_random` + `fixed_frame_per_level=false`; `block` = same +
+`per_level=true`; `identity` = identity frame; `global` = `global_softmax_ce_reg`;
+`level` = `level_softmax_ce_reg`. Do not use the legacy
+`orthonormal_block_random` alias.
 
-## Completed anchors
+## Substrate rule
 
-- [x] Dense/global/`kl_leaf`/none: CIFAR-100, CUB-200, and Aircraft, seeds
-  0--2.
-- [x] Dense/global/`kl_leaf`/`coarse_first` lex: all three datasets, seeds
-  0--2.
-- [x] Identity/level/`kl_leaf`/LH with automatic taxonomy width: all three
-  datasets, seeds 0--2.
-- [x] Dense/global/`kl_leaf`/`fine_first` lex: all three datasets, seeds 0--2.
-  The configs select `fine_first`, and the logs contain active post-projection
-  diagnostics. Do not schedule these again.
-- [x] Dense/global/`kl_leaf`/HCC: all three datasets, seeds 0--2.
-  `proj_constraint_alpha=1` is present in the logs. Do not schedule these
-  again.
-- [x] Identity/level/`equal`/full-transform/`coarse_first` lex: all three
-  datasets, seeds 0--2. This is the transform-study lex reference, not the
-  `kl_leaf` row required by the LH-versus-lex comparison.
-- [x] Identity/level/`equal`/`bn_linear`/`coarse_first` lex: Aircraft and
-  CUB-200, seeds 0--2.
+> Structural substrate = `level` + that dataset's best **LH-compatible** frame
+> from section A. Weighting is the explicit axis in section C and is held
+> matched between `none` and `coarse_first` within every cell.
 
-## Interpretation of the current LH comparison
+LH-compatible means identity or per-level block; `models/hiercos/model.py:256`
+rejects a dense frame under `projection.enabled=true`. Earlier versions of this
+document assumed a single identity substrate for all three datasets, which
+section A falsifies — that assumption is what made everything after C unusable.
 
-Enabling the current LH path simultaneously creates learnable per-level heads,
-adds a terminal PReLU, and applies the branch-point backward projection. The
-vanilla identity/level baseline and explicit-lex arm do not use those heads or
-that PReLU.
+| Dataset | Structural substrate | Section A evidence (FPA_ind / TICE_ind) |
+|---|---|---|
+| CIFAR-100 | **block**/level | block .7731/.0094 > identity .7687/.0097; dense .7752 is LH-incompatible |
+| Aircraft | **identity**/level | identity .8274/.0035 > dense .8140/.0078 > block .8103/.0089 |
+| CUB-200 | **identity**/level | identity .7656/.0021 > dense .7615/.0060 > block .7607/.0066 |
 
-Therefore the currently runnable three-arm comparison identifies the effect of
-the complete **LH adaptation package**, not the projection operator in
-isolation. It is acceptable for a complete-method comparison if this limitation
-is stated explicitly.
+Hold the frame fixed **within** a dataset. Its variation **across** datasets is a
+section A result; carry the substrate column on every mechanism table.
 
-For a stronger projection-only claim, first implement an adapter-only mode with
-the same heads and PReLU but with the LH backward projection bypassed. The
-strictly matched study would then require adapter-only none, adapter-only
-explicit lex, and adapter + LH. Do not build extra frame/softmax factorial cells
-as a substitute for this missing control.
+---
 
-`model.projection.feature_dim` is ignored when `model.projection.enabled=false`:
-a no-projection baseline always uses the taxonomy-node width. Existing baseline
-directories containing `_d512` therefore have a misleading name but are valid
-automatic-width baselines. They must not be reported as width-512 controls.
+## A. Frame ladder — COMPLETE (0 outstanding)
 
-## Required full three-dataset campaign
+Isolates: frame, at global/`kl_leaf`/none.
 
-This is the selected campaign. It completes the frame ladder, softmax
-adaptation cost, and matched identity/level mechanism comparison independently
-on CIFAR-100, CUB-200, and Aircraft. It requires **28 remaining seed-runs**.
+- [x] Dense/global/none: CIFAR-100, CUB-200, Aircraft, seeds 0--2.
+- [x] Block/global/none: all three, seeds 0--2.
+- [x] Identity/global/none: all three, seeds 0--2.
 
-The sections are ordered by interpretation: establish the frame first, then
-measure the cost of changing the softmax, and only then compare mechanisms on
-the adapted identity/level substrate. The training jobs themselves are
-independent and may run in parallel.
+Result: best frame is dataset-dependent. Identity buys 1.3 pp FPA and halves
+TICE on Aircraft, buys 0.4 pp on CUB-200, costs 0.7 pp on CIFAR-100. The earlier
+"15 seed-runs outstanding" was stale.
 
-### A. Frame ablation: dense versus block versus identity
+## B. Softmax scope — COMPLETE (0 outstanding)
 
-- [x] Reuse the restored Aircraft identity/global/`kl_leaf`/none seeds 0--2
-  under
-  `hiercos_aircraft_global_softmax_ce_reg_baseline_kl_leaf_identity`. They
-  retain every validation/test sample, match the current selection rule, and
-  their stored checkpoint paths resolve after restoration. No retraining is
-  needed.
-- [x] Run CIFAR-100 identity/global/`kl_leaf`/none, seeds 0--2. Do not resume
-  the archived run; all three archived seeds used `drop_last_eval=true`.
-- [x] Run CUB-200 identity/global/`kl_leaf`/none, seeds 0--2. Do not resume the
-  archived run; all three archived seeds used `drop_last_eval=true`.
-- [x] Run Aircraft block/global/`kl_leaf`/none, seeds 0--2.
-- [x] Run CIFAR-100 block/global/`kl_leaf`/none, seeds 0--2.
-- [x] Run CUB-200 block/global/`kl_leaf`/none, seeds 0--2.
+Isolates: global vs per-level softmax, at each dataset's substrate frame.
 
-Compare the completed dense/global baseline with the new block/global and
-identity/global baselines. Loss, weighting, transform, mechanism, and backbone
-remain fixed, so only the frame changes.
+- [x] CIFAR-100 at block: `..._global_..._baseline_kl_leaf_block` vs
+  `..._level_..._baseline_kl_leaf_block`, seeds 0--2 each.
+- [x] Aircraft at identity: same pair, seeds 0--2 each.
+- [x] CUB-200 at identity: same pair, seeds 0--2 each.
 
-Outstanding cost for section A: **15 seed-runs**.
+Result: per-level softmax is free. CIFAR-100 .7731 -> .7780 FPA and .0094 ->
+.0087 TICE; Aircraft .8274 -> .8248 and .0035 -> .0032; CUB-200 .7656 -> .7649
+and .0021 -> .0023. This establishes the structural substrate for section C.
 
-### B. Softmax ablation: global versus per-level
+## C. Level-weight ablation — 34 outstanding
 
-- [ ] Complete identity/level/`kl_leaf`/full-transform/none:
-  - [x] Aircraft seeds 0--2: reuse
-    `hiercos_aircraft_level_softmax_ce_reg_baseline_kl_leaf_identity`.
-    These runs used automatic taxonomy width.
-  - [ ] CIFAR-100 seed 0: resume the current local `latest.pt` after epoch 4.
-  - [ ] CIFAR-100 seeds 1 and 2: start fresh.
-  - [x] CUB-200 seeds 0 and 1: reuse the completed current runs.
-  - [ ] CUB-200 seed 2: resume the current local `latest.pt` after epoch 23.
+Isolates: the numerical level weights, crossed with **both** `{none,
+lex_coarse_first}` at the structural substrate. The comparison is performed on
+all three datasets before any new LH-projection row is launched. A lex-only
+sweep cannot distinguish a generally better scalarisation from a weight--lex
+interaction.
 
-Compare each identity/global baseline from section A with the corresponding
-identity/level baseline here. Frame, weighting, transform, mechanism, and
-backbone remain fixed, so only the softmax scope changes.
+The selected grid is deliberately small:
 
-Outstanding cost for section B: **4 seed-runs**.
+| Rule | CIFAR-100 | Aircraft | CUB-200 | Coverage |
+|---|---|---|---|---|
+| `equal` | .333/.333/.333 | same | same | all datasets |
+| `kl_leaf` | .162/.225/.613 | same | same | all datasets |
+| `cumulative_branching`, beta=1 | .062/.156/.781 | .150/.350/.500 | .052/.151/.797 | all datasets |
+| `marginal_branching` | — | .210/.490/.300 | — | Aircraft only |
 
-### C. Mechanism comparison on the adapted identity/level substrate
+The cumulative beta=0.5 and marginal vectors are close to `kl_leaf` on
+CIFAR-100 and CUB-200, so they are not scheduled there. Aircraft retains the
+marginal rule because it is the only selected mid-heavy vector. `kl_coarse` and
+cumulative beta=1.5 are outside this ablation.
 
-- [ ] Run identity/level/`kl_leaf`/full-transform/`coarse_first` lex on all
-  three datasets, seeds 0--2. The completed directories without `_kl_leaf` use
-  `equal` weighting and do **not** fill this row.
+### Existing diagnosis motivating the grid
 
-Compare the identity/level none baseline from section B, the new explicit-lex
-row, and the completed identity/level LH row. This is the complete-method
-comparison subject to the LH head/PReLU limitation stated above.
+Diagnosed 2026-08-27 from `run_log.jsonl`, block substrate, lex vs matched
+baseline. Unweighted train CE (`ce_level_l / w_l`) at epoch 50:
 
-Outstanding cost for section C: **9 seed-runs**.
+| | L0 | L1 | L2 |
+|---|---|---|---|
+| baseline | 0.124 | 0.196 | 0.261 |
+| lex `kl_leaf` | **0.859** | **1.072** | 0.252 |
+| lex `equal` | 0.228 | 0.205 | 0.305 |
 
-## Conditional transform study
+- Fine level fit identically; the two levels holding lexicographic *priority* are
+  7x and 5.5x underfit.
+- Baseline `cos_p123_fine_coarse` is .36--.42 over epochs 5--50 with
+  `|g_fine|/|g_coarse| ~ 5`, so the coarse-aligned part of the fine gradient is
+  ~2x the coarse gradient itself. `coarse_first` deletes exactly that component.
+- `kl_leaf` = `[.162,.225,.613]`, folded inside `ce_level_losses`
+  (`models/hiercos/losses.py:389`), so it survives into `level_losses` and sets
+  step magnitude while the projection direction is scale-invariant. Lex gives the
+  coarse level priority in direction and a 0.162x step. `equal` gives 0.333x and
+  the regression disappears.
+- Aircraft/CUB cannot show this: pretrained ResNet-50, coarse train acc 1.0 by
+  epoch ~10, coarse grad norm 2.6 -> 0.32. Lex inflates their coarse CE the same
+  way (Aircraft .099 vs .050 at ep50) but from a negligible base.
+- TICE worsens because lex orders update *directions* only; it cannot make an
+  underfit coarse head agree with the fine head.
+- Secondary: `level_losses[l] = w_l*CE_l + alpha*R_l` leaves the regulariser
+  unweighted, so the priority objective is 31% regulariser at L0 vs 8% at L2.
 
-Do not complete the transform ladder until the matched full-transform lex
-effect has been evaluated.
+Consequence: the level weights become relative per-level gradient scales in lex
+mode, not a nuisance parameter. Section C is therefore a prerequisite for the
+matched LH comparison rather than an optional sensitivity appendix.
 
-- [ ] Run identity/level/`equal`/full-transform/none on all three datasets,
-  seeds 0--2.
-- [ ] Compare it with the completed matching identity/level/`equal`/full lex
-  rows.
-- [ ] If the paired lex effect is meaningful, complete the paired ladder on the
-  same datasets:
-  - [ ] `bn_linear`/none.
-  - [ ] Complete `bn_linear`/lex. Aircraft and CUB-200 seeds 0--2 are complete;
-    the CIFAR-100 directory contains only a seed-0 config and no checkpoint, so
-    CIFAR-100 seeds 0--2 must start fresh if selected.
-  - [ ] `final_only`/none.
-  - [ ] `final_only`/lex.
+### Run matrix
 
-For all three datasets this requires **9 seed-runs initially**, followed by
-**30 more** only if the first comparison justifies continuing. Archived
-`bn_linear` and `final_only` runs with `drop_last_eval=true` do not count and
-must not be resumed for headline results.
+All cells use seeds 0--2 and split seed 0.
 
-## Optional mechanistic controls
+**CIFAR-100 at block/level:**
 
-- [x] `fine_first` lex ordering control: complete on all three datasets.
-- [ ] No-lex `kl_coarse` baseline: run only if the thesis will test whether
-  simple coarse-heavy scalar weighting reproduces the consistency effect of
-  projection. Keep dense/global/full fixed and use all three datasets so it
-  matches the associated lex comparison.
-- [ ] Adapter-only head control: recommended before claiming that an observed
-  LH difference is caused specifically by its backward projection.
-- [ ] LH advantage parameterisation: separate model-variant question; do not
-  fold it into the main LH-versus-lex contrast.
-- [ ] LH width-512 diagnostic: separate representation-width question. The
-  current CUB-200 width-512 directory has seed 0 complete and seed 1 stopped
-  after epoch 8. Leave it on hold. If this CUB-only diagnostic is selected,
-  resume seed 1 and start seed 2; do not rerun seed 0.
+- [ ] `equal` x none: **3 seed-runs**.
+- [ ] `equal` x lex: seeds 0--1 complete; **finish seed 2**.
+- [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete.
+- [ ] cumulative beta=1 x `{none, lex}`: **6 seed-runs**.
 
-## Optional CIFAR-100 backbone/pretraining study
+**Aircraft at identity/level:**
 
-Do not include this in the core campaign. The current script changes the
-standard CIFAR WRN-28-8/32-pixel setting to ResNet-50/224 pixels, so a comparison
-against the standard CIFAR runs is an **architecture, pretraining, and input
-pipeline sensitivity study**, not a clean backbone-only ablation.
+- [ ] `equal` x none: **3 seed-runs**.
+- [x] `equal` x lex: seeds 0--2 complete.
+- [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete.
+- [ ] cumulative beta=1 x `{none, lex}`: **6 seed-runs**.
+- [ ] marginal x `{none, lex}`: **6 seed-runs**.
 
-Choose exactly one question before resuming any partial ResNet run:
+**CUB-200 at identity/level:**
 
-1. **Pretraining-by-frame baseline study.** Use global softmax, `kl_leaf`, full
-   transform, and no lex. Run
-   `{pretrained, scratch} x {dense random, identity}`. Neither lex nor LH belongs
-   in this matrix.
-2. **Explicit-lex robustness.** Choose one ResNet initialisation and compare
-   none versus explicit lex at dense/global. Do not add identity or LH.
-3. **LH-versus-lex robustness.** Choose one ResNet initialisation and compare
-   none, explicit lex, and LH at identity/level. Use identity only; a dense
-   global frame is incompatible with LH.
+- [ ] `equal` x none: **3 seed-runs**.
+- [x] `equal` x lex: seeds 0--2 complete.
+- [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete.
+- [ ] cumulative beta=1 x `{none, lex}`: **6 seed-runs**.
 
-Default decision: **hold all ResNet partial runs** until one of these questions
-is selected. If question 1 is selected, the outstanding work is:
+Prediction: under lex on CIFAR-100, coarse/mid CE and TICE degrade monotonically
+in `w_2`; under the baseline they do not. Parallel curves would mean the weights
+are a plain scalarisation choice and 4.1.4's framing needs weakening.
 
-- [ ] Pretrained dense: resume seed 0 after epoch 34; start seeds 1 and 2.
-- [x] Pretrained identity seed 0: complete.
-- [ ] Pretrained identity seed 1: resume from its local checkpoint at epoch 4.
-- [ ] Pretrained identity seed 2: start fresh.
-- [x] Scratch identity seed 0: complete.
-- [ ] Scratch identity seeds 1 and 2: start fresh.
-- [ ] Scratch dense seeds 0--2: start fresh.
+- [ ] Report `w_2` next to every rule name.
+- [ ] Report unweighted per-level train CE, not only test metrics.
 
-The completed Aircraft from-scratch identity bundle is a negative pilot: the
-small training set collapsed near chance. Do not extend it into a larger
-Aircraft pretraining matrix or use it as a headline backbone result.
+## D. LH-projection comparison — blocked by C
 
-## Stale and archived run disposition
+Isolates: none vs `coarse_first` lex vs LH at one matched structural substrate
+and one matched weighting per reported comparison. Section C must be analysed
+before the headline weighting is fixed; never compare the best lex weight with
+an LH or baseline row trained under a different rule.
 
-### Reuse
+- [x] Aircraft identity/level/`kl_leaf`: none, lex, LH, seeds 0--2 available as
+  the incumbent-weight reference.
+- [x] CUB-200 identity/level/`kl_leaf`: none, lex, LH, seeds 0--2 available as
+  the incumbent-weight reference.
+- [x] CIFAR-100 block/level/`kl_leaf`: none and lex, seeds 0--2 complete.
+- [ ] CIFAR-100 block/level/`kl_leaf`/LH: seeds 0--2 remain missing. The existing
+  identity bundle is off-substrate and remains only an LH frame-sensitivity
+  point.
+- [ ] After C, record the rule used for the headline matched comparison and add
+  any missing LH cells for that same rule on all three datasets.
 
-- [x] Aircraft identity/global/`kl_leaf`/none, seeds 0--2: restored to its
-  original output path; all stored checkpoint references resolve.
-- [x] Current Aircraft identity/level/`kl_leaf`/none directory: renamed without
-  the misleading `_d512` suffix; it is an automatic-width baseline.
-- [x] Current CUB-200 identity/level/`kl_leaf`/none seeds 0 and 1.
-- [x] Current dense/global `fine_first` and HCC bundles: complete and active.
+The LH arm adds learnable per-level heads and a terminal PReLU as well as the
+backward projection. Until an adapter-only control exists, D identifies the
+complete LH adaptation package rather than the projection operator alone.
 
-### Resume now
+## E. LH representation budget (`projection.feature_dim`) — 3 + 5 outstanding
 
-- [ ] Current CIFAR-100 identity/level/`kl_leaf`/none seed 0 from its exact
-  local checkpoint after epoch 4:
-  `/scratch/g.saggini1/outputs/hiercos_cifar100_level_softmax_ce_reg_baseline_kl_leaf_d512_identity/seed_0/latest.pt`.
-- [ ] Current CUB-200 identity/level/`kl_leaf`/none seed 2 from its exact local
-  checkpoint after epoch 23:
-  `/scratch/g.saggini1/outputs/hiercos_cub200_level_softmax_ce_reg_baseline_kl_leaf_d512_identity/seed_2/latest.pt`.
+Isolates: LH width. **LH-only** — `feature_dim` is ignored when the projection
+is off.
 
-### Rerun cleanly now
+Widths are *already* matched in section D: `models/hiercos/model.py:172` gives
+the baseline `total_nodes` too, and `feature_dim=0` resolves to the same. So
+this is not a section D control; it asks whether tying LH's width to the
+taxonomy handicaps it. Protected rows = `sum(C_l[:-1])`: 28/128 = 22% CIFAR-100,
+51/251 = 20% CUB-200, **100/200 = 50% Aircraft** — and Aircraft is where LH's
+deficit is largest (-3.0 pp vs -0.6 pp on CUB-200).
 
-- [ ] Archived CIFAR-100 identity/global/`kl_leaf`/none seeds 0--2.
-- [ ] Archived CUB-200 identity/global/`kl_leaf`/none seeds 0--2.
+- [ ] Aircraft identity/level/`kl_leaf`/LH, `feature_dim=400`, seeds 0--2.
+  **3 seed-runs.** Run first.
+- [ ] CUB-200 `feature_dim=512`: resume seed 1 from its epoch-8 checkpoint, start
+  seed 2, do not rerun seed 0 (0.7698/.0047 vs .7586/.0070 at auto width, n=1).
+  **2 seed-runs**, only if Aircraft recovers.
+- [ ] CIFAR-100 `feature_dim=256`, seeds 0--2. **3 seed-runs**, same condition.
 
-Their old checkpoints were selected with truncated evaluation batches. Do not
-resume them into the new namespace or combine old and new seeds in one mean.
+- [ ] Keep these rows **out** of the section D table: at `feature_dim >
+  total_nodes` the LH arm is wider than the other two arms. A matched version
+  would need `model.py:172` changed to decouple backbone `out_dim` from
+  `projection.enabled`; do not attempt unless E changes C's conclusion.
 
-### Hold unless the optional question is selected
+## F. CIFAR-100 backbone capacity ladder — 8 outstanding (*sensitivity*)
 
-- [ ] CUB-200 LH width-512 seed 1 at epoch 8 and missing seed 2.
-- [ ] All partial CIFAR-100 ResNet-50 runs listed above.
+Isolates: capacity. Use `run_hiercos_cifar100_backbone_ladder.sh`; it shrinks the
+WRN at fixed implementation, 32 px, head, frame, and loss. The ResNet-50/224
+script changes architecture, pretraining, and resolution at once and cannot
+answer this — it stays permanently on hold.
 
-### Retire from headline comparisons
+Base arm dense/global x {none, lex}: both WRN-28-8 anchors already exist at
+seeds 0--2 (.7752/.0104 and .7732/.0058), so that rung is free, and it is the
+arm carrying the headline explicit-lex claim.
 
-- [x] Archived CIFAR-100 and CUB-200 runs with `drop_last_eval=true`.
-- [x] Archived one-seed `bn_linear`, `final_only`, old `fine_first`, and old
-  `kl_leaf` transform variants with truncated evaluation.
-- [x] The failed hand-launched CIFAR ResNet directory with no checkpoint.
-- [x] Superseded legacy conflict-gated lex runs.
-- [x] The Aircraft from-scratch collapse: retain only as a documented pilot.
+- [x] WRN-28-8 x {none, lex}: reuse the dense/global anchors.
+- [ ] WRN-16-8 x {none, lex}, 2 seeds each. **4 seed-runs.**
+- [ ] WRN-28-4 x {none, lex}, 2 seeds each. **4 seed-runs.**
+- [ ] Do **not** run the ladder at the block/level substrate as well.
+- [ ] Do **not** combine with the 224 px override: the hard-coded
+  `avg_pool2d(out, 8)` then yields 7x7 and the embedding becomes `out_dim * 49`.
 
-Do not delete retired artifacts; leave them under `recovery/` or their current
-directory and exclude them in analysis code.
+Prediction: less capacity means harder level competition, so the lex-minus-
+baseline gap in coarse CE and TICE should widen monotonically as capacity falls.
+A flat gap would mean the CIFAR-100 regression is purely the weight mechanism.
 
-## Launcher prerequisites
+---
 
-Resolve these before launching new frame or transform conditions:
+## Deferred
 
-- [ ] Expose and validate `FIXED_FRAME_PER_LEVEL` in
-  `run_hiercos_baselines.sh`; launch the block arm with
-  `FIXED_FRAME_MODE=orthonormal_random` and
-  `FIXED_FRAME_PER_LEVEL=true`.
-- [ ] Give block-frame baseline and transform outputs an explicit `_block`
-  suffix so they cannot collide with dense-frame output names.
-- [ ] Make the baseline runner actually parse `DATASETS`; its comment says the
-  variable is overridable, but the current script hard-codes all three
-  datasets.
-- [ ] Do not use `FEATURE_DIM` to name no-projection baseline runs; it does not
-  change their model width.
-- [ ] Verify every generated output directory with `DRY_RUN=1` before training.
-- [ ] For partial seeds, pass the exact local `latest.pt` explicitly. Do not
-  relaunch completed seeds or rely on an automatic resume guess.
-- [ ] In `run_hiercos_cifar100_resnet50_pretrained.sh`, reconcile the prose
-  saying the default is pretrained with the actual
-  `PRETRAINED_MODE=false` default before using the launcher.
+- [ ] **Adapter-only head control** — highest-value deferred item. Enabling LH
+  adds learnable per-level heads, a terminal PReLU, *and* the backward
+  projection, so section D identifies the whole **LH adaptation package**, not
+  the projection operator. State that limitation wherever D is reported. A
+  projection-only claim needs adapter-only none / adapter-only lex / adapter+LH.
+- [ ] **LH advantage** (`ADVANTAGE_ENABLED=true`) — separate model variant.
+- [ ] **Direct subspace supervision** — separate research question (tau=0.1).
+- [ ] **CIFAR-100 ResNet-50 / 224 px** — superseded by F. The Aircraft
+  from-scratch bundle stays a documented negative pilot; do not extend it.
+- [ ] **HCC** — complete at dense/global, all three datasets; report separately.
 
 ## Do not schedule as a factorial
 
-- [ ] Do **not** cross every frame with every loss, weight, transform,
-  mechanism, backbone, and dataset.
-- [ ] Do **not** run the legacy `orthonormal_block_random` alias in addition to
-  `orthonormal_random` + `fixed_frame_per_level=true`; they resolve to the same
-  block-frame condition.
-- [ ] Do **not** treat identity with and without per-level construction as
-  separate frame conditions.
-- [ ] Do **not** build a parallel `kl_reg` grid. With fixed targets, native KL
-  and global CE have the same training gradient and differ by a
-  target-entropy constant.
-- [ ] Do **not** run every weight under every frame, loss, and transform.
-- [ ] Do **not** stack LH projection, HCC, and explicit lex in the main
-  attribution matrix.
-- [ ] Treat branching weights, LH advantage, width 512,
-  backbone/pretraining, HCC, and direct subspace supervision as separate
-  research questions.
+- [ ] Do not cross every frame with every loss, weight, mechanism, backbone,
+  and dataset.
+- [ ] Do not run `orthonormal_block_random` alongside the canonical block pair.
+- [ ] Do not treat identity with and without per-level construction as separate
+  frames.
+- [ ] Do not build a parallel `kl_reg` grid: with fixed targets, native KL and
+  global CE have the same training gradient up to a target-entropy constant.
+- [ ] Do not run C, D, E, or F on more than one structural substrate per
+  dataset.
+- [ ] Do not stack LH, HCC, and explicit lex in the attribution matrix.
+
+## Disposition
+
+Reuse as-is:
+
+- [x] All section A and B bundles; `kl_leaf` x `{none, lex}` at all three
+  structural substrates; Aircraft and CUB-200 `kl_leaf` LH bundles;
+  dense/global `fine_first`, HCC, and `coarse_first` lex bundles.
+- [x] `equal`/lex at Aircraft and CUB-200 identity, seeds 0--2; at CIFAR-100
+  block, seeds 0--1. Finish only CIFAR-100 seed 2.
+- [x] `..._cifar100_..._projection_kl_leaf_identity` — off-substrate LH point.
+- [x] `..._cifar100_..._lex_coarse_first` (dense, `equal`, 2 seeds) and
+  `..._lex_coarse_first_identity` (identity, `equal`, 3 seeds) — the evidence
+  that CIFAR-100's lex regression is weight-driven. Keep and cite.
+
+Retire, do not resume (leave on disk, exclude in analysis):
+
+- [x] `..._cifar100_level_softmax_ce_reg_baseline_kl_leaf_d512_identity`
+  (seed 0, 4 epochs) — CIFAR-100's `none` arm is at block and complete.
+- [x] `..._cub200_level_softmax_ce_reg_baseline_kl_leaf_d512_identity`
+  (seed 2, 23 epochs) — superseded by the complete `..._baseline_kl_leaf_identity`
+  bundle. Earlier versions of this document told you to resume it; that was wrong.
+- [x] All partial CIFAR-100 ResNet-50 directories.
+- [x] Everything archived with `drop_last_eval=true`; old `fine_first` and
+  `kl_leaf` variants; legacy conflict-gated lex runs; the failed hand-launched
+  CIFAR ResNet directory.
+
+Naming: `feature_dim` is ignored when the projection is off, so baseline
+directories containing `_d512` are automatic-width baselines with a misleading
+name. Never report them as width-512 controls.
+
+## Launcher prerequisites
+
+Resolved:
+
+- [x] `FIXED_FRAME_PER_LEVEL` exposed and validated in `run_hiercos_baselines.sh`.
+- [x] Block-frame baseline outputs carry an explicit `_block` suffix.
+
+Open:
+
+- [ ] `run_hiercos_baselines.sh:113` hard-codes `DATASETS=(cifar100)` despite its
+  usage comment. Blocks C's Aircraft and CUB-200 baseline cells.
+- [ ] Accept `cumulative_branching` and `marginal_branching` in
+  `run_hiercos_lex.sh` and `run_hiercos_baselines.sh`; expose `WEIGHT_BETA`
+  (mirroring `run_hiercos_lhdnn_projection.sh`) and tag cumulative output
+  directories with the beta value. Blocks C.
+- [ ] `run_hiercos_baselines.sh` appends `_d${FEATURE_DIM}` to no-projection
+  output names; suppress it when the projection is off.
+- [ ] `run_hiercos_cifar100_resnet50_pretrained.sh` prose says pretrained is the
+  default while `PRETRAINED_MODE=false`. Only matters if that script is revived.
+- [ ] Verify every generated output directory with `DRY_RUN=1` before training.
+- [ ] For partial seeds pass the exact local `latest.pt`; never rely on an
+  automatic resume guess or relaunch a completed seed.
 
 ## Reporting checks
 
-- [ ] Require `test_metrics.yaml` and a final `test` event before marking a
-  seed complete.
-- [ ] Report the actual seed count for every result.
-- [ ] Use the top-down-selected checkpoint for top-down rows and the
-  independent-selected checkpoint for independent rows.
-- [ ] Report FPA, weighted AP, and accuracy as higher-is-better; report AHD and
-  TICE as lower-is-better.
-- [ ] Report percentage differences in percentage points.
-- [ ] Confirm lex activity from post-projection diagnostics and HCC activity
-  from `proj_constraint_alpha`, not only from directory names.
-- [ ] Treat partial logs as training-dynamics/debug artifacts, not final
-  results.
-- [ ] Never mix archived `drop_last_eval=true` results with clean current runs
-  in a headline aggregate.
+- [ ] Require `test_metrics.yaml` and a final `test` event before marking a seed
+  complete; treat partial logs as dynamics artifacts.
+- [ ] Report the actual seed count; never report a single-seed cell as a finding.
+- [ ] State the substrate on every mechanism table — it differs across datasets.
+- [ ] Top-down rows from the top-down-selected checkpoint, independent rows from
+  the independent-selected one.
+- [ ] FPA, weighted AP, accuracy higher-is-better; AHD and TICE lower-is-better;
+  percentage deltas in percentage points.
+- [ ] Confirm lex activity from post-projection diagnostics and HCC from
+  `proj_constraint_alpha`, not from directory names.
+- [ ] When a lex row moves, read the unweighted per-level train CE before
+  interpreting test metrics.
+- [ ] Never mix archived `drop_last_eval=true` results into a headline aggregate.

@@ -6,7 +6,6 @@ set -euo pipefail
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.pretrained=${PRETRAINED_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - model.transform_mode=full
 # - train.lexicographic.enabled=false
 # Three training seeds are used by default. Override the scalar mode variables
 # to select a different single configuration; this script does not run a grid.
@@ -152,7 +151,6 @@ printf 'Dataset: aircraft\n'
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
-printf 'Transform mode: full\n'
 printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
@@ -164,7 +162,6 @@ run_seeded_train "$CONFIG" "$(run_output_dir)" \
   "model.weight_mode=$WEIGHT_MODE" \
   "model.pretrained=false" \
   "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
-  "model.transform_mode=full" \
   "train.lexicographic.enabled=false" \
   "train.gradient_blocks=[p123]"
 

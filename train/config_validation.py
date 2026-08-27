@@ -69,7 +69,6 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "weight_mode",
         "weight_beta",
         "variant",
-        "transform_mode",
         "pool",
         "pretrained",
         "alpha",
@@ -796,11 +795,6 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
             model.get("variant", "haframe_resnet50"),
             "model.variant",
             {"haframe_resnet50", "haframe_wide_resnet"},
-        )
-        _require_enum(
-            model.get("transform_mode", "full"),
-            "model.transform_mode",
-            {"full", "bn_linear", "final_only"},
         )
         _require_enum(
             model.get("fixed_frame_mode", "orthonormal_random"),

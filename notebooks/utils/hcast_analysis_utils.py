@@ -687,7 +687,6 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
     model_name: Optional[str] = None
     model_loss: Optional[str] = None
     weight_mode: Optional[str] = None
-    model_transform_mode: Optional[str] = None
     cfg: Dict[str, Any] = {}
     cfg_path = run_path / "config_resolved.yaml"
     if cfg_path.exists():
@@ -710,11 +709,6 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
                 if not isinstance(raw_weight_mode, str):
                     raise ValueError("Hier-COS model.weight_mode in config_resolved.yaml must be a string.")
                 weight_mode = raw_weight_mode
-            raw_transform_mode = model_cfg.get("transform_mode")
-            if raw_transform_mode is not None:
-                if not isinstance(raw_transform_mode, str):
-                    raise ValueError("Hier-COS model.transform_mode in config_resolved.yaml must be a string.")
-                model_transform_mode = raw_transform_mode
     best_epoch_events = _best_epoch_events_by_mode(epoch_events, test_results)
     best_epoch_event = best_epoch_events.get("topdown")
 
@@ -732,7 +726,6 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         "model_name": model_name,
         "model_loss": model_loss,
         "weight_mode": weight_mode,
-        "model_transform_mode": model_transform_mode,
         "best_epoch_events": best_epoch_events,
         "best_epoch_event": best_epoch_event,
     }
@@ -1172,9 +1165,6 @@ def _detect_hiercos_study_family(run_like: Mapping[str, Any], text: str) -> Opti
     model_name = model_name_raw.strip().lower() if isinstance(model_name_raw, str) else ""
     loss_raw = run_like.get("model_loss", None)
     loss_mode = loss_raw.strip().lower() if isinstance(loss_raw, str) else ""
-    transform_raw = run_like.get("model_transform_mode", None)
-    transform_mode = transform_raw.strip().lower() if isinstance(transform_raw, str) else ""
-
     looks_like_hiercos = (
         model_name == "hiercos"
         or "hiercos" in text
@@ -1184,15 +1174,6 @@ def _detect_hiercos_study_family(run_like: Mapping[str, Any], text: str) -> Opti
     )
     if not looks_like_hiercos:
         return None
-
-    if (
-        transform_mode == "final_only"
-        or "final_only" in text
-        or "final only" in text
-        or "final fixed" in text
-        or "fixed layer" in text
-    ):
-        return "hiercos_final_only"
 
     if loss_mode == "level_softmax_ce_reg" or "level_softmax_ce_reg" in text:
         return "hiercos_loss_level_softmax_ce_reg"
@@ -1259,8 +1240,6 @@ def _apply_semantic_color_gradients(run_data_by_dataset: Mapping[str, List[RunDa
         "hiercos_loss_global_softmax_ce_reg": ["#86efac", "#22c55e", "#166534"],
         # Hier-COS level-softmax CE + regularization family.
         "hiercos_loss_level_softmax_ce_reg": ["#fdba74", "#f97316", "#c2410c"],
-        # Hier-COS final fixed-layer ablation (`transform_mode=final_only`).
-        "hiercos_final_only": ["#c4b5fd", "#8b5cf6", "#5b21b6"],
         # HCC variants use a perceptually clear warm ramp instead of similar greens.
         "hcc": ["#f6d32d", "#f59e0b", "#ef4444", "#991b1b"],
         # Lexicographic runs use a green/teal ramp, separated from baseline blue and HCC warm colors.

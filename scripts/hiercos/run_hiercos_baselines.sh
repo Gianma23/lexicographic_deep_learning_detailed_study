@@ -7,7 +7,6 @@ set -euo pipefail
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
 # - model.projection.feature_dim=${FEATURE_DIM}
-# - model.transform_mode=full
 # - train.lexicographic.enabled=false
 # Default dataset: aircraft. Override DATASETS to select any supported subset.
 
@@ -23,7 +22,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
+LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
 FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-true}"
@@ -110,7 +109,7 @@ trap handle_exit EXIT
 # Each invocation selects one frame: identity, dense random, or block random.
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(aircraft cub200 cifar100)
+DATASETS=(cifar100)
 
 config_for_dataset() {
   case "$1" in
@@ -200,7 +199,6 @@ if [[ "$FEATURE_DIM" == "0" ]]; then
 else
   printf 'Projection feature dimension: %s\n' "$FEATURE_DIM"
 fi
-printf 'Transform mode: full\n'
 printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
@@ -213,7 +211,6 @@ for ds in "${DATASETS[@]}"; do
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
     "model.loss=$LOSS_MODE" \
     "model.weight_mode=$WEIGHT_MODE" \
-    "model.transform_mode=full" \
     "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
     "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
     "model.projection.feature_dim=$FEATURE_DIM" \

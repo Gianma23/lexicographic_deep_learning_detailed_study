@@ -45,8 +45,8 @@ run directory, work done by one notebook is reused by all the others — `all_me
 defaults to `RUN_EVALUATION = False` for that reason.
 
 Figures are written under `/scratch/g.saggini1/outputs/analysis/inference_analysis/<notebook>/`, as
-PDF for LaTeX plus PNG for previews, and each call prints a `figure` environment to paste into the
-thesis.
+PDF for LaTeX plus PNG for previews. Plotting calls print the saved paths but do not emit LaTeX
+figure environments.
 
 ## Shared code
 

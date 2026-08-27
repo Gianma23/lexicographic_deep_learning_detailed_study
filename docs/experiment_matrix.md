@@ -24,25 +24,24 @@ Convention used below:
 | 1 | Fixed frame | `model.fixed_frame_mode`, `model.fixed_frame_per_level` | `identity`, `orthonormal_block_random` (= random + per-level), `orthonormal_random` (dense) | [model.py:373-393](models/hiercos/model.py#L373-L393) |
 | 2 | Loss / softmax scope | `model.loss` | `kl_reg`, `global_softmax_ce_reg`, `level_softmax_ce_reg` | [losses.py](models/hiercos/losses.py) |
 | 3 | Level weighting | `model.weight_mode` | `equal`, `kl_leaf`, `kl_coarse` | [losses.py](models/hiercos/losses.py) |
-| 4 | Learnable transform | `model.transform_mode` | `full`, `bn_linear`, `final_only` | [model.py:343-347](models/hiercos/model.py#L343-L347) |
-| 5 | Gradient-space lex | `train.lexicographic.enabled` | `false`, `true` | [config.py:106-123](train/lexicographic/config.py#L106-L123) |
-| 5a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first` | [config.py:9](train/lexicographic/config.py#L9) |
-| 6 | LH-style projection | `model.projection.enabled` | `false`, `true` | [model.py:270](models/hiercos/model.py#L270) |
-| 6b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:142-145](models/hiercos/model.py#L142-L145) |
-| 6c | Feature width | `.feature_dim` | `0` (= total nodes), `512`, … | [model.py:290-317](models/hiercos/model.py#L290-L317) |
-| 7 | Output-space HCC | `hcc.enabled` | `false`, `true` | [config_validation.py:763](train/config_validation.py#L763) |
+| 4 | Gradient-space lex | `train.lexicographic.enabled` | `false`, `true` | [config.py:106-123](train/lexicographic/config.py#L106-L123) |
+| 4a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first` | [config.py:9](train/lexicographic/config.py#L9) |
+| 5 | LH-style projection | `model.projection.enabled` | `false`, `true` | [model.py:270](models/hiercos/model.py#L270) |
+| 5b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:142-145](models/hiercos/model.py#L142-L145) |
+| 5c | Feature width | `.feature_dim` | `0` (= total nodes), `512`, … | [model.py:290-317](models/hiercos/model.py#L290-L317) |
+| 6 | Output-space HCC | `hcc.enabled` | `false`, `true` | [config_validation.py:763](train/config_validation.py#L763) |
 
 HCC has no onset, α-schedule, or temperature axis: it is a binary switch, fully applied
 from the first batch whenever `hcc.enabled: true`. The former `alpha_schedule` /
 `alpha_start_epoch` / `temperature` ablation was removed from the codebase; runs recorded
 below as `step@0` are the retained arm, and `step@80` / `step@160` arms are historical
 only.
-| 8 | Backbone | `model.variant`, `model.pretrained`, `model.pool` | `haframe_wide_resnet` / `haframe_resnet50`; `true`/`false`; `max`/`average` | [model.py:349-366](models/hiercos/model.py#L349-L366) |
-| 9 | Dataset | `dataset.name` | `cifar-100`, `cub-200-2011`, `fgvc-aircraft` (iNat21 supported by the framework, no Hier-COS runs) | `configs/hiercos/` |
-| 10 | Seed | `train.seed` | 3 seeds default (`NUM_RUNS=3`) | `scripts/run_seed_utils.sh` |
+| 7 | Backbone | `model.variant`, `model.pretrained`, `model.pool` | `haframe_wide_resnet` / `haframe_resnet50`; `true`/`false`; `max`/`average` | [model.py:349-366](models/hiercos/model.py#L349-L366) |
+| 8 | Dataset | `dataset.name` | `cifar-100`, `cub-200-2011`, `fgvc-aircraft` (iNat21 supported by the framework, no Hier-COS runs) | `configs/hiercos/` |
+| 9 | Seed | `train.seed` | 3 seeds default (`NUM_RUNS=3`) | `scripts/run_seed_utils.sh` |
 
-Taking only axes 1–5 and 9 as a full factorial gives 3 × 3 × 3 × 3 × 3 × 3 = **729
-configurations per seed**, before any head variant. The factorial is not the plan; the
+Taking axes 1–4 and 8, with lex encoded as none/coarse-first/fine-first, gives
+3 × 3 × 3 × 3 × 3 = **243 configurations per seed**. The factorial is not the plan; the
 constraints below and the research questions in Part B cut it to roughly 60–80 configs
 that actually carry information.
 
@@ -126,9 +125,6 @@ crossed with frame. Plus one `hiercos_cifar100_per_level_kl_reg_baseline_equal`.
 **Level weights (`equal` vs `kl_leaf`)** — all three datasets, baseline and lex.
 `kl_coarse` appears in the script enum but I found no run directory for it.
 
-**Transform mode (`full` / `bn_linear` / `final_only`)** — all three datasets, mostly under
-lex; `run_hiercos_transform_ablation.sh`.
-
 **Lex variants** — `coarse_first` vs `fine_first` on all three datasets.
 
 **LH projection** — the PReLU derivative is now part of the method and always applied, and
@@ -155,13 +151,13 @@ on CIFAR-100), `hiercos_aircraft_..._fromscratch_...` vs pretrained.
 
 | Gap | Why it matters |
 |---|---|
-| No order-free lex control | Axis 5a only offers ordered modes, so "coarse-first helps" cannot be separated from "any projection helps"; see RQ4 |
+| No order-free lex control | Axis 4a only offers ordered modes, so "coarse-first helps" cannot be separated from "any projection helps"; see RQ4 |
 | `kl_coarse` never run | Leaves the weight axis one-sided; see RQ3 |
-| HCC on Hier-COS not run | RQ7 currently has no Hier-COS arm at all |
+| HCC on Hier-COS not run | RQ6 currently has no Hier-COS arm at all |
 | `advantage_enabled` never run | One of the two LH-projection sub-variants is untested |
 | No seed-matched lex × weight cross | The known `equal` / `kl_leaf` confound (RQ3) |
 | **No HCC × lex validation guard** | The pair is incoherent (A.2b) but currently accepted; an invalid run could be produced and analysed in good faith |
-| No LH vs. lex head-to-head at matched settings | RQ6's central comparison; the two implementations of one principle have not been run against each other on identical frame/loss/weights/seeds |
+| No LH vs. lex head-to-head at matched settings | RQ5's central comparison; the two implementations of one principle have not been run against each other on identical frame/loss/weights/seeds |
 
 ---
 
@@ -200,7 +196,7 @@ Reading the outcomes:
 
 Note the ladder is also load-bearing elsewhere: constraint 6 forces identity or
 block-diagonal whenever LH projection is on, so RQ1's middle rung is a prerequisite for
-RQ6, not an optional extra.
+RQ5, not an optional extra.
 
 Recorded caveat (memory: `hiercos-frame-headroom`): on CIFAR-100 the identity deficit
 behaves as a three-way interaction with `coarse_first` lex, visible as node-magnitude
@@ -268,7 +264,7 @@ Lex projects the per-level gradients so that higher-priority levels are protecte
 question is not only "does it help" but "does the lexicographic *structure* help, or is any
 gradient decorrelation enough?" [interp]
 
-Axis 5a supplies the ordering contrast:
+Axis 4a supplies the ordering contrast:
 
 | Arm | Role |
 |---|---|
@@ -292,21 +288,7 @@ intervention, not as a fine-tuning correction. HCC now matches that convention �
 active for the whole run whenever `hcc.enabled=true` — so neither mechanism carries an
 onset axis.
 
-## RQ5 — Does lex need a learnable transform to act on?
-
-`transform_mode`: `full` → `bn_linear` → `final_only` progressively removes the learnable
-transformation between backbone and fixed frame. At `final_only` there is no transform
-module in the optimizer path at all
-([model.py:456-460](models/hiercos/model.py#L456-L460)).
-
-This is a mechanism question, not a capacity question [interp]. Gradient projection acts on
-whatever parameters sit in the projected path. If lex's benefit shrinks as the transform
-shrinks, the effect is localized to the transform and lex is essentially shaping a learned
-re-embedding. If the benefit survives at `final_only`, lex is acting on the backbone itself
-and the claim is much stronger and more general — it would mean the method transfers to any
-architecture, which is what Part C is betting on.
-
-## RQ6 — One principle, two implementations: LH projection vs. lexicographic projection
+## RQ5 — One principle, two implementations: LH projection vs. lexicographic projection
 
 **These are not two complementary methods. They are the same idea implemented two ways.**
 Both enforce "do not let the finer objective disturb what the coarser objective already
@@ -331,7 +313,7 @@ graph is built, takes whatever three gradients come out, and orthogonalizes them
 Its cost is compute and the need to hold three gradients at once; its benefit is that the
 ordering holds by construction, over the whole objective, with no activation assumption.
 
-So RQ6 is not "do they stack" — they cannot. It is: **does the in-graph differentiable
+So RQ5 is not "do they stack" — they cannot. It is: **does the in-graph differentiable
 formulation buy the same ordering as explicit projection, more cheaply, or does its
 first-order/branch-point restriction cost real hierarchy consistency?** That is a
 head-to-head at matched frame, loss, weights, and seeds, scored primarily on TICE and AHD,
@@ -345,7 +327,7 @@ runs without it are superseded. `advantage_enabled` adds a parent-logit baseline
 `feature_dim` (512 vs. total nodes) sets how much room exists above the protected subspace,
 floored by constraint 7.
 
-## RQ7 — Output-space constraints (HCC) vs. gradient-space (lex)
+## RQ6 — Output-space constraints (HCC) vs. gradient-space (lex)
 
 This is the contrast that keeps the thesis honest about what "lexicographic" means. HCC
 constrains the *outputs* via an affine hierarchy projection; lex and LH constrain the
@@ -353,7 +335,7 @@ constrains the *outputs* via an affine hierarchy projection; lex and LH constrai
 `train.lexicographic.enabled` is set.
 
 Per A.2b the three mechanisms are pairwise exclusive, so the achievable cells are exactly
-**{none, HCC, LH, lex}**. RQ7 is therefore a clean between-arms comparison of an
+**{none, HCC, LH, lex}**. RQ6 is therefore a clean between-arms comparison of an
 output-space constraint against two gradient-space ones, all against a shared baseline —
 and the absence of combination arms is itself the result: hierarchy consistency can be
 bought in output space *or* in gradient space, but the two are not composable, because HCC
@@ -365,7 +347,7 @@ separates "the constraint improved the learned representation" from "the constra
 up the predictions." That is the cheapest and most decisive HCC control, and the whole
 HCC-on-Hier-COS family is currently unrun.
 
-## RQ8 — Backbone and pretraining as threats to validity
+## RQ7 — Backbone and pretraining as threats to validity
 
 `haframe_wide_resnet` (from scratch, CIFAR-native) vs. `haframe_resnet50` (ImageNet
 pretrained). This axis is not a contribution — it exists to bound the others [interp]. If the
@@ -376,7 +358,7 @@ Per AGENTS.md this is also where the local-extrapolation caveats belong: HRN on 
 Hier-COS on CUB, and this repo's CIFAR hierarchy construction are all deviations from the
 paper-aligned settings and must be reported separately from paper-matched rows.
 
-## RQ9 — Dataset generality
+## RQ8 — Dataset generality
 
 CIFAR-100 (coarse hierarchy, small images, scratch training), CUB-200 (fine-grained, shallow
 semantic spread), FGVC-Aircraft (fine-grained, genuinely hierarchical manufacturer→family→
@@ -429,7 +411,7 @@ It is therefore the right control precisely because it admits no arms: it holds 
 vary.
 
 ### The lex exclusion specifically
-Per RQ6, LH projection *is* the differentiable-layer implementation of what lex does by
+Per RQ5, LH projection *is* the differentiable-layer implementation of what lex does by
 explicit projection. LH-DNN already applies that mechanism natively at its branch points, so
 enabling lex on top would apply the same principle twice by two different routes — which is
 why the same pair is also rejected inside Hier-COS
@@ -469,7 +451,7 @@ LH-DNN is excluded (C.0). Requires exactly three levels; HRN additionally requir
 | HRN | **not run** — needs `level_conditional` |
 | HT-CapsNet | **not run** |
 
-That HCC and lex are supported on precisely the same four models is convenient: RQ7's
+That HCC and lex are supported on precisely the same four models is convenient: RQ6's
 output-space-vs-gradient-space comparison can in principle be run on every model that admits
 either, with LH-DNN as the untouched baseline throughout.
 
@@ -482,12 +464,12 @@ Ranked by information gained per GPU-hour, not by convenience:
    [config_validation.py:887-891](train/config_validation.py#L887-L891).
 1. **Close the RQ3 confound** — lex × {`equal`, `kl_leaf`} seed-matched, all three datasets.
    Re-interprets results you already have; adds no new mechanism. Highest value.
-2. **LH vs. lex head-to-head** (RQ6) — matched frame, loss, weights, seeds, plus the shared
+2. **LH vs. lex head-to-head** (RQ5) — matched frame, loss, weights, seeds, plus the shared
    `none` baseline. This is the thesis's central mechanistic claim: whether the in-graph
    differentiable formulation buys the same ordering as explicit projection. Requires
    `level_softmax_ce_reg` + identity frame on both arms, which the existing runs partly cover.
 3. **HCC on Hier-COS**, starting with the post-hoc inference notebook — cheapest decisive
-   control, and RQ7 currently has no Hier-COS data at all.
+   control, and RQ6 currently has no Hier-COS data at all.
 4. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a
    cross-architecture claim.
 5. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.

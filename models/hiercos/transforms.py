@@ -68,27 +68,12 @@ class NarrowResidualTransformationHead(nn.Module):
         return x
 
 
-def build_transformation_module(width: int, mode: str, owner: str = "Hier-COS") -> nn.Module:
-    if not isinstance(mode, str):
-        raise ValueError(f"{owner} transform mode must be a string.")
-    if mode == "full":
-        return nn.Sequential(
-            nn.BatchNorm1d(width),
-            NarrowResidualTransformationHead(
-                in_channels=width,
-                out_channels=width,
-                activation="prelu",
-            ),
-        )
-    if mode == "bn_linear":
-        return nn.Sequential(
-            nn.BatchNorm1d(width),
-            nn.Linear(width, width, bias=False),
-            get_activation("prelu", width),
-        )
-    if mode == "final_only":
-        return nn.Identity()
-    raise ValueError(
-        f"Unsupported {owner} transform_mode '{mode}'. "
-        "Expected one of ['full', 'bn_linear', 'final_only']."
+def build_transformation_module(width: int) -> nn.Module:
+    return nn.Sequential(
+        nn.BatchNorm1d(width),
+        NarrowResidualTransformationHead(
+            in_channels=width,
+            out_channels=width,
+            activation="prelu",
+        ),
     )

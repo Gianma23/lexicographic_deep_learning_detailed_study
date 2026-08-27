@@ -8,7 +8,6 @@ set -euo pipefail
 # - model.wide_depth / model.wide_widen_factor selected by WRN_SIZES
 # - model.loss=${LOSS_MODE}, model.weight_mode=${WEIGHT_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}, per-level=${FIXED_FRAME_PER_LEVEL}
-# - model.transform_mode=full
 # - one arm per entry in MECHANISMS (baseline / lex_coarse_first / lex_fine_first)
 # Three training seeds by default, matching the anchors' seed coverage.
 #
@@ -274,7 +273,6 @@ run_mechanism() {
     "model.variant=haframe_wide_resnet"
     "model.loss=$LOSS_MODE"
     "model.weight_mode=$WEIGHT_MODE"
-    "model.transform_mode=full"
     "model.fixed_frame_mode=$FIXED_FRAME_MODE"
     "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL"
     "model.wide_depth=$depth"
@@ -307,7 +305,6 @@ printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
 printf 'Fixed frame per level: %s\n' "$FIXED_FRAME_PER_LEVEL"
-printf 'Transform mode: full\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"

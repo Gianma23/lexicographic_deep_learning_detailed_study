@@ -5,7 +5,7 @@ set -euo pipefail
 # - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
 # - model.weight_mode=${WEIGHT_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - model.transform_mode=full
+# - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
 # - train.lexicographic.enabled=true
 # - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
 # Defaults: aircraft/cub200/cifar100 with coarse_first. Environment matrices
@@ -23,9 +23,10 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
-WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
+LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
+WEIGHT_MODE="${WEIGHT_MODE:-equal}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
+FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-true}"
 
 case "$LOSS_MODE" in
   global_softmax_ce_reg|level_softmax_ce_reg) ;;
@@ -54,6 +55,22 @@ case "$FIXED_FRAME_MODE" in
     ;;
 esac
 
+case "$FIXED_FRAME_PER_LEVEL" in
+  0|1|true|false|True|False) ;;
+  *)
+    echo "Unsupported FIXED_FRAME_PER_LEVEL: $FIXED_FRAME_PER_LEVEL" >&2
+    echo "Expected 0, 1, true, or false." >&2
+    exit 1
+    ;;
+esac
+normalize_bool_like "$FIXED_FRAME_PER_LEVEL" FIXED_FRAME_PER_LEVEL_OVERRIDE
+
+if [[ "$FIXED_FRAME_MODE" == "identity" && "$FIXED_FRAME_PER_LEVEL_OVERRIDE" == "true" ]]; then
+  echo "FIXED_FRAME_PER_LEVEL=true is redundant with FIXED_FRAME_MODE=identity." >&2
+  echo "Use FIXED_FRAME_MODE=identity FIXED_FRAME_PER_LEVEL=false." >&2
+  exit 1
+fi
+
 kill_running_jobs() {
   jobs -pr | xargs -r kill 2>/dev/null || true
 }
@@ -81,11 +98,13 @@ trap handle_exit EXIT
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hiercos/run_hiercos_lex.sh
 #   LOSS_MODE=level_softmax_ce_reg WEIGHT_MODE=kl_leaf FIXED_FRAME_MODE=identity \
 #     ./scripts/hiercos/run_hiercos_lex.sh
+#   FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=true \
+#     ./scripts/hiercos/run_hiercos_lex.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cifar100 aircraft cub200" DATASETS \
+parse_choice_list DATASETS "cifar100" DATASETS \
   cifar100 cub200 aircraft
-parse_choice_list LEX_PROJECTION_MODES "fine_first" LEX_PROJECTION_MODES \
+parse_choice_list LEX_PROJECTION_MODES "coarse_first" LEX_PROJECTION_MODES \
   coarse_first fine_first
 
 config_for_dataset() {
@@ -158,7 +177,9 @@ run_output_dir() {
   if [[ "$WEIGHT_MODE" != "equal" ]]; then
     weight_suffix="_${WEIGHT_MODE}"
   fi
-  if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
+  if [[ "$FIXED_FRAME_PER_LEVEL_OVERRIDE" == "true" ]]; then
+    frame_suffix="_block"
+  elif [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
   echo "$OUTPUTS_ROOT/hiercos_${ds}_${LOSS_MODE}_lex_${projection_mode}${weight_suffix}${frame_suffix}"
@@ -170,7 +191,7 @@ printf 'Lex projection modes: %s\n' "${LEX_PROJECTION_MODES[*]}"
 printf 'Loss: %s\n' "$LOSS_MODE"
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
-printf 'Transform mode: full\n'
+printf 'Fixed frame per level: %s\n' "$FIXED_FRAME_PER_LEVEL_OVERRIDE"
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -183,8 +204,8 @@ for ds in "${DATASETS[@]}"; do
     run_seeded_train "$cfg" "$(run_output_dir "$ds" "$lex_mode")" \
       "model.loss=$LOSS_MODE" \
       "model.weight_mode=$WEIGHT_MODE" \
-      "model.transform_mode=full" \
       "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
+      "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
       "train.lexicographic.enabled=true" \
       "train.lexicographic.projection_mode=$lex_mode" \
       "train.gradient_blocks=[p123]"

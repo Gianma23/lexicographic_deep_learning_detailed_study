@@ -3,11 +3,12 @@ set -euo pipefail
 
 # Runs Hier-COS with an LH-style projection after the complete transform:
 # - the original PReLU activations are retained
-# - full transform mode retains both residual skips
+# - the residual transform retains both skips
 # - a shared terminal PReLU is always inserted and the projection uses the
 #   LH-DNN form A[b]=[W_1; ...; W_(l-1)] * rho'(k[b])
 # - each projected level uses a learnable FC head
-# - the three FC outputs remain independent under the identity fixed frame
+# - the three FC outputs remain independent under an identity or per-level
+#   block-random fixed frame
 # - LH-DNN advantage baselines are selected by ADVANTAGE_ENABLED
 # - model.loss=level_softmax_ce_reg
 # - model.projection.enabled=true
@@ -15,8 +16,6 @@ set -euo pipefail
 # - model.weight_beta=${WEIGHT_BETA} when cumulative_branching is selected
 # - model.projection.feature_dim=${FEATURE_DIM}
 # - model.projection.eps=${PROJECTION_EPS}
-# - model.transform_mode selected by TRANSFORM_MODES (full is left out of the
-#   output directory name; other modes are appended as a suffix)
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
 # - train.lexicographic.enabled=false
 #
@@ -25,8 +24,8 @@ set -euo pipefail
 #   DATASETS="cub200 aircraft" NUM_RUNS=3 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   ADVANTAGE_ENABLED=true DATASETS=cifar100 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   FIXED_FRAME_MODE=identity DATASETS=cub200 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
-#   TRANSFORM_MODES=bn_linear DATASETS=cifar100 ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
-#   TRANSFORM_MODES="full bn_linear final_only" ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
+#   FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=true DATASETS=cub200 \
+#     ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 #   WEIGHT_MODE=cumulative_branching WEIGHT_BETA=0.5 DATASETS="cub200 aircraft" \
 #     ./scripts/hiercos/run_hiercos_lhdnn_projection.sh
 
@@ -45,7 +44,7 @@ MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 WEIGHT_BETA="${WEIGHT_BETA:-0.5}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
-TRANSFORM_MODES="${TRANSFORM_MODES:-full}"
+FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-false}"
 FEATURE_DIM="${FEATURE_DIM:-0}"
 PROJECTION_EPS="${PROJECTION_EPS:-1.0e-6}"
 ADVANTAGE_ENABLED="${ADVANTAGE_ENABLED:-false}"
@@ -66,13 +65,34 @@ if [[ "$WEIGHT_MODE" == "cumulative_branching" && ! "$WEIGHT_BETA" =~ ^[0-9]+([.
 fi
 
 case "$FIXED_FRAME_MODE" in
-  identity) ;;
+  orthonormal_random|identity) ;;
   *)
     echo "Unsupported FIXED_FRAME_MODE: $FIXED_FRAME_MODE" >&2
-    echo "Expected identity for this independent-head LH-DNN runner." >&2
+    echo "Expected orthonormal_random or identity." >&2
     exit 1
     ;;
 esac
+
+case "$FIXED_FRAME_PER_LEVEL" in
+  0|1|true|false|True|False) ;;
+  *)
+    echo "Unsupported FIXED_FRAME_PER_LEVEL: $FIXED_FRAME_PER_LEVEL" >&2
+    echo "Expected 0, 1, true, or false." >&2
+    exit 1
+    ;;
+esac
+normalize_bool_like "$FIXED_FRAME_PER_LEVEL" FIXED_FRAME_PER_LEVEL_OVERRIDE
+
+if [[ "$FIXED_FRAME_MODE" == "identity" && "$FIXED_FRAME_PER_LEVEL_OVERRIDE" == "true" ]]; then
+  echo "FIXED_FRAME_PER_LEVEL=true is redundant with FIXED_FRAME_MODE=identity." >&2
+  echo "Use FIXED_FRAME_MODE=identity FIXED_FRAME_PER_LEVEL=false." >&2
+  exit 1
+fi
+
+if [[ "$FIXED_FRAME_MODE" == "orthonormal_random" && "$FIXED_FRAME_PER_LEVEL_OVERRIDE" != "true" ]]; then
+  echo "FIXED_FRAME_MODE=orthonormal_random requires FIXED_FRAME_PER_LEVEL=true in this independent-head LH-DNN runner." >&2
+  exit 1
+fi
 
 if [[ ! "$FEATURE_DIM" =~ ^[0-9]+$ ]]; then
   echo "Unsupported FEATURE_DIM: $FEATURE_DIM" >&2
@@ -121,8 +141,6 @@ OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environmen
 
 parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
   cifar100 cub200 aircraft
-parse_choice_list TRANSFORM_MODES "full" TRANSFORM_MODES \
-  full bn_linear final_only
 
 config_for_dataset() {
   case "$1" in
@@ -188,9 +206,7 @@ run_train() {
 
 run_output_dir() {
   local ds="$1"
-  local transform_mode="$2"
   local weight_suffix=""
-  local transform_suffix=""
   local frame_suffix=""
   local advantage_suffix=""
   local dimension_suffix=""
@@ -204,27 +220,26 @@ run_output_dir() {
     local beta_tag="${WEIGHT_BETA//./p}"
     weight_suffix="${weight_suffix}_beta${beta_tag}"
   fi
-  if [[ "$transform_mode" != "full" ]]; then
-    transform_suffix="_${transform_mode}"
-  fi
-  if [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
+  if [[ "$FIXED_FRAME_PER_LEVEL_OVERRIDE" == "true" ]]; then
+    frame_suffix="_block"
+  elif [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
     frame_suffix="_identity"
   fi
   if [[ "$ADVANTAGE_ENABLED" == "true" ]]; then
     advantage_suffix="_advantage"
   fi
-  echo "$OUTPUTS_ROOT/hiercos_${ds}_level_softmax_ce_reg_projection${dimension_suffix}${weight_suffix}${transform_suffix}${frame_suffix}${advantage_suffix}"
+  echo "$OUTPUTS_ROOT/hiercos_${ds}_level_softmax_ce_reg_projection${dimension_suffix}${weight_suffix}${frame_suffix}${advantage_suffix}"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
-printf 'Transform modes: %s\n' "${TRANSFORM_MODES[*]}"
 printf 'Loss: level_softmax_ce_reg\n'
 printf 'Weight mode: %s\n' "$WEIGHT_MODE"
 if [[ "$WEIGHT_MODE" == "cumulative_branching" ]]; then
   printf 'Cumulative branching beta: %s\n' "$WEIGHT_BETA"
 fi
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
+printf 'Fixed frame per level: %s\n' "$FIXED_FRAME_PER_LEVEL_OVERRIDE"
 printf 'LH-style stacked-weight projection: enabled\n'
 printf 'Projected transform: original PReLU activations and residual skips\n'
 printf 'Shared terminal PReLU/rho derivative: always applied\n'
@@ -249,21 +264,18 @@ fi
 for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
 
-  for transform_mode in "${TRANSFORM_MODES[@]}"; do
-    run_seeded_train "$cfg" "$(run_output_dir "$ds" "$transform_mode")" \
-      "model.loss=level_softmax_ce_reg" \
-      "model.weight_mode=$WEIGHT_MODE" \
-      "${weight_beta_args[@]}" \
-      "model.transform_mode=$transform_mode" \
-      "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
-      "model.fixed_frame_per_level=false" \
-      "model.projection.enabled=true" \
-      "model.projection.advantage_enabled=$ADVANTAGE_ENABLED" \
-      "model.projection.feature_dim=$FEATURE_DIM" \
-      "model.projection.eps=$PROJECTION_EPS" \
-      "train.lexicographic.enabled=false" \
-      "train.gradient_blocks=[p123]"
-  done
+  run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
+    "model.loss=level_softmax_ce_reg" \
+    "model.weight_mode=$WEIGHT_MODE" \
+    "${weight_beta_args[@]}" \
+    "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
+    "model.fixed_frame_per_level=$FIXED_FRAME_PER_LEVEL_OVERRIDE" \
+    "model.projection.enabled=true" \
+    "model.projection.advantage_enabled=$ADVANTAGE_ENABLED" \
+    "model.projection.feature_dim=$FEATURE_DIM" \
+    "model.projection.eps=$PROJECTION_EPS" \
+    "train.lexicographic.enabled=false" \
+    "train.gradient_blocks=[p123]"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

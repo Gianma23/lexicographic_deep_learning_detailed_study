@@ -113,7 +113,6 @@ class HierCosModel(nn.Module):
         num_classes_per_level: List[int],
         taxonomy: Optional[Dict[str, Any]],
         variant: str = "haframe_resnet50",
-        transform_mode: str = "full",
         pretrained: bool = True,
         pool: str = "max",
         backbone_lr_scale: float = 0.1,
@@ -215,15 +214,6 @@ class HierCosModel(nn.Module):
             raise ValueError("Hier-COS `model.variant` must be a string.")
         self.variant = variant
 
-        if not isinstance(transform_mode, str):
-            raise ValueError("Hier-COS `model.transform_mode` must be a string.")
-        self.transform_mode = transform_mode
-        if self.transform_mode not in {"full", "bn_linear", "final_only"}:
-            raise ValueError(
-                f"Unsupported Hier-COS model.transform_mode '{self.transform_mode}'. "
-                "Expected one of ['full', 'bn_linear', 'final_only']."
-            )
-
         if self.variant == "haframe_wide_resnet":
             self.backbone = _WideResNetNodeBackbone(
                 out_dim=self.feature_dim,
@@ -243,11 +233,7 @@ class HierCosModel(nn.Module):
                 "Expected one of ['haframe_wide_resnet', 'haframe_resnet50']."
             )
 
-        self.f_theta = build_transformation_module(
-            self.feature_dim,
-            mode=self.transform_mode,
-            owner="Hier-COS model",
-        )
+        self.f_theta = build_transformation_module(self.feature_dim)
         self.fixed_frame_mode = "orthonormal_random" if fixed_frame_mode == "orthonormal_block_random" else fixed_frame_mode
         self.fixed_frame_per_level = (
             parse_bool(fixed_frame_per_level, default=False)
@@ -327,11 +313,7 @@ class HierCosModel(nn.Module):
         transform_lr = float(base_lr) * float(transform_scale)
 
         backbone_params = [p for p in self.backbone.parameters() if p.requires_grad]
-        transform_params = (
-            [p for p in self.f_theta.parameters() if p.requires_grad]
-            if self.transform_mode != "final_only"
-            else []
-        )
+        transform_params = [p for p in self.f_theta.parameters() if p.requires_grad]
         transform_params.extend(
             p for p in self.projection_rho.parameters() if p.requires_grad
         )
@@ -463,7 +445,7 @@ class HierCosModel(nn.Module):
     def forward(self, x: torch.Tensor) -> Dict[str, Any]:
         z = self.backbone(x)
         if self.projection_enabled:
-            transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
+            transformed = self.f_theta(z)
             projected_features = self.projection_rho(transformed)
             negative_slope = self.projection_rho.weight.detach().to(
                 device=transformed.device,
@@ -484,7 +466,7 @@ class HierCosModel(nn.Module):
                 torch.split(node_logits, self.num_classes_per_level, dim=1)
             )
         else:
-            transformed = self.f_theta(z) if self.transform_mode != "final_only" else z
+            transformed = self.f_theta(z)
             node_logits = self.fixed_classifier(transformed)
             if isinstance(self.fixed_classifier, FrozenBlockDiagonalClassifier):
                 node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))

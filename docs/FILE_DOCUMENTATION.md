@@ -127,8 +127,8 @@ fatal errors.
   path-overlap counts, and level path weights.
 - `models/hiercos/fixed_frame.py` — fixed identity/random orthonormal
   classifiers.
-- `models/hiercos/transforms.py` — full, BN-linear, and final-only
-  transformations.
+- `models/hiercos/transforms.py` — residual feature transformation used before
+  the fixed classifier.
 - `models/hiercos/config.py` — small Hier-COS config parsing helpers.
 
 ## Training and evaluation
@@ -199,17 +199,17 @@ Runtime modules:
   and lexicographic studies with unit level weights.
 - `scripts/hrn/` — base and native level-marginal lexicographic studies.
 - `scripts/hiercos/` — decomposed-loss baselines, lexicographic priority modes,
-  transform ablation, the LH-projected learnable-head study, and the
-  direct-subspace supervision launcher.
+  the LH-projected learnable-head study, and the direct-subspace supervision
+  launcher.
 - `scripts/stage_thesis_figures.py` — stages the selected baseline and
   direct-subspace analysis PDFs under `docs/images/experiments/` and removes
   raster duplicates from those destination directories.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
   nesting migration.
 
-Runner matrices are overridable using `DATASETS`, `LEX_PROJECTION_MODE(S)`, and
-`TRANSFORM_MODES`, depending on the script. Current
-narrow defaults are printed during `DRY_RUN`. Lexicographic run directories are
+Runner matrices are overridable using `DATASETS` and
+`LEX_PROJECTION_MODE(S)`, depending on the script. Current narrow defaults are
+printed during `DRY_RUN`. Lexicographic run directories are
 named `<model>_<dataset>[_<loss>]_lex_<mode>[...]`.
 
 ## Grid search

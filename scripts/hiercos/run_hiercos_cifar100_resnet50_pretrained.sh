@@ -9,7 +9,6 @@ set -euo pipefail
 # - model.pretrained=${PRETRAINED_MODE}
 # - model.pool=average
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - model.transform_mode=full
 # - dataset.image_size=${IMAGE_SIZE}
 # - train.lexicographic.enabled=false
 # Three training seeds are used by default. Override the scalar mode variables
@@ -242,7 +241,6 @@ else
 fi
 printf 'Pretrained: %s\n' "$PRETRAINED_MODE"
 printf 'Fixed frame mode: %s\n' "$FIXED_FRAME_MODE"
-printf 'Transform mode: full\n'
 printf 'Image size: %s\n' "$IMAGE_SIZE"
 printf 'Lexicographic mode: disabled\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
@@ -257,7 +255,6 @@ run_seeded_train "$CONFIG" "$(run_output_dir)" \
   "model.pretrained=$PRETRAINED_MODE" \
   "model.pool=average" \
   "model.fixed_frame_mode=$FIXED_FRAME_MODE" \
-  "model.transform_mode=full" \
   "dataset.image_size=$IMAGE_SIZE" \
   "dataset.transforms.manual.resize_before_crop=true" \
   "dataset.transforms.manual.resize_before_crop_size=$IMAGE_SIZE" \
