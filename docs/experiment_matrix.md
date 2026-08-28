@@ -27,7 +27,7 @@ Convention used below:
 | 4 | Gradient-space lex | `train.lexicographic.enabled` | `false`, `true` | [config.py:106-123](train/lexicographic/config.py#L106-L123) |
 | 4a | Lex priority order | `.projection_mode` | `coarse_first`, `fine_first` | [config.py:9](train/lexicographic/config.py#L9) |
 | 5 | LH-style projection | `model.projection.enabled` | `false`, `true` | [model.py:270](models/hiercos/model.py#L270) |
-| 5b | Parent advantage | `.advantage_enabled` | `false`, `true` | [model.py:142-145](models/hiercos/model.py#L142-L145) |
+| 5b | Parent advantage | `.advantage_enabled` | `false`, `true` (recursive detached parent scores after fixed-frame absolute value) | [model.py](models/hiercos/model.py) |
 | 5c | Feature width | `.feature_dim` | `0` (= total nodes), `512`, … | [model.py:290-317](models/hiercos/model.py#L290-L317) |
 | 6 | Output-space HCC | `hcc.enabled` | `false`, `true` | [config_validation.py:763](train/config_validation.py#L763) |
 
@@ -325,7 +325,8 @@ Sub-axes on the LH side probe exactly where its guarantee is thin. The PReLU der
 that makes the protected subspace sample-dependent
 ([model.py:373-392](models/hiercos/model.py#L373-L392)) is no longer one of them: it is
 part of the method and is always applied, so the former `rho_enabled` axis is gone and
-runs without it are superseded. `advantage_enabled` adds a parent-logit baseline (untested);
+runs without it are superseded. `advantage_enabled` recursively adds detached
+parent scores after the per-level fixed frame and absolute value (untested);
 `feature_dim` (512 vs. total nodes) sets how much room exists above the protected subspace,
 floored by constraint 7.
 

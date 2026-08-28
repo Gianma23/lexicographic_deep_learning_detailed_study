@@ -295,9 +295,14 @@ subspace is sample-dependent. The PReLU derivative is part of the LH method and
 is always applied; there is no config switch for it, and the earlier
 batch-shared `A` variant has been removed. The launcher names these runs
 `projection`.
-Set `model.projection.advantage_enabled: true` to additionally propagate
-detached parent-class logits as LH-DNN advantage baselines. This path requires
-`model.loss: level_softmax_ce_reg`.
+Set `model.projection.advantage_enabled: true` to build a local Hier-COS
+score-space advantage. After the per-level fixed frame, the model takes the
+absolute node coordinates used by the level loss and recursively adds the
+detached parent score to every child. Cross-entropy and both evaluation
+decoders consume these advantage scores; the Hier-COS regularizer remains on
+the native absolute coordinates. The scores are not fed back through the
+taxonomy-subspace norms, which would count parent evidence again. This path
+requires `model.loss: level_softmax_ce_reg`.
 
 Direct subspace-norm supervision is enabled with
 `train.subspace_supervision.enabled: true`. It replaces the model's native loss

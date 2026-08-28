@@ -353,14 +353,45 @@ class HierCosModel(nn.Module):
     def _subspace_path_overlap(self) -> List[torch.Tensor]:
         return [getattr(self, name) for name in self.subspace_path_overlap_names]
 
-    def _parent_baseline(self, level: int, previous_logits: torch.Tensor) -> torch.Tensor:
+    def _parent_baseline(self, level: int, previous_scores: torch.Tensor) -> torch.Tensor:
         if level <= 0:
             raise ValueError("Hier-COS advantage is defined only for levels greater than zero.")
         buffer_name = self.parent_index_buffer_names[level]
         if buffer_name is None:
             raise RuntimeError(f"Missing Hier-COS advantage parent indices for level {level}.")
-        parent_index = getattr(self, buffer_name).to(device=previous_logits.device)
-        return previous_logits.index_select(dim=1, index=parent_index)
+        parent_index = getattr(self, buffer_name).to(device=previous_scores.device)
+        return previous_scores.index_select(dim=1, index=parent_index)
+
+    def _advantage_scores_per_level(
+        self,
+        node_logits_per_level: List[torch.Tensor],
+    ) -> List[torch.Tensor]:
+        """Build the recursive detached advantage on post-frame magnitudes.
+
+        Hier-COS trains its projected level branches through the absolute
+        fixed-frame coordinates.  The advantage therefore belongs in this
+        score space, rather than in the signed pre-frame branch coordinates.
+        Detaching the expanded parent score keeps each level's loss from
+        updating earlier branches, as in LH-DNN.
+        """
+        if len(node_logits_per_level) != self.depth:
+            raise ValueError(
+                "Hier-COS advantage requires fixed-frame node logits aligned "
+                f"with hierarchy depth; expected {self.depth}, found "
+                f"{len(node_logits_per_level)}."
+            )
+
+        scores_per_level: List[torch.Tensor] = []
+        for level, node_logits_level in enumerate(node_logits_per_level):
+            native_scores = node_logits_level.abs()
+            if level > 0:
+                parent_scores = self._parent_baseline(
+                    level=level,
+                    previous_scores=scores_per_level[level - 1].detach(),
+                )
+                native_scores = native_scores + parent_scores
+            scores_per_level.append(native_scores)
+        return scores_per_level
 
     @staticmethod
     def _compute_projection_component(
@@ -434,11 +465,6 @@ class HierCosModel(nn.Module):
                 )
                 if head.bias is not None:
                     logits_level = logits_level + head.bias
-                if self.advantage_enabled and level > 0:
-                    logits_level = logits_level + self._parent_baseline(
-                        level=level,
-                        previous_logits=logits_per_level[level - 1].detach(),
-                    )
                 logits_per_level.append(logits_level)
         return logits_per_level
 
@@ -472,10 +498,29 @@ class HierCosModel(nn.Module):
                 node_logits_per_level = list(torch.split(node_logits, self.num_classes_per_level, dim=1))
             else:
                 node_logits_per_level = None
-        # Match upstream Hier-COS inference: `get_distances` returns the
-        # projection norm for every taxonomy subspace and predictions are made
-        # directly from those scores.  Do not softmax the subspace scores here.
-        logits_per_level = self._level_subspace_scores(node_logits)
+        # Match upstream Hier-COS inference when advantage is off:
+        # `get_distances` returns the projection norm for every taxonomy
+        # subspace. Keep this native readout available even when the local
+        # score-space advantage is active.
+        subspace_scores_per_level = self._level_subspace_scores(node_logits)
+        advantage_scores_per_level = (
+            self._advantage_scores_per_level(node_logits_per_level)
+            if self.advantage_enabled and node_logits_per_level is not None
+            else None
+        )
+        if self.advantage_enabled and advantage_scores_per_level is None:
+            raise RuntimeError(
+                "Hier-COS advantage requires independent fixed-frame logits for every level."
+            )
+
+        # The advantage variant is trained and decoded from the same recursive
+        # post-absolute scores. Do not feed them back into the taxonomy
+        # subspace-norm readout, which would count the parent baseline again.
+        logits_per_level = (
+            advantage_scores_per_level
+            if advantage_scores_per_level is not None
+            else subspace_scores_per_level
+        )
 
         # Every fixed classifier returns one node coordinate per taxonomy node,
         # ordered in contiguous coarse->fine level blocks. HCC can therefore
@@ -501,8 +546,9 @@ class HierCosModel(nn.Module):
         level_node_ids = self._level_node_ids()
         return {
             "logits_per_level": logits_per_level,
-            SUBSPACE_SCORES_KEY: logits_per_level,
+            SUBSPACE_SCORES_KEY: subspace_scores_per_level,
             SUBSPACE_PATH_OVERLAP_KEY: self._subspace_path_overlap(),
+            "advantage_scores_per_level": advantage_scores_per_level,
             "effective_logits_per_level": effective_logits_per_level,
             "leaf_logits": logits_per_level[-1],
             "node_logits": node_logits,

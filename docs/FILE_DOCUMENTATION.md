@@ -117,9 +117,10 @@ fatal errors.
 - `models/hiercos/model.py` — fixed-frame node-space model with WideResNet or
   ResNet-50 backbone, optional LH-projected learnable level heads reading the
   transform output directly or through an LH-DNN-style shared PReLU/rho
-  derivative, detached advantage baselines, an independent identity or
-  per-level block-diagonal fixed frame, and non-persistent path-overlap tables
-  exposed through the shared supervision contract.
+  derivative, recursive detached parent baselines on post-frame absolute
+  scores, an independent identity or per-level block-diagonal fixed frame, and
+  non-persistent path-overlap tables exposed through the shared supervision
+  contract.
 - `models/hiercos/factory.py` — Hier-COS model config adapter.
 - `models/hiercos/losses.py` — `kl_reg`, `global_softmax_ce_reg`, and
   `level_softmax_ce_reg` objectives.

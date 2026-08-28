@@ -2377,19 +2377,78 @@ point changes consistency, measured primarily through TICE and AHD.
 \centering
 \caption{LH-projection against lexicographic mode on Hier-COS, at matched
 backbone, frame, loss, weighting and seeds. The priority is imposed inside the
-computational graph in the former and on the assembled gradient in the latter.}
+computational graph in the former and on the assembled gradient in the latter.
+All rows use the per-level softmax and the far rung of
+\cref{ssec:results_frame}: the per-level block-diagonal frame on CIFAR-100 and
+the identity frame on CUB-200-2011 and FGVC-Aircraft. All arms carry the same
+leaf-heavy coefficients (\texttt{kl\_leaf}). The LH arm is at representation
+width $D=\sum_l C_l$, the only width run on all three datasets; the width axis
+is separated in \cref{ssec:results_lhproj_variants}. Top-down columns are read
+from the top-down-selected checkpoint and independent columns from the
+independent-selected one (\S\ref{ssec:design_checkpoints}). Best per dataset in bold,
+second underlined; $\mathrm{Acc}_3$ and FPA are higher-is-better, AHD and TICE
+lower-is-better.}
 \label{tab:results_lhproj}
 \experimenttablesetup
+\footnotesize
 \begin{tabularx}{\linewidth}{@{}L{2.0cm}L{4.0cm}CCCCC@{}}
 \toprule
-\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
+\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}\uparrow$ & $\mathrm{FPA}^{\text{t.d.}}\uparrow$ & $\mathrm{AHD}^{\text{t.d.}}\downarrow$ & $\mathrm{TICE}^{\text{ind}}\downarrow$ & $n$ \\
 \midrule
-\tbd & baseline                 & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\tbd & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\tbd & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+CIFAR-100 & baseline                 & \baselinemeanstd{\mathbf{78.09}}{0.22} & \baselinemeanstd{\mathbf{77.89}}{0.21} & \baselinemeanstd{\mathbf{0.436}}{0.006} & \baselinemeanstd{\mathbf{0.87}}{0.06} & 3 \\
+          & LH-projection (in-graph) & \baselinemeanstd{76.75}{0.14} & \baselinemeanstd{76.68}{0.06} & \baselinemeanstd{0.469}{0.004} & \baselinemeanstd{\underline{1.08}}{0.11} & 3 \\
+          & lexicographic (explicit) & \baselinemeanstd{\underline{76.92}}{0.08} & \baselinemeanstd{\underline{76.96}}{0.18} & \baselinemeanstd{\underline{0.462}}{0.004} & \baselinemeanstd{1.21}{0.14} & 3 \\
+\midrule
+CUB-200   & baseline                 & \baselinemeanstd{\underline{76.55}}{0.33} & \baselinemeanstd{\underline{76.52}}{0.34} & \baselinemeanstd{\mathbf{0.354}}{0.006} & \baselinemeanstd{\underline{0.23}}{0.09} & 3 \\
+          & LH-projection (in-graph) & \baselinemeanstd{76.10}{0.20} & \baselinemeanstd{76.09}{0.29} & \baselinemeanstd{0.356}{0.003} & \baselinemeanstd{0.70}{0.10} & 3 \\
+          & lexicographic (explicit) & \baselinemeanstd{\mathbf{76.84}}{0.12} & \baselinemeanstd{\mathbf{76.78}}{0.14} & \baselinemeanstd{\mathbf{0.354}}{0.001} & \baselinemeanstd{\mathbf{0.20}}{0.05} & 3 \\
+\midrule
+Aircraft  & baseline                 & \baselinemeanstd{\mathbf{82.53}}{0.44} & \baselinemeanstd{\mathbf{82.54}}{0.50} & \baselinemeanstd{\mathbf{0.353}}{0.012} & \baselinemeanstd{\underline{0.32}}{0.09} & 3 \\
+          & LH-projection (in-graph) & \baselinemeanstd{79.71}{0.70} & \baselinemeanstd{79.59}{0.76} & \baselinemeanstd{0.399}{0.019} & \baselinemeanstd{0.72}{0.31} & 3 \\
+          & lexicographic (explicit) & \baselinemeanstd{\underline{81.44}}{1.47} & \baselinemeanstd{\underline{81.42}}{1.52} & \baselinemeanstd{\underline{0.380}}{0.032} & \baselinemeanstd{\mathbf{0.23}}{0.05} & 3 \\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+Deltas below are per-seed differences against the matched baseline, reported as
+mean $\pm$ sample standard deviation of those differences over the three shared
+seeds. Neither locus improves on the unmodified arm on CIFAR-100 or
+FGVC-Aircraft. On CIFAR-100 the explicit arm costs $0.93\pm0.05$~pp of top-down
+FPA and raises TICE by $0.34\pm0.14$~pp; the in-graph arm costs
+$1.21\pm0.22$~pp and raises TICE by $0.21\pm0.17$~pp. On FGVC-Aircraft the
+explicit arm loses $1.12\pm1.37$~pp of top-down FPA and is therefore not
+separated from its baseline, while the in-graph arm loses $2.95\pm0.36$~pp,
+which is. CUB-200-2011 is the one dataset on which the explicit arm is not
+below its baseline: it gains $0.26\pm0.20$~pp of top-down FPA and lowers TICE by
+$0.03\pm0.06$~pp. Neither difference is separated from zero, so the reading
+supported here is that lexicographic mode is free on CUB-200-2011, not that it
+is beneficial.
+
+The ordering between the two loci is the same on all three datasets: the
+explicit arm is above the in-graph arm on top-down FPA by $0.28\pm0.20$,
+$0.69\pm0.37$ and $1.83\pm1.04$~pp on CIFAR-100, CUB-200-2011 and
+FGVC-Aircraft respectively, and below it on TICE on the latter two
+($-0.49\pm0.06$ and $-0.49\pm0.31$~pp). The in-graph arm raises TICE on every
+dataset, by $0.21\pm0.17$, $0.47\pm0.09$ and $0.40\pm0.39$~pp, though only the
+CUB-200-2011 increase is clear of its seed dispersion. Restricting the
+formulation to the branch point therefore does not buy the consistency this
+comparison was set up to test. Since neither mechanism is active at inference,
+these are changes in what was learned rather than in how the scores are read,
+and the gradient diagnostics of \cref{ssec:results_lex_diag} are where that is
+resolved.
+
+Two qualifications bound the in-graph rows specifically. The width reported here
+is the one available on all three datasets, and it is closest to the
+condition~4 bound on FGVC-Aircraft ($D=200$ against $100$ non-leaf classes),
+which is also where the deficit is largest; \cref{ssec:results_lhproj_variants}
+separates that axis and should be read before the row is attributed to the
+projection operator. Second, as stated in the section preamble, enabling the
+projection also enables the learnable per-level heads and the terminal PReLU, so
+each in-graph row identifies the complete adaptation package. No arm in this
+table is compared against the dense-frame, globally normalised baseline of
+\cref{sec:results_baselines}, and the CIFAR-100 row is read at the
+block-diagonal frame because no unmodified per-level-softmax identity run exists
+for that dataset.
 
 \subsection{Level weighting and relative gradient scale}
 \label{ssec:results_lex_scaling}

@@ -235,6 +235,27 @@ def _validate_effective_node_logits_per_level(
     )
 
 
+def _validate_advantage_scores_per_level(
+    output: Dict[str, Any],
+    level_node_ids: List[torch.Tensor],
+    num_levels: int,
+) -> Optional[List[torch.Tensor]]:
+    """Validate the optional post-absolute score stream used by advantage."""
+    advantage_scores = output.get("advantage_scores_per_level")
+    if advantage_scores is None:
+        return None
+    if not isinstance(advantage_scores, list):
+        raise ValueError(
+            "`advantage_scores_per_level` must be None or a list aligned with hierarchy depth."
+        )
+    return _validate_level_logits_list(
+        logits_per_level=advantage_scores,
+        level_node_ids=level_node_ids,
+        num_levels=num_levels,
+        field_name="advantage scores per level",
+    )
+
+
 def _path_global_node_ids(
     leaf_targets: torch.Tensor,
     level_node_ids: List[torch.Tensor],
@@ -367,14 +388,14 @@ def _weighted_target_ce_level_losses(
 
 
 def _weighted_target_ce_level_losses_from_level_logits(
-    abs_node_logits_per_level: List[torch.Tensor],
+    ce_scores_per_level: List[torch.Tensor],
     leaf_targets: torch.Tensor,
     leaf_to_level_local: torch.Tensor,
     level_weights: torch.Tensor,
 ) -> List[torch.Tensor]:
     weights = level_weights / level_weights.sum().clamp_min(_EPS)
     level_losses: List[torch.Tensor] = []
-    for level, level_logits in enumerate(abs_node_logits_per_level):
+    for level, level_logits in enumerate(ce_scores_per_level):
         level_size = int(level_logits.size(1))
         level_targets = leaf_to_level_local[leaf_targets, level].to(device=level_logits.device, dtype=torch.long)
         _check_index_range(
@@ -510,6 +531,21 @@ def compute_loss(
         level_node_ids=level_node_ids,
         num_levels=num_levels,
     )
+    advantage_scores_per_level = _validate_advantage_scores_per_level(
+        output=output,
+        level_node_ids=level_node_ids,
+        num_levels=num_levels,
+    )
+    if advantage_scores_per_level is not None and loss_mode != "level_softmax_ce_reg":
+        raise ValueError(
+            "Hier-COS advantage scores require `model.loss=level_softmax_ce_reg`."
+        )
+    if advantage_scores_per_level is not None and node_logits_per_level is None:
+        raise ValueError(
+            "Hier-COS advantage requires native fixed-frame node logits for every level."
+        )
+    if advantage_scores_per_level is not None and effective_node_logits_per_level is not None:
+        raise ValueError("Hier-COS advantage and HCC-modified node logits cannot be active together.")
     if effective_node_logits_per_level is not None:
         loss_node_logits_per_level = effective_node_logits_per_level
         loss_node_logits = torch.cat(effective_node_logits_per_level, dim=1)
@@ -555,7 +591,11 @@ def compute_loss(
                 leaf_to_level_local=leaf_to_level_local,
             )
             ce_level_losses = _weighted_target_ce_level_losses_from_level_logits(
-                abs_node_logits_per_level=abs_node_logits_per_level,
+                ce_scores_per_level=(
+                    advantage_scores_per_level
+                    if advantage_scores_per_level is not None
+                    else abs_node_logits_per_level
+                ),
                 leaf_targets=leaf_targets,
                 leaf_to_level_local=leaf_to_level_local,
                 level_weights=level_weights,

@@ -31,7 +31,7 @@ model:
   # train.lexicographic.enabled=true.
   projection:
     enabled: false                  # true enables the projected learnable level heads
-    advantage_enabled: false        # true adds detached parent logits as LH-DNN advantage baselines
+    advantage_enabled: false        # true recursively adds detached parent scores after fixed-frame abs
     feature_dim: 0                  # Shared width, projection only; 0 uses sum(num_classes_per_level)
     eps: 1.0e-6                     # Stabilizer for the projection solve
 
