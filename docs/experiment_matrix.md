@@ -36,7 +36,7 @@ from the first batch whenever `hcc.enabled: true`. The former `alpha_schedule` /
 `alpha_start_epoch` / `temperature` ablation was removed from the codebase; runs recorded
 below as `step@0` are the retained arm, and `step@80` / `step@160` arms are historical
 only.
-| 7 | Backbone | `model.variant`, `model.pretrained`, `model.pool` | `haframe_wide_resnet` / `haframe_resnet50`; `true`/`false`; `max`/`average` | [model.py:349-366](models/hiercos/model.py#L349-L366) |
+| 7 | Backbone capacity | `model.wide_depth`, `model.wide_widen_factor` | WRN-28-8, WRN-16-8, WRN-28-4 on CIFAR-100 | [run_hiercos_cifar100_backbone_ladder.sh](scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh) |
 | 8 | Dataset | `dataset.name` | `cifar-100`, `cub-200-2011`, `fgvc-aircraft` (iNat21 supported by the framework, no Hier-COS runs) | `configs/hiercos/` |
 | 9 | Seed | `train.seed` | 3 seeds default (`NUM_RUNS=3`) | `scripts/run_seed_utils.sh` |
 
@@ -144,8 +144,10 @@ legal with a global softmax and a dense frame as well, which widens this arm bef
 been run even once. Worth deciding deliberately which of those cells you actually want,
 rather than inheriting the wider space by default.
 
-**Backbone / pretraining** — `hiercos_cifar100_..._identity_resnet50` (pretrained ResNet-50
-on CIFAR-100), `hiercos_aircraft_..._fromscratch_...` vs pretrained.
+**Backbone capacity** — the controlled CIFAR-100 ladder is specified as WRN-28-8,
+WRN-16-8 and WRN-28-4, each crossed with baseline and `coarse_first`. The smaller
+rungs have not yet been run. Existing CIFAR-100 ResNet-50 and Aircraft
+from-scratch pilots change more than capacity and are excluded from this ablation.
 
 ### Visible gaps
 
@@ -347,12 +349,15 @@ separates "the constraint improved the learned representation" from "the constra
 up the predictions." That is the cheapest and most decisive HCC control, and the whole
 HCC-on-Hier-COS family is currently unrun.
 
-## RQ7 — Backbone and pretraining as threats to validity
+## RQ7 — Backbone capacity as a threat to validity
 
-`haframe_wide_resnet` (from scratch, CIFAR-native) vs. `haframe_resnet50` (ImageNet
-pretrained). This axis is not a contribution — it exists to bound the others [interp]. If the
-frame/lex/weight effects invert between a scratch WideResNet and a pretrained ResNet-50, then
-every conclusion is conditional on the feature extractor.
+The controlled contrast stays within the from-scratch CIFAR-native WideResNet:
+WRN-28-8 versus WRN-16-8 and WRN-28-4, at the same 32-pixel input, head, frame,
+loss, weighting and optimiser. Baseline and `coarse_first` are paired within
+every rung. If their within-rung difference changes as the trunk shrinks, the
+CIFAR-100 lex/weight result is capacity-dependent [interp]. The separate
+ResNet-50/224-pixel pilot cannot answer this question because architecture,
+pretraining and resolution change together.
 
 Per AGENTS.md this is also where the local-extrapolation caveats belong: HRN on CIFAR-100,
 Hier-COS on CUB, and this repo's CIFAR hierarchy construction are all deviations from the
@@ -468,12 +473,15 @@ Ranked by information gained per GPU-hour, not by convenience:
    `none` baseline. This is the thesis's central mechanistic claim: whether the in-graph
    differentiable formulation buys the same ordering as explicit projection. Requires
    `level_softmax_ce_reg` + identity frame on both arms, which the existing runs partly cover.
-3. **HCC on Hier-COS**, starting with the post-hoc inference notebook — cheapest decisive
+3. **CIFAR-100 backbone-capacity ladder** (RQ7) — WRN-16-8 and WRN-28-4,
+   baseline versus `coarse_first`, two seeds as a sensitivity; the WRN-28-8
+   three-seed anchors are reused.
+4. **HCC on Hier-COS**, starting with the post-hoc inference notebook — cheapest decisive
    control, and RQ6 currently has no Hier-COS data at all.
-4. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a
+5. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a
    cross-architecture claim.
-5. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.
-6. **`advantage_enabled`** — completeness.
+6. **`kl_coarse` arm** — falsification test for the consistency claim in RQ3.
+7. **`advantage_enabled`** — completeness.
 
 ## C.5 Reporting rules to hold across the whole matrix
 

@@ -12,10 +12,11 @@ After describing the datasets, metrics, implementations and comparison protocol,
 the chapter establishes the baselines and evaluates alternative inference rules.
 The trained interventions are then considered according to where they act: HCC
 on the outputs, direct subspace supervision on the objective, and lexicographic
-ordering on the gradients. Ablations of the Hier-COS frame, normaliser and
-level weighting quantify the adaptations required by the LH-projection and test
-the sensitivity of gradient ordering to its structural substrate and relative
-gradient scale. The final sections compare
+ordering on the gradients. Ablations of the Hier-COS frame, normaliser and level
+weighting quantify the adaptations required by the LH-projection and test the
+sensitivity of gradient ordering to structural configuration and relative gradient
+scale. A CIFAR-100 backbone-capacity ladder separately tests whether that result
+depends on the default feature extractor. The final sections compare
 the intervention points and delimit the conclusions supported by the completed
 runs.
 % ======================================================
@@ -841,7 +842,7 @@ different effects, can those differences be attributed to where they act, and
 do they arise during training or from inference-time processing? & Within-family
 deltas at the shared mechanism axis, the frozen-checkpoint inference grid,
 trained-HCC versus post-hoc-HCC comparisons, and separate accounting for the
-Hier-COS substrate and weighting ablations \\
+Hier-COS frame, normaliser and weighting ablations \\
 \textbf{Q4} & Under which conditions does an effect persist: which model
 families, taxonomies, gradient scalings, and host-model configurations support
 it? & Repetition across supported family--dataset pairs and the frame, softmax,
@@ -972,11 +973,13 @@ before the LH-projection is compared with explicit lexicographic training.
 \end{enumerate}
 
 The frame and softmax ablations first establish one LH-compatible structural
-substrate per dataset. The weight ablation is then run on that fixed substrate in
-two matched arms, unmodified and \texttt{coarse\_first}. This ordering prevents a
-frame or normaliser change from being folded into the weight--mechanism
-interaction. All three ablations are reported before the LH-projection
-(\cref{sec:results_ablations}).
+configuration per dataset. The weight ablation is then run on that fixed
+configuration in three matched arms: unmodified, \texttt{coarse\_first} and the LH-projection.
+This ordering prevents a frame or normaliser change from being folded into the
+weight--mechanism interaction. The frame and softmax steps are reported before
+the LH-projection (\cref{sec:results_substrate}); the weight cross is reported
+with it (\cref{sec:results_lhprojection}), because the weighting cannot be fixed
+on the lexicographic arm and transferred to the in-graph arm.
 
 \subsection{Controls}
 \label{ssec:design_controls}
@@ -1112,13 +1115,14 @@ The results are presented in the following order:
     \item \Cref{sec:results_hcc,sec:results_subspace,sec:results_lex} compare
     three directly trained interventions with their matched baselines, ordered by
     where each acts: on the outputs, on the objective, then on the gradient.
-    \item \Cref{sec:results_ablations} varies the Hier-COS frame, normaliser and
-    level weighting in sequence. It first establishes the LH-compatible
-    structural substrate and then measures the interaction between weighting and
-    explicit lexicographic ordering on that substrate.
-    \item \Cref{sec:results_lhprojection} reports the LH-projection after those
-    preconditions have been fixed and compares it with explicit lexicographic
-    mode.
+    \item \Cref{sec:results_substrate} changes the Hier-COS frame and normaliser
+    once, establishing the LH-compatible structural configuration and measuring what
+    the change costs. Everything before it is read at the published dense,
+    globally normalised configuration.
+    \item \Cref{sec:results_lhprojection} reports the LH-projection on that
+    configuration: first against explicit lexicographic mode, then crossed with the
+    level weighting, whose interaction is measured on each arm rather than
+    transferred between them.
     \item \Cref{sec:results_mechanisms} places the four mutually exclusive
     interventions in one comparison.
     \item \Cref{sec:results_coverage,sec:results_summary} state what remains
@@ -2074,6 +2078,18 @@ follow the adaptations of \cref{ssec:lex_family_adaptation}. HRN carries no
 analogous level coefficients, and its three exposed terms sum to the objective
 its baseline optimises, so its row isolates the projection alone.
 
+Every Hier-COS row in this section is read at the dense random orthonormal frame
+and the global normaliser, the configuration in which the family was published
+and the one shared with \cref{sec:results_hcc,sec:results_subspace}. The
+LH-projection cannot be trained there, so the frame and normaliser are changed
+once, in \cref{sec:results_substrate}, and every result requiring the changed
+configuration is reported in \cref{sec:results_lhprojection}. That includes the
+level-weight cross, and on CIFAR-100 it is where the lexicographic result is
+weakest: under leaf-heavy weighting the two levels holding priority end
+substantially under-fitted and consistency degrades rather than improves
+(\cref{ssec:results_lex_scaling}). The rows below are therefore the
+published-configuration lexicographic result for Hier-COS, not the whole of it.
+
 \subsection{Effect against the matched baseline}
 \label{ssec:results_lex_main}
 
@@ -2202,40 +2218,44 @@ expected to vanish on a two-level block and \emph{not} on a three-level one.}
 % do not, the discrepancy is itself the finding and the accuracy comparison is
 % reported as unidentified.
 
-\subsection{Sensitivity to the Hier-COS substrate}
-\label{ssec:results_lex_substrate}
-
-The Hier-COS rows above are all read at the dense random orthonormal frame and
-the global normaliser, the configuration in which the family was published. That
-is the correct substrate for a claim about the published model, and it is the
-only one on which the ordering control of \S\ref{ssec:results_lex_ordering} is
-available at matched weighting. It is not, however, the only substrate the family
-admits, and \cref{sec:results_ablations} varies the structural components that
-\S\ref{ssec:design_substrate} requires the LH-projection to change before
-crossing relative level scale with lexicographic mode. Should a substrate or
-weight change move the same metrics this section attributes to gradient
-ordering, the explanations must be separated by the matched within-cell
-contrasts. The comparison itself is deferred to
-\cref{sec:results_mechanisms}; what is recorded here is that the lexicographic
-result is stated for one substrate and weighting and is not assumed to transfer
-to the later grid.
-
 % ======================================================================
-\section{Hier-COS ablations: frame, normaliser and level weighting}
+\section{Hier-COS ablations}
+\label{sec:results_substrate}
 \label{sec:results_ablations}
 
-The ablations are ordered by dependency. The frame ladder first identifies the
-best frame on which independent level heads remain admissible. The softmax
-ablation then measures the cost of replacing the global node-wide normaliser by
-per-level normalisation at that frame. These two steps establish one structural
-substrate per dataset for the LH-projection. Finally, the weight ablation crosses
-the scalarised baseline with explicit \texttt{coarse\_first} training on that
-fixed substrate, because the same numerical coefficients become relative
-per-level gradient scales once lexicographic composition is enabled.
+The Hier-COS rows of \cref{sec:results_hcc,sec:results_subspace,sec:results_lex}
+are all read at the dense random orthonormal frame and the global normaliser, the
+configuration in which the family was published. That is the correct setting
+for a claim about the published model, it is the only one on which the ordering
+control of \S\ref{ssec:results_lex_ordering} is available at matched weighting,
+and holding it fixed is what makes the four mechanisms comparable in
+\cref{sec:results_mechanisms}.
 
-The model's residual transform is held fixed throughout. This keeps the sequence
-aligned with the quantities required for the later LH comparison: frame,
-normaliser and matched level weighting.
+The LH-projection cannot be trained on it. It requires a frame that does not mix
+levels and a per-level normaliser, so that each level loss depends on its own
+branch alone (\S\ref{ssec:design_substrate}). This section changes those two
+components once, and only once, and measures what the change costs before any LH
+row is reported. The frame ladder first identifies the best frame on which
+independent level heads remain admissible; the softmax ablation then measures
+the cost of replacing the global node-wide normaliser by per-level normalisation
+at that frame. Together they establish one structural configuration per dataset,
+carried unchanged through \cref{sec:results_lhprojection}. The model's residual
+transform is held fixed throughout. The two remaining Hier-COS ablations are
+reported elsewhere for reasons of attribution: the level-weight cross with the
+LH-projection (\cref{ssec:results_lex_scaling}), because the weighting interacts
+differently with the two loci and cannot be fixed on one and carried to the
+other; and the backbone-capacity ladder in
+\cref{ssec:results_backbone_capacity}, because it runs at the published
+configuration and selects no LH setting.
+
+Two consequences are recorded here rather than assumed. The selected
+configuration differs across datasets, so it is carried as a column on every
+table that follows. And because a change of frame or normaliser could move the
+same metrics that \cref{sec:results_lex} attributes to gradient ordering, no
+lexicographic result is transferred across this boundary: the
+published-configuration rows and the structural ones are stated separately and
+related only through the matched within-cell contrasts of
+\cref{sec:results_lhprojection}.
 
 \subsection{The Hier-COS frame ladder}
 \label{ssec:results_frame}
@@ -2255,7 +2275,7 @@ frame and the identity.
 \centering
 \caption{Frame ladder on the unmodified Hier-COS baseline, at matched backbone,
 global normaliser, \texttt{kl\_leaf} weighting, representation width, readout
-and seeds. Selection of the LH-compatible substrate is performed within each
+and seeds. Selection of the LH-compatible configuration is performed within each
 dataset; the selected frame may therefore differ across datasets.}
 \label{tab:results_frame}
 \experimenttablesetup
@@ -2301,7 +2321,8 @@ structural entry cost measured before the weight--mechanism interaction.
 \caption{Softmax scope on the unmodified Hier-COS baseline, at each dataset's
 selected LH-compatible frame and at matched \texttt{kl\_leaf} weighting,
 representation width and seeds. The global-to-level difference is the
-normalisation cost carried by all subsequent substrate rows.}
+normalisation cost carried by every subsequent row on the structural
+configuration.}
 \label{tab:results_softmax}
 \experimenttablesetup
 \begin{tabularx}{\linewidth}{@{}L{1.7cm}L{2.2cm}YCCCCC@{}}
@@ -2318,12 +2339,65 @@ Aircraft            & identity & global    & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \end{tabularx}
 \end{table}
 
+% ======================================================================
+\section{Priority inside the graph: the LH-projection and its adaptation package}
+\label{sec:results_lhprojection}
+
+The LH-projection imposes the same coarse-to-fine priority as
+\cref{sec:results_lex}, but inside the computational graph at a branch point
+rather than on the assembled gradient after backpropagation
+(\S\ref{ssec:design_locus}). It is reported here because it requires the
+structural configuration established in \cref{sec:results_substrate}; every row
+below
+therefore carries the adaptation cost measured in
+\cref{ssec:results_frame,ssec:results_softmax}. No arm is compared with the
+dense-frame, globally normalised baseline of \cref{sec:results_baselines}.
+
+Enabling the LH-projection adds learnable per-level heads and a terminal PReLU as
+well as the backward projection, so this section identifies the complete LH
+adaptation package rather than the projection operator alone; that limitation is
+restated wherever a row is interpreted. The section opens with the direct
+comparison against explicit lexicographic mode at matched frame, normaliser and
+weighting. It then crosses the level weights with the unmodified, lexicographic
+and LH arms, because the same numerical coefficients become relative per-level
+gradient scales once either mechanism is enabled. It then records why a weighting
+rule established on the lexicographic arm cannot be carried to the LH arm, and
+closes with the numerical and dimensional conditions the projection requires.
+
+\subsection{LH-projection against lexicographic mode}
+\label{ssec:results_lhproj}
+
+The two arms impose the same priority at different points and cannot be combined
+(\S\ref{ssec:design_locus}). Hier-COS is the only family supporting both, allowing
+a within-family comparison at matched backbone, frame, loss, weighting and seeds.
+The comparison tests whether restricting the in-graph formulation to the branch
+point changes consistency, measured primarily through TICE and AHD.
+
+\begin{table}[htbp]
+\centering
+\caption{LH-projection against lexicographic mode on Hier-COS, at matched
+backbone, frame, loss, weighting and seeds. The priority is imposed inside the
+computational graph in the former and on the assembled gradient in the latter.}
+\label{tab:results_lhproj}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{4.0cm}CCCCC@{}}
+\toprule
+\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
+\midrule
+\tbd & baseline                 & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\tbd & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\tbd & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
 \subsection{Level weighting and relative gradient scale}
 \label{ssec:results_lex_scaling}
 
 The frame and normaliser are fixed at the far rung established above: block and
 per-level softmax on CIFAR-100, identity and per-level softmax on CUB-200 and
-Aircraft. At each substrate, the same numerical weight vector is evaluated in
+Aircraft. At each structural configuration, the same numerical weight vector is
+evaluated in
 the unmodified and \texttt{coarse\_first} arms. In the former it weights the
 scalarised classification objective; in the latter it scales the three level
 gradients before projection and composition. Comparing the two arms within one
@@ -2403,49 +2477,36 @@ metrics, the analysis reports unweighted per-level training cross-entropy. This
 distinguishes a consistency change caused by gradient ordering from one caused
 by an under-fitted priority head.
 
-% ======================================================================
-\section{The LH-projection: an in-graph relaxation}
-\label{sec:results_lhprojection}
+\subsection{Why the weighting does not transfer between the two loci}
+\label{ssec:results_lhproj_weight_transfer}
 
-The LH-projection imposes the same coarse-to-fine priority as
-\cref{sec:results_lex}, but inside the computational graph at a branch point
-rather than on the assembled gradient after backpropagation
-(\S\ref{ssec:design_locus}). It is reported after
-\cref{sec:results_ablations} because it requires the structural substrate
-established by the first two steps: a frame that does not mix levels and a
-per-level normaliser, so that each level loss depends on its own branch alone
-(\S\ref{ssec:design_substrate}). The third step fixes the weighting used for the
-matched comparison. Every row below therefore carries the adaptation cost
-measured in \cref{ssec:results_frame,ssec:results_softmax}, and its baseline,
-explicit lexicographic and LH-projection arms share the weight rule selected
-from \cref{ssec:results_lex_scaling}. No arm is compared with the dense-frame,
-globally normalised baseline of \cref{sec:results_baselines}.
-\subsection{LH-projection against lexicographic mode}
-\label{ssec:results_lhproj}
+The two mechanisms project against different references, and the difference is
+structural rather than numerical. Explicit lexicographic mode projects each level
+gradient off the summed higher-priority gradients, normalising the coefficient by
+the reference's own inner product; the projection is therefore scale-invariant in
+its reference and is rebuilt from the current gradients at every step. Rescaling
+a level cannot change the projection at that step, so under explicit ordering the
+level weights have no memory. The LH-projection instead removes, from each
+level's input feature, the component lying in the span of the previous levels'
+head weights. That reference is an accumulated object: the level weights change
+how the earlier heads train, hence the protected subspace at every subsequent
+step, so under the in-graph formulation the weights have full memory.
 
-The two arms impose the same priority at different points and cannot be combined
-(\S\ref{ssec:design_locus}). Hier-COS is the only family supporting both, allowing
-a within-family comparison at matched backbone, frame, loss, weighting and seeds.
-The comparison tests whether restricting the in-graph formulation to the branch
-point changes consistency, measured primarily through TICE and AHD.
+The consequence for the campaign is that a weighting rule selected on the
+lexicographic arm is not evidence about the LH arm. This is why the cross above
+carries an LH column on CIFAR-100 rather than inheriting a rule fixed elsewhere,
+and why the LH rows on the remaining datasets state the weighting they were
+trained under instead of a rule imported from \cref{ssec:results_lex_scaling}.
 
-\begin{table}[htbp]
-\centering
-\caption{LH-projection against lexicographic mode on Hier-COS, at matched
-backbone, frame, loss, weighting and seeds. The priority is imposed inside the
-computational graph in the former and on the assembled gradient in the latter.}
-\label{tab:results_lhproj}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{4.0cm}CCCCC@{}}
-\toprule
-\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
-\midrule
-\tbd & baseline                 & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\tbd & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\tbd & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd \\
-\bottomrule
-\end{tabularx}
-\end{table}
+% [ANALYSIS] Report the per-level trunk gradient norms for the lexicographic and
+% LH arms at matched weighting, and state whether the two weight rules order the
+% same way in both arms. If the ordering agrees, the transfer assumption is
+% licensed and may be used for the datasets that carry no LH weight cross; if it
+% does not, every LH row must name its own weighting rule and the matched
+% comparison of \cref{ssec:results_lhproj} is restricted to the weighting it was
+% run at. Note that no diagnostic currently reports how much the in-graph
+% projection removes, so a null result here is not evidence that the projection
+% is inactive.
 
 \subsection{Numerical and dimensional conditions}
 \label{ssec:results_lhproj_variants}
@@ -2554,6 +2615,63 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
 % (\cref{ssec:results_posthoc}) first.
 
 % ======================================================================
+\section{CIFAR-100 backbone-capacity sensitivity}
+\label{ssec:results_backbone_capacity}
+
+The CIFAR-100 configuration uses a from-scratch WideResNet-28-8, whereas the
+fine-grained datasets use ImageNet-pretrained ResNet-50 backbones. The strong
+weight--lex interaction observed on CIFAR-100 may therefore be specific to the
+capacity or optimisation regime of its feature extractor. This sensitivity
+keeps the CIFAR-native WideResNet implementation and 32-pixel input fixed and
+compares the 23.35M-parameter WRN-28-8 anchor with WRN-16-8 (10.96M parameters)
+and WRN-28-4 (5.85M parameters). The two reduced rungs reach a similar capacity
+range by reducing depth and width respectively, so agreement between them is
+more informative than either reduction alone.
+
+Every rung uses the dense random orthonormal frame, global softmax,
+\texttt{kl\_leaf} weighting, the same representation width and optimiser, and
+is crossed with the unmodified baseline and \texttt{coarse\_first} training.
+The completed WRN-28-8 rows are reused at three seeds; the two new rungs are a
+two-seed sensitivity rather than headline estimates. The identifying contrast
+is lexicographic minus baseline within each rung. Comparing raw scores between
+backbones without subtracting the matched baseline would confound capacity with
+the intervention.
+
+\begin{table}[htbp]
+\centering
+\caption{CIFAR-100 Hier-COS backbone-capacity sensitivity. All rows retain the
+from-scratch CIFAR WideResNet implementation, 32-pixel inputs, dense random
+orthonormal frame, global normaliser and \texttt{kl\_leaf} weighting. Parameter
+counts are the nominal WideResNet sizes; $n$ records the realised seed coverage.}
+\label{tab:results_backbone_capacity}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{1.6cm}L{2.3cm}CCCCC@{}}
+\toprule
+\textbf{Backbone} & \textbf{Parameters} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{AHD}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
+\midrule
+WRN-28-8 & 23.35M & baseline & \tbd & \tbd & \tbd & \tbd & \tbd \\
+         &        & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+WRN-16-8 & 10.96M & baseline & \tbd & \tbd & \tbd & \tbd & \tbd \\
+         &        & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+WRN-28-4 & 5.85M & baseline & \tbd & \tbd & \tbd & \tbd & \tbd \\
+         &       & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The analysis additionally reports the unweighted per-level training
+cross-entropies used in the weight diagnosis. A widening lex-minus-baseline gap
+in coarse or middle loss as capacity falls would support a capacity-limited
+competition explanation; a stable gap across both reduced rungs would instead
+support the level-weight mechanism as the primary explanation. Because depth
+and width alter different architectural properties, the ladder is reported as
+a sensitivity, not fitted as a continuous scaling law.
+
+The separate CIFAR-100 ResNet-50/224-pixel pilot is excluded from this table: it
+changes architecture, ImageNet pretraining and input resolution together and
+therefore cannot identify a backbone-capacity effect.
+
+% ======================================================================
 \section{Coverage: which claims are identified}
 \label{sec:results_coverage}
 
@@ -2585,6 +2703,7 @@ Q4: Where must the softmax live? & baseline at both scopes, matched frame & \tbd
 Q1: Does gradient-space ordering work? & baseline and \texttt{coarse\_first} at matched weights & \tbd & \tbd \\
 Q2: Is the \emph{ordering} what matters? & \texttt{fine\_first} and coarse-heavy weighting, at matched seeds & \tbd & \tbd \\
 Q4: Does the relative gradient scale matter? & uniform, \texttt{kl\_leaf} and cumulative $\beta=1$ in both arms on all datasets; marginal in both Aircraft arms & \tbd & \tbd \\
+Q4: Is the CIFAR-100 effect capacity-dependent? & matched baseline and \texttt{coarse\_first} rows at WRN-28-8, WRN-16-8 and WRN-28-4 & \tbd & \tbd \\
 Q3: One principle, two gradient implementations & LH-projection and lex.\ mode on Hier-COS & \tbd & \tbd \\
 Q3: Output space against gradient space & the cells of the mechanism axis & \tbd & \tbd \\
 Q3: What is inference-time versus training-induced in HCC? & baseline, post-hoc HCC, trained HCC & \tbd & \tbd \\

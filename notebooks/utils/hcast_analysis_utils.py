@@ -28,6 +28,8 @@ try:
         normalized_config_for_seed_comparison,
         sample_stats,
         seed_value_from_dir,
+        unweight_level_losses,
+        unweighted_level_note,
     )
 except ModuleNotFoundError:
     from multiseed_utils import (
@@ -38,6 +40,8 @@ except ModuleNotFoundError:
         normalized_config_for_seed_comparison,
         sample_stats,
         seed_value_from_dir,
+        unweight_level_losses,
+        unweighted_level_note,
     )
 
 
@@ -709,6 +713,7 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
                 if not isinstance(raw_weight_mode, str):
                     raise ValueError("Hier-COS model.weight_mode in config_resolved.yaml must be a string.")
                 weight_mode = raw_weight_mode
+    level_losses_unweighted = unweight_level_losses(epoch_events, cfg)
     best_epoch_events = _best_epoch_events_by_mode(epoch_events, test_results)
     best_epoch_event = best_epoch_events.get("topdown")
 
@@ -726,6 +731,7 @@ def _parse_single_run(run_dir: Union[str, Path]) -> Dict[str, Any]:
         "model_name": model_name,
         "model_loss": model_loss,
         "weight_mode": weight_mode,
+        "level_losses_unweighted": level_losses_unweighted,
         "best_epoch_events": best_epoch_events,
         "best_epoch_event": best_epoch_event,
     }
@@ -2467,6 +2473,7 @@ class HCastAnalysis:
                     )
                 )
 
+            unweighted_level_note(dataset_runs, dataset_display_name(dataset_key))
             for specs, stem, title in (
                 (aggregate_specs, "training_losses_aggregate", "terms of the training objective"),
                 (level_specs, "training_losses_per_level", "per-level training objectives"),
@@ -2612,6 +2619,7 @@ class HCastAnalysis:
             if not dataset_runs:
                 continue
 
+            unweighted_level_note(dataset_runs, dataset_display_name(dataset_key))
             plottable = []
             for run_data in dataset_runs:
                 level_loss_ids = sorted(

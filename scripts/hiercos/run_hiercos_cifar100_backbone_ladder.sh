@@ -9,10 +9,12 @@ set -euo pipefail
 # - model.loss=${LOSS_MODE}, model.weight_mode=${WEIGHT_MODE}
 # - model.fixed_frame_mode=${FIXED_FRAME_MODE}, per-level=${FIXED_FRAME_PER_LEVEL}
 # - one arm per entry in MECHANISMS (baseline / lex_coarse_first / lex_fine_first)
-# Three training seeds by default, matching the anchors' seed coverage.
+# The planned sensitivity uses two training seeds per new rung; pass NUM_RUNS=2
+# explicitly because the project .env may supply the global three-seed default.
+# The existing WRN-28-8 anchors retain their three-seed coverage.
 #
-# Purpose: RQ8 in docs/experiment_matrix.md asks whether the frame/lex/weight
-# conclusions are conditional on the feature extractor. The haframe_resnet50 arm
+# Purpose: test whether the frame/lex/weight conclusions are conditional on the
+# feature extractor's capacity. The haframe_resnet50 arm
 # answers that badly, because it changes architecture, ImageNet pretraining, and
 # input resolution at once. Shrinking the WideResNet changes capacity alone:
 # the trunk implementation, the 32 px native resolution, the head, the frame,
@@ -55,7 +57,7 @@ load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
 source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 
-NUM_RUNS="${NUM_RUNS:-3}"
+NUM_RUNS="${NUM_RUNS:-2}"
 init_seed_runs
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -154,8 +156,8 @@ trap handle_exit EXIT
 
 # Notebook-compatible outputs root.
 # Examples:
-#   # Defaults: WRN-16-8 and WRN-28-4, baseline vs lex coarse-first, seeds 0..2.
-#   OUTPUTS_ROOT=/scratch/<user>/outputs \
+#   # Planned matrix: WRN-16-8 and WRN-28-4, baseline vs lex, seeds 0..1.
+#   NUM_RUNS=2 OUTPUTS_ROOT=/scratch/<user>/outputs \
 #     ./scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh
 #   # Inspect the full plan without training.
 #   DRY_RUN=1 ./scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh
@@ -171,7 +173,7 @@ trap handle_exit EXIT
 # Cost: the existing WRN-28-8 CIFAR-100 runs measure ~1.78 it/s at batch_size=64
 # for 100 epochs. Compute scales roughly with parameter count, so WRN-16-8
 # (0.47x) and WRN-28-4 (0.25x) should come in well under the anchor's wall-clock
-# per seed. The default plan is 2 rungs x 2 arms x 3 seeds = 12 runs; check GPU
+# per seed. With NUM_RUNS=2 the plan is 2 rungs x 2 arms x 2 seeds = 8 runs; check GPU
 # occupancy before launching, since MAX_PARALLEL=1 only serializes this script's
 # own jobs and not anything already training.
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"

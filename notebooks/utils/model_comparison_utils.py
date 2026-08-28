@@ -26,6 +26,8 @@ try:
         discover_seed_dirs,
         has_seed_runs,
         metric_series_with_std,
+        unweight_level_losses,
+        unweighted_level_note,
     )
 except ModuleNotFoundError:
     from multiseed_utils import (
@@ -33,6 +35,8 @@ except ModuleNotFoundError:
         discover_seed_dirs,
         has_seed_runs,
         metric_series_with_std,
+        unweight_level_losses,
+        unweighted_level_note,
     )
 
 
@@ -621,6 +625,7 @@ def _parse_single_run(run_dir: Path) -> RunData:
             test_results = {**test_results, **yaml_test_results}
     test_metrics = dict(test_results.get("topdown", {}).get("test_metrics", {}))
 
+    level_losses_unweighted = unweight_level_losses(epoch_events, cfg)
     best_epoch_events = _best_epoch_events_by_mode(epoch_events, test_results)
     best_epoch_event = best_epoch_events.get("topdown")
     best_metrics = _final_best_metrics(epoch_events, test_results, best_epoch_events)
@@ -647,6 +652,7 @@ def _parse_single_run(run_dir: Path) -> RunData:
         "dataset_label": dataset_display_name(dataset_raw),
         "model_name": model_name,
         "model_label": model_display_name(model_name),
+        "level_losses_unweighted": level_losses_unweighted,
     }
 
 
@@ -1362,6 +1368,7 @@ class ModelComparisonAnalysis:
                 }
             )
 
+            unweighted_level_note(dataset_runs, dataset_display_name(dataset_name))
             aggregate_present = [key for key in aggregate_loss_keys if key in all_loss_keys]
             level_loss_ids = sorted(
                 {
@@ -1523,6 +1530,7 @@ class ModelComparisonAnalysis:
     def plot_per_run_per_level_training_losses(self) -> None:
         for dataset_name in self.dataset_keys:
             dataset_runs = self.runs_by_dataset.get(dataset_name, [])
+            unweighted_level_note(dataset_runs, dataset_display_name(dataset_name))
             for run_data in dataset_runs:
                 all_loss_keys = sorted(
                     {

@@ -11,14 +11,21 @@ where marked *sensitivity*. Everything not named by the question stays fixed.
 | P | Section | What | Seed-runs | Blocked by |
 |---|---|---|---|---|
 | 0 | C | `equal` x `{none, lex}` on all datasets | 10 | baseline dataset matrix; CIFAR lex seed 2 |
-| 0 | C | cumulative beta=1 x `{none, lex}` on all datasets | 18 | weight-mode/beta launcher support |
-| 0 | C | Aircraft marginal x `{none, lex}` | 6 | weight-mode launcher support |
-| 1 | D | LH projection at the weighting fixed after C | TBD | section C complete and analysed |
-| 2 | E | LH representation-width sensitivity | 3 + 5 | section D reference row |
-| 3 | F | CIFAR-100 WRN ladder at dense/global, 2 seeds | 8 | — |
+| 0 | C | CIFAR-100 block LH x `{equal, kl_leaf}` | 6 | — (LH launcher available) |
+| 1 | C | cumulative beta=1 x `{none, lex}` on all datasets | 18 | weight-mode/beta launcher support |
+| 1 | C | Aircraft marginal x `{none, lex}` | 6 | weight-mode launcher support |
+| 2 | D | remaining LH cells at the weighting fixed after C | TBD | section C complete and analysed |
+| 3 | E | LH representation-width sensitivity | 3 + 5 | section D reference row |
+| 4 | F | CIFAR-100 WRN ladder at dense/global, 2 seeds | 8 | — |
 
 Sections A and B are complete. Finish and analyse section C before launching
-new LH-projection rows in D.
+new LH-projection rows in D. Amended 2026-08-28: the CIFAR-100 weight x LH cells
+moved *into* C, because the weight--LH interaction cannot be inferred from the
+lex arm (see C, *Why LH is crossed here, not in D*).
+
+Section F belongs to the Hier-COS ablation section of the thesis, but it is a
+non-blocking capacity sensitivity: it may run after or alongside D and does not
+choose D's frame, normaliser or weighting.
 
 ## Vocabulary
 
@@ -74,13 +81,38 @@ Result: per-level softmax is free. CIFAR-100 .7731 -> .7780 FPA and .0094 ->
 .0087 TICE; Aircraft .8274 -> .8248 and .0035 -> .0032; CUB-200 .7656 -> .7649
 and .0021 -> .0023. This establishes the structural substrate for section C.
 
-## C. Level-weight ablation — 34 outstanding
+## C. Level-weight ablation — 40 outstanding
 
 Isolates: the numerical level weights, crossed with **both** `{none,
-lex_coarse_first}` at the structural substrate. The comparison is performed on
-all three datasets before any new LH-projection row is launched. A lex-only
-sweep cannot distinguish a generally better scalarisation from a weight--lex
-interaction.
+lex_coarse_first}` at the structural substrate on all three datasets, and
+additionally with `LH` on CIFAR-100. A lex-only sweep cannot distinguish a
+generally better scalarisation from a weight--lex interaction; and it cannot be
+transplanted to LH at all.
+
+### Why LH is crossed here, not in D
+
+Earlier versions fixed the weighting on `{none, lex}` and carried the winning
+rule into D. That assumes lex and LH respond to the level weights the same way.
+They do not, and the asymmetry is structural:
+
+- **lex** projects level *l*'s gradient off the summed higher-priority
+  *gradients*. `train/lexicographic/gradients.py:364` divides by `<r,r>`, so the
+  projection is scale-invariant in its reference and is rebuilt from scratch
+  every step. Rescaling a level cannot change the projection at that step.
+- **LH** projects level *l*'s input feature off `span{W_0..W_(l-1)}`, the
+  previous heads' *weights* (`models/hiercos/model.py:409-428`, detached). That
+  reference is an **accumulated** object: the weights change how `W_0` trains,
+  hence the protected subspace at every later step.
+
+Weights therefore have no memory in lex and full memory in LH, so a rule chosen
+on lex is not evidence about LH. Six CIFAR block cells settle it and
+simultaneously close D's missing CIFAR row.
+
+Indicative support, measured 2026-08-28 — per-level trunk gradient norms
+coarse:mid:fine at epoch 30 under `kl_leaf`: lex 1:1.59:6.50 (coarse 2.2% of
+step energy) against LH 1:1.11:2.80 (10.0%). LH is already better balanced at
+the same weights. The two rows sit on different frames (lex block, LH identity),
+so this is indicative only — the six new cells remove that confound.
 
 The selected grid is deliberately small:
 
@@ -133,12 +165,23 @@ matched LH comparison rather than an optional sensitivity appendix.
 
 All cells use seeds 0--2 and split seed 0.
 
-**CIFAR-100 at block/level:**
+**CIFAR-100 at block/level** — run in the order given:
 
-- [ ] `equal` x none: **3 seed-runs**.
-- [ ] `equal` x lex: seeds 0--1 complete; **finish seed 2**.
-- [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete.
-- [ ] cumulative beta=1 x `{none, lex}`: **6 seed-runs**.
+- [ ] **(1)** `equal` x none: **3 seed-runs**. Blocking: without it the `equal`
+  column has no baseline, so the 2x2 cannot separate a generally better
+  scalarisation from a weight--lex interaction. Everything else in this section
+  rests on a half-filled square until it lands.
+- [x] **(1)** `equal` x lex: seeds 0--1 complete; **finish seed 2**.
+- [ ] **(2)** `equal` x LH: **3 seed-runs**.
+- [ ] **(2)** `kl_leaf` x LH: **3 seed-runs**. Also closes D's missing CIFAR
+  row; the existing identity bundle is off-substrate.
+- [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete. This is the failing cell:
+  unweighted train CE 0.859/1.072/0.252 at epoch 50 against the baseline's
+  0.124/0.196/0.261, FPA .7659 vs .7780+-.0018, TICE .0137 vs .0087. It is the
+  predicted starvation result on the correct substrate, not a frame artifact.
+- [ ] **(3)** cumulative beta=1 x `{none, lex}`: **6 seed-runs**. Refines a
+  curve whose shape (1)--(2) already give; lowest priority in this section, and
+  below the LH cells.
 
 **Aircraft at identity/level:**
 
@@ -174,9 +217,10 @@ an LH or baseline row trained under a different rule.
 - [x] CUB-200 identity/level/`kl_leaf`: none, lex, LH, seeds 0--2 available as
   the incumbent-weight reference.
 - [x] CIFAR-100 block/level/`kl_leaf`: none and lex, seeds 0--2 complete.
-- [ ] CIFAR-100 block/level/`kl_leaf`/LH: seeds 0--2 remain missing. The existing
-  identity bundle is off-substrate and remains only an LH frame-sensitivity
-  point.
+- [x] CIFAR-100 block/level/`kl_leaf`/LH: seeds 0--2 remain missing. **Moved
+  into section C** and paired there with `equal` x LH, because the weight--LH
+  interaction cannot be inferred from the lex arm. The existing identity bundle
+  is off-substrate and remains only an LH frame-sensitivity point.
 - [ ] After C, record the rule used for the headline matched comparison and add
   any missing LH cells for that same rule on all three datasets.
 
@@ -210,8 +254,9 @@ deficit is largest (-3.0 pp vs -0.6 pp on CUB-200).
 
 ## F. CIFAR-100 backbone capacity ladder — 8 outstanding (*sensitivity*)
 
-Isolates: capacity. Use `run_hiercos_cifar100_backbone_ladder.sh`; it shrinks the
-WRN at fixed implementation, 32 px, head, frame, and loss. The ResNet-50/224
+Isolates: capacity. Use
+`NUM_RUNS=2 ./scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh`; it
+shrinks the WRN at fixed implementation, 32 px, head, frame, and loss. The ResNet-50/224
 script changes architecture, pretraining, and resolution at once and cannot
 answer this — it stays permanently on hold.
 
@@ -257,6 +302,16 @@ A flat gap would mean the CIFAR-100 regression is purely the weight mechanism.
 - [ ] Do not run C, D, E, or F on more than one structural substrate per
   dataset.
 - [ ] Do not stack LH, HCC, and explicit lex in the attribution matrix.
+- [ ] Do not re-scope the loss to `w_l * (CE_l + alpha * R_l)` mid-grid.
+  Decided 2026-08-28: under `equal` it is an exact reparametrisation
+  (`alpha -> 3*alpha`, identical gradients), so it would change nothing in the
+  lex presets; under `kl_leaf` it moves the regulariser level split to
+  .025/.077/.898 and would invalidate the completed `kl_leaf x lex` cells on all
+  three datasets. The defect it fixes is presentational and is handled by the
+  regulariser-fraction reporting check. Revisit only bundled with a
+  `sqrt(C_l - 1)` regulariser normalisation, as a separate declared study with
+  its own ablation against the upstream flat form
+  (`util/hiercos_construction.py:325`).
 
 ## Disposition
 
@@ -310,6 +365,11 @@ Open:
 - [ ] Verify every generated output directory with `DRY_RUN=1` before training.
 - [ ] For partial seeds pass the exact local `latest.pt`; never rely on an
   automatic resume guess or relaunch a completed seed.
+- [ ] Nothing reports how much the LH projection actually removes. The `proj_*`
+  keys are HCC, not LH, and the per-block parameter diagnostics are degenerate
+  in LH runs (`delta_param_norm_t1 == t2t1 == t3t2t1` at every epoch, because
+  the dense identity frame leaves every head non-`None` for every level loss).
+  Log `||c_level|| / ||z||` per level before interpreting D or E.
 
 ## Reporting checks
 
@@ -325,4 +385,12 @@ Open:
   `proj_constraint_alpha`, not from directory names.
 - [ ] When a lex row moves, read the unweighted per-level train CE before
   interpreting test metrics.
+- [ ] Report the per-level regulariser fraction `alpha*R_l / loss_level_l`
+  beside the unweighted per-level CE. Under `level` softmax it reaches
+  .79/.86/.93 at epoch 100 on CIFAR-100, so `alpha` is not one number across
+  levels and the level weights govern a shrinking share of the objective --
+  they scale `CE_l` only, never `R_l`.
+- [ ] A lex result is not evidence about LH. State this wherever a lex row is
+  reported as a verdict on the approach: lex's projection reference is the
+  instantaneous gradient, LH's is the accumulated head weights.
 - [ ] Never mix archived `drop_last_eval=true` results into a headline aggregate.
