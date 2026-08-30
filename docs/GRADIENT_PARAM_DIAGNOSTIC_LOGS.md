@@ -32,16 +32,19 @@ Per-model adaptation details, config constraints, and silent quirks are in
 [`LEX_MODEL_ADAPTATION.md`](LEX_MODEL_ADAPTATION.md). Summarized, the native
 model requirements are:
 
-- H-CAST exposes its three raw per-level objectives and requires
+- H-CAST exposes its three per-level objectives, each already scaled by its
+  `model.loss.level_weighting` coefficient, and requires
   `model.loss.globalkl: false` in lex mode.
-- HT-CapsNet exposes its three raw capsule margin losses. Its lex launcher uses
-  `model.loss.weight_mode: none` for unit weights; other configured scalar
-  weights do not change the raw tensors consumed by lex projection.
+- HT-CapsNet exposes its three capsule margin losses, each already scaled by its
+  `model.loss.weight_mode` coefficient. Its lex launcher uses
+  `model.loss.weight_mode: none` for unit weights; any other weight mode does
+  change the tensors consumed by lex projection.
 - HRN requires `model.loss: level_conditional`, which exposes the three
   conditional tree NLLs (coarse subtree; middle given coarse; leaf given middle)
   with the original leaf CE term added to the fine one. They telescope to the
   `native` objective, so the projection is the only difference from a `native`
-  baseline.
+  baseline. Its baseline config diagnoses `p123`, `p23`, and `p3`, while its lex
+  launcher projects only the competing `p123` and `p23` blocks.
 - Hier-COS requires `model.loss: global_softmax_ce_reg` or
   `level_softmax_ce_reg`; plain `kl_reg` does not expose per-level loss tensors.
   Both decomposed modes use weighted target CE plus the same unweighted level
@@ -49,8 +52,17 @@ model requirements are:
   normalization.
 - LH-DNN is not supported.
 
-Logged `loss_level_*` values match the tensors used by lexicographic
-optimization.
+The tensors consumed by the diagnostics and by lexicographic optimization are
+each level's *weighted* contribution to `total`. For Hier-COS, HRN, LH-DNN, and
+the subspace plugin, `loss_level_*` already reports that contribution. For
+H-CAST and HT-CapsNet, `loss_level_*` stays **unweighted** so the per-level
+scalars remain comparable across weight modes; the projected tensor there is
+`loss_level_* x loss_weight_level_*`. Consequently, on runs with a non-unit
+weight mode the `grad_norm_*` magnitudes are weighted too — cosines and
+projection coefficients are scale-invariant per level and are unaffected. Runs
+predating 2026-08-30 used unweighted tensors for H-CAST and HT-CapsNet, so their
+gradient magnitudes are not directly comparable with later ones under
+`level_weighting.mode: dynamic` or `weight_mode: static|dynamic`.
 
 ## Canonical `p...` metric keys
 

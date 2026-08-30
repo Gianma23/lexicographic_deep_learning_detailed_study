@@ -2,14 +2,16 @@
 
 Every notebook under ``notebooks/tradeoff_analysis`` follows the same shape:
 declare a run matrix, discover the completed seed directories under
-``OUTPUTS_ROOT``, aggregate the selected test checkpoints, and draw the same
-two trade-off figures. This module holds everything that is not model-specific.
+``OUTPUTS_ROOT``, aggregate one decoder/readout view of the selected test
+checkpoints, and draw the same two trade-off figures. This module holds
+everything that is not model-specific.
 
-All of it reads the **independently selected** checkpoint and the independent
-metric family. Top-down decoding is deliberately not offered here: its predicted
+The default is the independently selected checkpoint with native inference.
+``node_score`` and ``subspace_norm`` are read from the post-hoc inference YAML,
+always under the checkpoint selected for the requested decoder. Top-down is
+supported for completeness but its FPA--TICE view is degenerate: its predicted
 path is consistent by construction, so ``tice_topdown`` is identically zero and
-``fpa_topdown`` collapses onto top-down fine accuracy, which leaves nothing for a
-trade-off view to show.
+``fpa_topdown`` collapses onto top-down fine accuracy.
 
 Figures are authored for the thesis at their final printed size, using the same
 style contract as ``notebooks/datasets_analysis.ipynb`` so that every figure in
@@ -22,6 +24,8 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import subprocess
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -37,6 +41,11 @@ from matplotlib.transforms import Bbox
 
 
 LEVEL_LABELS = ("Coarse", "Middle", "Fine")
+DECODERS = ("independent", "topdown")
+READOUTS = ("native", "node_score", "subspace_norm")
+SUBSPACE_SCORE_SPACES = ("probability", "coordinate")
+POSTHOC_RESULT_FILENAME = "posthoc_inference_test_metrics.yaml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 OFF_SCALE_GUTTER = 0.22
 OFF_SCALE_GROUP_SEP = 0.095
@@ -127,6 +136,24 @@ MODEL_REFERENCE_SPECS = (
     {"key": "lhdnn", "label": "LH-DNN", "run_name": "lhdnn_{dataset}", "marker": "P"},
     {"key": "ht_capsnet", "label": "HT-CapsNet", "run_name": "capsnet_{dataset}", "marker": "*"},
 )
+
+# Colour is normally reserved for the mechanism (see MECHANISM_COLORS), which is
+# what makes "green means HCC" hold across the single-family notebooks. The
+# cross-model notebook holds one mechanism and five model families, so colour is
+# free there and encodes the model instead; the markers stay the ones above, so
+# a family keeps the same glyph whether it is the subject of a panel or a grey
+# reference in someone else's. Okabe-Ito, extended by one for the fifth family.
+MODEL_COLORS = {
+    "hcast": "#0072B2",
+    "hrn": "#D55E00",
+    "hiercos": "#009E73",
+    "lhdnn": "#E69F00",
+    "ht_capsnet": "#CC79A7",
+}
+
+MODEL_MARKERS = {spec["key"]: spec["marker"] for spec in MODEL_REFERENCE_SPECS}
+
+MODEL_LABELS = {spec["key"]: spec["label"] for spec in MODEL_REFERENCE_SPECS}
 
 
 # --------------------------------------------------------------------------- #
@@ -223,29 +250,128 @@ def load_test_metrics(path):
         return yaml.safe_load(handle)
 
 
-def independent_selection(seed_dir):
-    """Return the independently selected checkpoint and whether it is legacy.
+def validate_analysis_view(decoder="independent", readout="native",
+                           subspace_score_space="probability"):
+    """Validate and return one trade-off decoder/readout selection."""
+    if decoder not in DECODERS:
+        raise ValueError(f"decoder must be one of {DECODERS}, got {decoder!r}")
+    if readout not in READOUTS:
+        raise ValueError(f"readout must be one of {READOUTS}, got {readout!r}")
+    if subspace_score_space not in SUBSPACE_SCORE_SPACES:
+        raise ValueError(
+            "subspace_score_space must be one of "
+            f"{SUBSPACE_SCORE_SPACES}, got {subspace_score_space!r}"
+        )
+    return decoder, readout, subspace_score_space
+
+
+def checkpoint_selection(seed_dir, decoder="independent"):
+    """Return the checkpoint selected for ``decoder`` and whether it is legacy.
 
     Runs written before the top-down/independent selection split store a single
     checkpoint; it is used as-is and flagged so notebooks can mark it.
     """
+    validate_analysis_view(decoder=decoder)
     payload = load_test_metrics(Path(seed_dir) / "test_metrics.yaml")
-    if "independent" in payload:
-        return payload["independent"], False
+    if decoder in payload:
+        return payload[decoder], False
     return payload, True
 
 
-def independent_values(metrics):
-    """Extract the independent-decoding metrics from a selected checkpoint."""
+def independent_selection(seed_dir):
+    """Backward-compatible alias for the independently selected checkpoint."""
+    return checkpoint_selection(seed_dir, decoder="independent")
+
+
+def decoder_values(metrics, decoder="independent"):
+    """Extract one decoder's outcome metrics from a selected checkpoint."""
+    validate_analysis_view(decoder=decoder)
     return {
-        "fpa": 100.0 * float(metrics["fpa_independent"]),
-        "tice": 100.0 * float(metrics["tice_independent"]),
-        "ahd": float(metrics["ahd_independent"]),
-        "weighted_ap": 100.0 * float(metrics["weighted_ap_independent"]),
+        "fpa": 100.0 * float(metrics[f"fpa_{decoder}"]),
+        "tice": 100.0 * float(metrics[f"tice_{decoder}"]),
+        "ahd": float(metrics[f"ahd_{decoder}"]),
+        "weighted_ap": 100.0 * float(metrics[f"weighted_ap_{decoder}"]),
         **{
-            f"acc_level_{level}": 100.0 * float(metrics[f"acc_level_independent_{level}"])
+            f"acc_level_{level}": 100.0 * float(metrics[f"acc_level_{decoder}_{level}"])
             for level in range(3)
         },
+    }
+
+
+def independent_values(metrics):
+    """Backward-compatible alias for independent-decoding metric extraction."""
+    return decoder_values(metrics, decoder="independent")
+
+
+def _posthoc_inference_metrics(payload, checkpoint, readout):
+    """Read a canonical cell, including files that still use legacy row names."""
+    inference = checkpoint.get("inference", {})
+    if readout in inference:
+        return inference[readout]
+
+    legacy_name = payload.get("legacy_mode_names", {}).get(readout)
+    if legacy_name in inference:
+        return inference[legacy_name]
+
+    model = str(payload.get("model", ""))
+    native = payload.get("native_inference_mode")
+    fallback = None
+    if readout == native:
+        fallback = "normal"
+    elif readout == "node_score" and model == "hiercos":
+        fallback = "node_softmax"
+    elif readout == "subspace_norm" and model != "hiercos":
+        fallback = "hiercos"
+    if fallback in inference:
+        return inference[fallback]
+    raise KeyError(f"readout {readout!r} is absent from the post-hoc result")
+
+
+def selected_readout(seed_dir, decoder="independent", readout="native",
+                     subspace_score_space="probability"):
+    """Return one matched checkpoint/decoder/readout payload for a seed.
+
+    Native inference comes from ``test_metrics.yaml``. The two explicit
+    untransformed readouts come from ``posthoc_inference_test_metrics.yaml``.
+    """
+    decoder, readout, subspace_score_space = validate_analysis_view(
+        decoder, readout, subspace_score_space
+    )
+    native_selection, is_legacy = checkpoint_selection(seed_dir, decoder)
+    native_metrics = native_selection["test_metrics"]
+    if readout == "native":
+        return {
+            "best_epoch": float(native_selection.get("best_epoch", np.nan)),
+            "metrics": native_metrics,
+            "diagnostics": native_metrics,
+            "single_selection": is_legacy,
+            "test_split_source": "native_test_metrics",
+        }
+
+    result_path = Path(seed_dir) / POSTHOC_RESULT_FILENAME
+    if not result_path.is_file():
+        raise FileNotFoundError(f"missing {POSTHOC_RESULT_FILENAME}")
+    payload = load_test_metrics(result_path)
+    if readout == "subspace_norm":
+        actual_space = payload.get("subspace_score_space", "coordinate")
+        if actual_space != subspace_score_space:
+            raise ValueError(
+                f"subspace score space is {actual_space!r}, expected "
+                f"{subspace_score_space!r}"
+            )
+    checkpoints = payload.get("checkpoints", {})
+    if decoder not in checkpoints:
+        raise KeyError(f"checkpoint {decoder!r} is absent from the post-hoc result")
+    checkpoint = checkpoints[decoder]
+    metrics = _posthoc_inference_metrics(payload, checkpoint, readout)
+    return {
+        "best_epoch": float(checkpoint.get(
+            "checkpoint_epoch", native_selection.get("best_epoch", np.nan)
+        )),
+        "metrics": metrics,
+        "diagnostics": checkpoint.get("model_hcc_diagnostics", native_metrics),
+        "single_selection": is_legacy,
+        "test_split_source": payload.get("test_split_source", "unknown"),
     }
 
 
@@ -279,6 +405,116 @@ def _run_name(spec, dataset_key):
     return run_name(dataset_key) if callable(run_name) else run_name.format(dataset=dataset_key)
 
 
+def evaluate_missing_readouts(
+    outputs_root,
+    datasets,
+    run_specs,
+    *,
+    decoder="independent",
+    readout="native",
+    subspace_score_space="probability",
+    run_evaluation=True,
+    overwrite=False,
+    device=None,
+    repo_root=REPO_ROOT,
+    runner=None,
+):
+    """Quietly generate missing post-hoc readouts for the requested run matrix.
+
+    Valid result files are always reused. An existing file that cannot supply
+    the selected view is regenerated only when ``overwrite`` is true. Evaluator
+    output is captured; the notebook sees one updating loading line, plus concise
+    failure details when a subprocess fails.
+    """
+    decoder, readout, subspace_score_space = validate_analysis_view(
+        decoder, readout, subspace_score_space
+    )
+    summary = {"evaluated": 0, "reused": 0, "blocked": [], "failed": []}
+    if not run_evaluation or readout == "native":
+        return summary
+
+    outputs_root = Path(outputs_root)
+    seed_paths = set()
+    for dataset_key in datasets:
+        for spec in run_specs:
+            if spec.get("datasets") and dataset_key not in spec["datasets"]:
+                continue
+            run_dir = outputs_root / _run_name(spec, dataset_key)
+            seed_paths.update(seed_dir for _, seed_dir in seed_dirs(run_dir))
+
+    pending = []
+    for seed_dir in sorted(seed_paths):
+        try:
+            selected_readout(
+                seed_dir,
+                decoder=decoder,
+                readout=readout,
+                subspace_score_space=subspace_score_space,
+            )
+            summary["reused"] += 1
+            continue
+        except (FileNotFoundError, KeyError, ValueError) as error:
+            result_path = seed_dir / POSTHOC_RESULT_FILENAME
+            if result_path.exists() and not overwrite:
+                summary["blocked"].append((seed_dir, str(error)))
+                continue
+            pending.append(seed_dir)
+
+    if not pending:
+        if summary["blocked"]:
+            print(
+                "Loading inference: "
+                f"{len(summary['blocked'])} existing result file(s) need "
+                "OVERWRITE_INFERENCE=True."
+            )
+        return summary
+
+    run_command = runner or subprocess.run
+    total = len(pending)
+    for index, seed_dir in enumerate(pending, start=1):
+        print(f"\rLoading inference: {index}/{total}", end="", flush=True)
+        command = [
+            sys.executable,
+            "-m",
+            "evaluation.evaluate_checkpoints",
+            "--run-dir",
+            str(seed_dir),
+            "--inference-mode",
+            "both",
+            "--checkpoint-mode",
+            "both",
+            "--subspace-score-space",
+            subspace_score_space,
+        ]
+        if device is not None:
+            command.extend(("--device", str(device)))
+        if (seed_dir / POSTHOC_RESULT_FILENAME).exists():
+            command.append("--overwrite")
+        completed = run_command(
+            command,
+            cwd=Path(repo_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if completed.returncode == 0:
+            summary["evaluated"] += 1
+        else:
+            output_lines = [line for line in (completed.stdout or "").splitlines() if line.strip()]
+            detail = output_lines[-1] if output_lines else f"exit status {completed.returncode}"
+            summary["failed"].append((seed_dir, detail))
+
+    status = f"{summary['evaluated']}/{total} completed"
+    if summary["blocked"]:
+        status += f"; {len(summary['blocked'])} need overwrite"
+    if summary["failed"]:
+        status += f"; {len(summary['failed'])} failed"
+    print(f"\rLoading inference: {status}." + " " * 12)
+    for seed_dir, detail in summary["failed"]:
+        print(f"  {seed_dir}: {detail}")
+    return summary
+
+
 def mechanism_of(spec):
     """The intervention a spec applies, which is what colour encodes.
 
@@ -288,13 +524,18 @@ def mechanism_of(spec):
     return spec.get("mechanism") or spec.get("family")
 
 
-def discover_rows(outputs_root, datasets, run_specs, pareto=True):
-    """Aggregate the independently selected test metrics of every completed seed.
+def discover_rows(outputs_root, datasets, run_specs, pareto=True, decoder="independent",
+                  readout="native", subspace_score_space="probability"):
+    """Aggregate one matched decoder/readout view of every completed seed.
 
     Returns ``(rows, missing)``. A spec may restrict itself to a subset of
     datasets through ``datasets`` and opts into HCC activation diagnostics
-    through ``mechanism='hcc'``.
+    through ``mechanism='hcc'``. Missing non-native post-hoc rows are reported
+    per seed and never replaced with native metrics.
     """
+    decoder, readout, subspace_score_space = validate_analysis_view(
+        decoder, readout, subspace_score_space
+    )
     outputs_root = Path(outputs_root)
     rows = []
     missing = []
@@ -309,19 +550,43 @@ def discover_rows(outputs_root, datasets, run_specs, pareto=True):
                 continue
 
             seed_values = {}
+            unavailable_seeds = {}
+            test_split_sources = set()
             single_selection = False
             for seed, seed_dir in completed:
-                selected, is_legacy = independent_selection(seed_dir)
-                single_selection = single_selection or is_legacy
-                metrics = selected["test_metrics"]
+                try:
+                    selected = selected_readout(
+                        seed_dir, decoder=decoder, readout=readout,
+                        subspace_score_space=subspace_score_space,
+                    )
+                except (FileNotFoundError, KeyError, ValueError) as error:
+                    unavailable_seeds[seed] = str(error)
+                    continue
+                single_selection = single_selection or selected["single_selection"]
+                metrics = selected["metrics"]
                 values = {
-                    "best_epoch": float(selected.get("best_epoch", np.nan)),
-                    **independent_values(metrics),
+                    "best_epoch": selected["best_epoch"],
+                    **decoder_values(metrics, decoder),
                 }
                 if mechanism_of(spec) == "hcc":
-                    values["selected_hcc_alpha"] = float(metrics.get("proj_constraint_alpha", np.nan))
+                    values["selected_hcc_alpha"] = float(
+                        selected["diagnostics"].get("proj_constraint_alpha", np.nan)
+                    )
                     values["first_active_hcc_epoch"] = _first_active_hcc_epoch(seed_dir)
                 seed_values[seed] = values
+                test_split_sources.add(selected["test_split_source"])
+
+            if not seed_values:
+                reasons = "; ".join(
+                    f"seed {seed}: {reason}" for seed, reason in unavailable_seeds.items()
+                )
+                missing.append({
+                    "dataset": dataset_label,
+                    "label": spec["label"],
+                    "run_name": run_name,
+                    "reason": reasons or f"no {readout} metrics for {decoder} decoding",
+                })
+                continue
 
             row = {
                 **spec,
@@ -330,7 +595,12 @@ def discover_rows(outputs_root, datasets, run_specs, pareto=True):
                 "run_name": run_name,
                 "seeds": sorted(seed_values),
                 "seed_values": seed_values,
+                "unavailable_seeds": unavailable_seeds,
                 "single_selection": single_selection,
+                "decoder": decoder,
+                "readout": readout,
+                "subspace_score_space": subspace_score_space,
+                "test_split_sources": sorted(test_split_sources),
                 "point_label": spec.get("point_label") or spec.get("plot_label") or spec["label"],
                 # Accept either name on input, guarantee both on output.
                 "mechanism": mechanism_of(spec),
@@ -553,17 +823,70 @@ def check_encoding(rows, reference_rows=(), datasets=None, min_delta_e=20.0, ver
     return findings
 
 
-def model_reference_specs(exclude=()):
+def select_model_keys(include=(), exclude=()):
+    """Resolve a model-family selection into an ordered, validated key list.
+
+    ``include`` chooses the families and their order; empty means all of them in
+    ``MODEL_REFERENCE_SPECS`` order. ``exclude`` then removes families from that
+    result, which is how a single-family notebook drops itself from its own
+    reference set. An unknown key is an error rather than a silently empty
+    panel, since a typo in a family name is otherwise invisible until the figure
+    comes out short.
+    """
+    known = {spec["key"] for spec in MODEL_REFERENCE_SPECS}
+    unknown = sorted({*include, *exclude} - known)
+    if unknown:
+        raise ValueError(
+            f"unknown model families {unknown}; known families are {sorted(known)}"
+        )
+    keys = list(include) if include else [spec["key"] for spec in MODEL_REFERENCE_SPECS]
+    excluded = set(exclude)
+    return [key for key in dict.fromkeys(keys) if key not in excluded]
+
+
+def model_reference_specs(exclude=(), include=()):
     """Return consistently styled cross-model references, excluding the focal model.
 
     References give up colour so the focal family owns it, and keep their
-    identity in the marker shape.
+    identity in the marker shape. ``include``/``exclude`` select which families
+    appear -- see :func:`select_model_keys`.
     """
-    excluded = set(exclude)
+    by_key = {spec["key"]: spec for spec in MODEL_REFERENCE_SPECS}
     return [
-        {**spec, "family": "reference", "mechanism": "reference", "color": REFERENCE_GREY}
-        for spec in MODEL_REFERENCE_SPECS
-        if spec["key"] not in excluded
+        {**by_key[key], "family": "reference", "mechanism": "reference",
+         "color": REFERENCE_GREY}
+        for key in select_model_keys(include, exclude)
+    ]
+
+
+def model_baseline_specs(include=(), exclude=()):
+    """Return the selected model families' native baselines as focal rows.
+
+    This is the cross-model counterpart of :func:`model_reference_specs`: the
+    same runs, but as the subject of the figure rather than as context, so they
+    keep their colour and carry ``model`` for the hue channel to encode.
+    ``include``/``exclude`` select the families and their order -- see
+    :func:`select_model_keys`.
+
+    No spec is flagged ``canonical``. Across families there is no run the others
+    are variations of, so there is nothing for a crosshair or a delta to be
+    measured from; use :func:`plot_level_accuracy` rather than
+    :func:`plot_level_accuracy_deltas`, and draw the trade-off with
+    ``baseline_marker=None``.
+    """
+    keys = select_model_keys(include, exclude)
+    if not keys:
+        raise ValueError("no model families selected")
+    by_key = {spec["key"]: spec for spec in MODEL_REFERENCE_SPECS}
+    return [
+        {
+            **by_key[key],
+            "model": key,
+            "family": "baseline",
+            "mechanism": "baseline",
+            "variant": "native",
+        }
+        for key in keys
     ]
 
 
@@ -573,22 +896,42 @@ def print_availability(rows, missing, datasets, label_key="label", title="runs")
         print(f"\n{dataset} {title}")
         for row in (row for row in rows if row["dataset"] == dataset):
             note = " [legacy single selection]" if row["single_selection"] else ""
+            if row.get("unavailable_seeds"):
+                seeds = ", ".join(str(seed) for seed in row["unavailable_seeds"])
+                note += f" [readout unavailable for seed(s): {seeds}]"
+            fallback_sources = [
+                source for source in row.get("test_split_sources", [])
+                if source not in {"native_test_metrics", "run_configured"}
+            ]
+            if fallback_sources:
+                note += f" [test source: {', '.join(fallback_sources)}]"
             print(f"  {row[label_key]:<26} {len(row['seeds']):>2} seed(s): {row['run_name']}{note}")
         for item in (item for item in missing if item["dataset"] == dataset):
-            print(f"  {item['label']:<26} missing: {item['run_name']}")
+            reason = f" ({item['reason']})" if item.get("reason") else ""
+            print(f"  {item['label']:<26} missing: {item['run_name']}{reason}")
 
 
 def print_reference_availability(rows, missing, datasets):
-    """Report the cross-model references with their independent metrics."""
+    """Report cross-model references under the selected decoder/readout view."""
     for dataset in datasets.values():
         print(f"\n{dataset} reference models")
         for row in (row for row in rows if row["dataset"] == dataset):
             suffix = "*" if row["single_selection"] else ""
+            if row.get("unavailable_seeds"):
+                seeds = ", ".join(str(seed) for seed in row["unavailable_seeds"])
+                suffix += f" [readout unavailable for seed(s): {seeds}]"
+            fallback_sources = [
+                source for source in row.get("test_split_sources", [])
+                if source not in {"native_test_metrics", "run_configured"}
+            ]
+            if fallback_sources:
+                suffix += f" [test source: {', '.join(fallback_sources)}]"
             fpa = format_percent(row["fpa"], row["fpa_std"])
             tice = format_percent(row["tice"], row["tice_std"])
             print(f"  {row['label'] + suffix:<14} {len(row['seeds']):>2} seed(s)  FPA {fpa:<18} TICE {tice}")
         for item in (item for item in missing if item["dataset"] == dataset):
-            print(f"  {item['label']:<14} missing: {item['run_name']}")
+            reason = f" ({item['reason']})" if item.get("reason") else ""
+            print(f"  {item['label']:<14} missing: {item['run_name']}{reason}")
 
 
 # --------------------------------------------------------------------------- #
@@ -879,15 +1222,14 @@ def reference_point_label(row):
     FPA and TICE go on separate lines rather than one: a pinned label hugs the
     gutter it sits in, and a narrow three-line block stays at the edge where a
     single wide line would reach into the middle of the panel.
+
+    Only the across-seed means are printed. The seed count is uniform across the
+    reference models and is stated in the caption, and the spread is already
+    drawn as the individual seed markers, so neither earns label width here.
     """
-    seed_count = len(row["seeds"])
-    header = reference_display_label(row) + (f" ×{seed_count}" if seed_count > 1 else "")
-    if seed_count > 1:
-        fpa = format_percent(row["fpa"], row["fpa_std"])
-        tice = format_percent(row["tice"], row["tice_std"])
-    else:
-        fpa = format_percent(row["fpa"])
-        tice = format_percent(row["tice"])
+    header = reference_display_label(row)
+    fpa = format_percent(row["fpa"])
+    tice = format_percent(row["tice"])
     return f"{header}\nFPA {fpa}\nTICE {tice}"
 
 
@@ -1341,6 +1683,33 @@ def default_baseline_selector(row, subset):
 
 
 POINT_LABEL_MODES = ("auto", "all", "off_scale", "none")
+READOUT_LABELS = {
+    "native": "native readout",
+    "node_score": "node-score readout",
+    "subspace_norm": "subspace-norm readout",
+}
+
+
+def view_stem(stem, decoder="independent", readout="native"):
+    """Keep legacy filenames for the default view and separate every other view."""
+    validate_analysis_view(decoder=decoder, readout=readout)
+    if decoder == "independent" and readout == "native":
+        return stem
+    return f"{stem}_{readout}_{decoder}"
+
+
+def _validate_rows_view(rows, decoder, readout):
+    mismatched = {
+        (row.get("decoder"), row.get("readout"))
+        for row in rows
+        if row.get("decoder") is not None
+        and (row.get("decoder"), row.get("readout")) != (decoder, readout)
+    }
+    if mismatched:
+        raise ValueError(
+            f"rows contain decoder/readout views {sorted(mismatched)}, but the plot "
+            f"requested {(decoder, readout)}"
+        )
 
 
 def _label_kinds(point_labels, complete_key, frozen):
@@ -1383,8 +1752,10 @@ def plot_tradeoff(
     legend_ncol=None,
     panel_height=2.55,
     stem="fpa_tice_tradeoff",
+    decoder="independent",
+    readout="native",
 ):
-    """Draw the independent FPA-TICE trade-off, one full-width panel per dataset.
+    """Draw one decoder/readout FPA--TICE view, one panel per dataset.
 
     ``freeze_on_focal`` keeps the axis range on the focal model family and pins
     cross-model references into shaded gutters, which is what the multi-arm
@@ -1400,6 +1771,8 @@ def plot_tradeoff(
     references, so under the default it carries no labels at all and relies
     entirely on the legend and the axes.
     """
+    validate_analysis_view(decoder=decoder, readout=readout)
+    _validate_rows_view([*rows, *reference_rows], decoder, readout)
     if point_labels not in POINT_LABEL_MODES:
         raise ValueError(f"point_labels must be one of {POINT_LABEL_MODES}, got {point_labels!r}")
 
@@ -1513,8 +1886,14 @@ def plot_tradeoff(
     # The x label goes on the bottom panel rather than through fig.supxlabel:
     # constrained_layout puts a supxlabel in the same outside-bottom slot as the
     # legend, and the two overlap. Every panel carries its own x scale anyway.
-    axes[-1].set_xlabel("TICE, independent decoding (%) — lower is better")
-    fig.supylabel("FPA, independent decoding (%) — higher is better", fontsize=SUPLABEL_FONTSIZE)
+    readout_label = READOUT_LABELS[readout]
+    axes[-1].set_xlabel(
+        f"TICE, {decoder} decoding, {readout_label} (%) — lower is better"
+    )
+    fig.supylabel(
+        f"FPA, {decoder} decoding, {readout_label} (%) — higher is better",
+        fontsize=SUPLABEL_FONTSIZE,
+    )
 
     if handles:
         fig.legend(handles=handles, labels=[handle_label(handle) for handle in handles],
@@ -1529,7 +1908,7 @@ def plot_tradeoff(
         keep = _label_kinds(point_labels, plan["complete_key"], frozen)
         place_point_labels(ax, [spec for spec in labels if spec["kind"] in keep],
                            obstacles=obstacles)
-    save_figure(fig, figure_dir, stem, save_figures)
+    save_figure(fig, figure_dir, view_stem(stem, decoder, readout), save_figures)
 
 
 def _series_label(row, label_key):
@@ -1568,6 +1947,83 @@ def _bar_kwargs(spec):
     }
 
 
+def plot_level_accuracy(
+    rows,
+    datasets,
+    figure_dir,
+    save_figures=False,
+    label_key="label",
+    legend_ncol=3,
+    panel_height=1.55,
+    share_y=False,
+    stem="level_accuracy",
+    decoder="independent",
+    readout="native",
+):
+    """Plot absolute coarse, middle, and fine accuracy, one grouped bar per run.
+
+    :func:`plot_level_accuracy_deltas` needs a run to measure from, which makes
+    it the wrong figure whenever no run is privileged -- a cross-model panel,
+    say, where naming one family the origin would be an arbitrary choice that
+    the reader then has to undo. This one plots the values themselves.
+
+    Bars start at zero, always: a truncated bar encodes a length that is not the
+    value. ``share_y`` is off by default so a dataset whose accuracies sit in a
+    narrow band is not flattened by another's range; state in the caption that
+    the vertical scales are per dataset.
+    """
+    validate_analysis_view(decoder=decoder, readout=readout)
+    _validate_rows_view(rows, decoder, readout)
+    x = np.arange(3)
+    if not rows:
+        print("No run available for the level-accuracy figure.")
+        return
+
+    series_keys = list(dict.fromkeys(row["key"] for row in rows))
+    series_specs = [
+        _bar_series(next(row for row in rows if row["key"] == key), label_key)
+        for key in series_keys
+    ]
+    width = min(0.20, 0.8 / len(series_specs))
+    annotate = len(series_specs) <= 6
+
+    nrow = math.ceil(len(series_specs) / max(1, legend_ncol))
+    figure_height = len(datasets) * panel_height + _legend_height_in(nrow)
+    fig, axes = plt.subplots(
+        len(datasets), 1, figsize=(TEXT_WIDTH_IN, figure_height), sharex=True, sharey=share_y
+    )
+    axes = np.atleast_1d(axes)
+    for ax, dataset in zip(axes, datasets.values()):
+        subset = [row for row in rows if row["dataset"] == dataset]
+        for index, spec in enumerate(series_specs):
+            row = next((r for r in subset if r["key"] == spec["key"]), None)
+            if row is None:
+                continue
+            means = np.asarray([row[f"acc_level_{level}"] for level in range(3)], dtype=float)
+            stds = np.asarray([row[f"acc_level_{level}_std"] for level in range(3)], dtype=float)
+            positions = x + (index - (len(series_specs) - 1) / 2) * width
+            bars = ax.bar(
+                positions, means, width=width, zorder=2, **_bar_kwargs(spec),
+                yerr=stds if np.all(np.isfinite(stds)) else None,
+                capsize=1.6, error_kw={"linewidth": 0.6},
+            )
+            if annotate:
+                ax.bar_label(bars, fmt="%.1f", fontsize=BAR_LABEL_FONTSIZE, padding=1.5)
+        ax.set_title(dataset)
+        ax.set_xticks(x, LEVEL_LABELS)
+        ax.set_ylim(bottom=0)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+        ax.grid(True, axis="y", alpha=0.25)
+    fig.supylabel(
+        f"{decoder.capitalize()} accuracy ({READOUT_LABELS[readout]}, %)",
+        fontsize=SUPLABEL_FONTSIZE,
+    )
+    handles = [plt.Rectangle((0, 0), 1, 1, label=spec["label"], **_bar_kwargs(spec))
+               for spec in series_specs]
+    fig.legend(handles=handles, loc="outside lower center", ncol=legend_ncol, frameon=True)
+    save_figure(fig, figure_dir, view_stem(stem, decoder, readout), save_figures)
+
+
 def plot_level_accuracy_deltas(
     rows,
     datasets,
@@ -1580,6 +2036,8 @@ def plot_level_accuracy_deltas(
     panel_height=1.55,
     share_y=False,
     stem="level_accuracy_matched_deltas",
+    decoder="independent",
+    readout="native",
 ):
     """Plot matched-seed level-accuracy deltas from each run's reference baseline.
 
@@ -1593,6 +2051,8 @@ def plot_level_accuracy_deltas(
     printed values make the magnitudes explicit; state in the caption that the
     vertical scales are per dataset.
     """
+    validate_analysis_view(decoder=decoder, readout=readout)
+    _validate_rows_view(rows, decoder, readout)
     x = np.arange(3)
     pairs = []
     for dataset in datasets.values():
@@ -1656,12 +2116,14 @@ def plot_level_accuracy_deltas(
         ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
         ax.grid(True, axis="y", alpha=0.25)
     fig.supylabel(
-        f"Independent accuracy change from {baseline_name} (pp)", fontsize=SUPLABEL_FONTSIZE
+        f"{decoder.capitalize()} accuracy change from {baseline_name} "
+        f"({READOUT_LABELS[readout]}, pp)",
+        fontsize=SUPLABEL_FONTSIZE,
     )
     handles = [plt.Rectangle((0, 0), 1, 1, label=spec["label"], **_bar_kwargs(spec))
                for spec in comparison_specs]
     fig.legend(handles=handles, loc="outside lower center", ncol=legend_ncol, frameon=True)
-    save_figure(fig, figure_dir, stem, save_figures)
+    save_figure(fig, figure_dir, view_stem(stem, decoder, readout), save_figures)
 
 
 def print_summary(rows, datasets, label_key="label", label_width=24):

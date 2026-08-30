@@ -59,6 +59,7 @@ train:
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hiercos_aircraft_global_softmax_ce_reg_baseline_kl_leaf
   smoothing: 0.0
+  gradient_blocks: [p123]
 
 optim:
   name: sgd

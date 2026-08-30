@@ -15,10 +15,11 @@ train:
   scale_lr: false                   # If true, final LR = optim.lr * batch_size / reference_batch_size
   scale_lr_reference_batch_size: 512
 
-  # Exact gradient-support blocks to diagnose and, when lexicographic mode is
-  # enabled, project. p123/p12/p1 preserves historical H-CAST behavior;
-  # HT-CapsNet normally uses [p123, p23, p3].
-  gradient_blocks: [p123, p12, p1]
+  # Exact gradient-support blocks to diagnose. A baseline should list every
+  # nonempty support block; a lex launcher should override this with only the
+  # multi-objective blocks that can be projected. This default is H-CAST's full
+  # baseline partition; family-specific configs provide their own lists.
+  gradient_blocks: [p123, p12, p1, p2, p3]
 
   # Optional lexicographic projected-gradient mode.
   # Supported when exactly 3 differentiable level losses are available.

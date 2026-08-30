@@ -48,6 +48,7 @@ train:
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/lhdnn_aircraft
   smoothing: 0.0
+  gradient_blocks: [p123, p1, p2, p3]
 
 optim:
   # Extrapolation of the paper/reference optimizer: SGD, momentum 0.9,

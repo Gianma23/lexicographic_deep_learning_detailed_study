@@ -93,6 +93,7 @@ train:
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/capsnet_aircraft
   smoothing: 0.0
+  gradient_blocks: [p123, p23, p3]
 
 optim:
   # Stock PyTorch Adam; see capsnet_cifar100.yaml for the rationale.

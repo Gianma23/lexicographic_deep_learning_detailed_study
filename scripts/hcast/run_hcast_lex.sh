@@ -142,7 +142,7 @@ for ds in "${DATASETS[@]}"; do
     "model.loss.globalkl=false" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
-    "train.gradient_blocks=[p123,p12,p1]" \
+    "train.gradient_blocks=[p123,p12]" \
     "train.lexicographic.eps=1.0e-12" \
     "train.lexicographic.log_metrics=true"
 done

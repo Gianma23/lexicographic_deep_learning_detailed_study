@@ -90,7 +90,7 @@ All datasets used in this thesis are given a three-level hierarchy, $L=3$. Some
 methods, such as Hier-COS, are defined for arbitrary $L$ and the restriction is a property of the
 experimental setting, not of the formulation.
 
-\subsection{Classifier output interface}
+\subsection{Classifier outputs}
 \label{ssec:problem_scores}
 
 A hierarchical classifier is represented by a parameterised map
@@ -124,7 +124,7 @@ This architectural difference is relevant later only because a method may
 modify either the network's internal output or the scores used to make a
 prediction.
 
-\subsection{Scalarised objectives and level weights}
+\subsection{Scalarisation and level weights}
 \label{ssec:problem_objective}
 
 The baseline training objectives can be written, when they expose one loss per
@@ -153,7 +153,7 @@ level coefficient, and HT-CapsNet updates its level weights during training.
 Other families assemble their native loss terms according to their own
 definitions.
 
-\subsection{Gradient scaling in lexicographic mode}
+\subsection{Lexicographic gradient scaling}
 \label{ssec:problem_lr}
 
 Lexicographic mode (\S\ref{sec:methodology_lex}) computes one gradient per level
@@ -268,7 +268,7 @@ Both taxonomy-derived rules are fixed before training. The purpose of the ablati
 is precisely to determine whether any of them improves lexicographic training
 over uniform gradient scale.
 
-\subsection{The lexicographic problem}
+\subsection{Lexicographic objective}
 \label{ssec:problem_priority}
 
 The objective of \S\ref{ssec:problem_objective} is the one the baseline families
@@ -314,7 +314,7 @@ the order is reversed cannot be attributed to the taxonomy. Coarse-level
 protection may also restrict fine-level learning, so the results are interpreted
 as an accuracy--consistency trade-off rather than as a uniform improvement.
 
-\section{Gradient-space lexicographic optimisation}
+\section{Lexicographic gradient optimisation}
 \label{sec:methodology_lex}
 
 Lexicographic mode imposes priority on the \emph{update direction} in parameter
@@ -326,7 +326,7 @@ of the levels processed before it. This thesis refers to the procedure as
 the optimiser; \S\ref{ssec:lex_guarantee} states precisely what that rule does
 and does not protect.
 
-\subsection{Setting and requirements}
+\subsection{Requirements}
 \label{ssec:lex_setting}
 
 Lexicographic mode assumes a classifier with exactly three differentiable scalar
@@ -350,17 +350,19 @@ objective into three conditional level terms and assigns leaf cross-entropy to
 the fine level;
 Hier-COS replaces its coupled node-wide KL objective with separate differentiable
 level objectives; and HT-CapsNet uses its three level-wise capsule margin losses.
-LH-DNN is excluded because it does not expose three independent differentiable
-level objectives in the form required here. Its built-in branch-point projection
-is treated separately in \S\ref{sec:methodology_lhproj}.
+LH-DNN already supplies one differentiable cross-entropy per level, but it is
+excluded because its architecture contains the branch-point projection studied
+separately in \S\ref{sec:methodology_lhproj}. Adding the assembled-gradient
+projection would combine two related gradient interventions and prevent a clean
+attribution of either one.
 
-The implementation constructs the optimiser update exclusively from these three
-exposed tensors. A term included only in a family's conventionally reported
+The optimiser update is constructed exclusively from these three exposed
+tensors. A term included only in a family's conventionally reported
 scalar total, but not in one of the tensors $\ell_1,\ell_2,\ell_3$, is therefore
 absent from a lexicographic step. This determines which parts of a native
 objective survive the adaptation and which level coefficients affect the update.
 
-\subsection{Adaptation by model family}
+\subsection{Model-family adaptations}
 \label{ssec:lex_family_adaptation}
 
 The projection rule is common to all supported families, but the three tensors
@@ -387,8 +389,8 @@ weights remain outside the exposed losses; the matched arm uses unit weights. \\
 HRN & Three conditional tree negative log-likelihoods, with leaf
 cross-entropy assigned to the fine term & Native tree objective split by the
 chain rule; finer score branches are detached from higher-level gradients. \\
-LH-DNN & --- & No arm: three independent differentiable level objectives are
-not exposed. \\
+LH-DNN & Three level-wise cross-entropies & No arm: its built-in branch-point
+projection would be combined with a second gradient intervention. \\
 \bottomrule
 \end{tabularx}
 \caption{Family-specific construction of the level objectives consumed by
@@ -415,12 +417,20 @@ uses static unit weighting, and any comparison against a dynamically weighted
 baseline must be identified as changing both the update rule and the relative
 level scale.
 
-\paragraph{Hier-COS.} The published-style \texttt{kl\_reg} objective supplies one
-node-wide KL term and cannot be used directly. The
-\texttt{global\_softmax\_ce\_reg} adaptation regroups the classification part
-into one differentiable target term per level while retaining the global
-normaliser; its sum is algebraically the same classification objective up to a
-parameter-independent constant. The alternative
+\paragraph{Hier-COS.} The published-style \texttt{kl\_reg} objective is presented
+as one node-wide KL term and cannot be consumed directly as an ordered list of
+level objectives. Let $p$ be its globally normalised node distribution and let
+$q(y)$ place the normalised level weight $\bar w_l$ on the ground-truth node
+$n_l(y)$ of each level. Its classification term admits the exact decomposition
+\[
+\operatorname{KL}\!\big(q(y)\,\|\,p\big)
+=\sum_{l=1}^{L}\left[-\bar w_l\log p_{n_l(y)}\right]-H\!\big(q(y)\big),
+\]
+where $H(q(y))$ is independent of the model parameters. The
+\texttt{global\_softmax\_ce\_reg} adaptation exposes the bracketed terms, together
+with their corresponding level regularisers, as differentiable level
+objectives while retaining the global normaliser. Their sum therefore has the
+same gradient as the published-style objective. The alternative
 \texttt{level\_softmax\_ce\_reg} also normalises within each level and therefore
 changes the objective rather than merely decomposing it. The main
 lexicographic comparison uses the former unless softmax scope is itself the
@@ -492,10 +502,8 @@ Both $P(\mathcal{D}(y_l))$ and the normaliser $Z$ sum over states of every
 depth, and the two do not cancel: the numerator sums over one subtree, the
 denominator over the whole state space. Writing $f^{(l)}$ for the scores of the
 nodes at level $l$, the coarse term $\ell_1$ is therefore a function of
-$f^{(3)}$ as well as of $f^{(1)}$, and the dependence is not a small residual
---- measured on the implementation, $\lVert\partial\ell_1/\partial
-f^{(3)}\rVert$ is of the same order as $\lVert\partial\ell_1/\partial
-f^{(1)}\rVert$. The consequence for a gradient-space method is direct: $g_1$
+$f^{(3)}$ as well as of $f^{(1)}$. The consequence for a gradient-space method
+is direct: $g_1$
 then carries substantial mass on the fine branch, whose parameters cannot move
 the coarse logits at all. Ordering $g_3$ against such a $g_1$ would constrain
 the fine head in directions that protect nothing, while leaving the
@@ -513,13 +521,17 @@ through them. This finer-level detach acts on the objective, and is distinct
 from the previous-level detach introduced later for the HCC projection, which
 acts on representations.
 
-Because $\operatorname{sg}(\cdot)$ is the identity in value, the three terms
-keep the values they had, so the telescoping identity and the gradient equality
-above hold exactly as stated. What the detach changes is the support of the
-level gradients, which becomes triangular: $g_l$ is supported on the parameters
-of levels $1$ to $l$ together with the shared trunk, and on nothing finer.
-Verified on the implementation, $g_1$ reaches the coarse branch and the trunk
-only, $g_2$ adds the middle branch, and $g_3$ reaches every branch.
+The stop-gradient leaves the values of the marginal terms unchanged. More
+importantly for the gradient identity, the same marginal tensors occur with
+opposite signs in adjacent conditional terms, so their surrogate derivatives
+cancel pairwise when the three terms are summed. The telescoping identity and
+the native-gradient equality therefore both hold exactly. What the detach
+changes is the support of the individual level gradients, which becomes
+triangular: $g_1$ reaches the coarse branch and shared trunk, $g_2$ additionally
+reaches the middle branch, and $g_3$ reaches every branch. Consequently the
+competing support blocks are $P_{123}$ on the shared/coarse part and $P_{23}$ on
+the middle branch; the remaining fine-only parameters form the singleton block
+$P_3$.
 
 This support partition is what the ordering acts on, and it is not a separation
 of the branches. The coupling that remains is genuine: the fine objective
@@ -549,11 +561,12 @@ objectives.
 
 \paragraph{LH-DNN.} No lexicographic arm is defined. LH-DNN's constitutive
 branch-point operation already removes a higher-level component from a
-lower-level signal. Adding the global parameter-gradient projection would apply
-the same principle at a second location, while its native objective does not
-provide the three independent tensors required by the present operator.
+lower-level signal. Although its native objective supplies one differentiable
+cross-entropy per level, adding the global parameter-gradient projection would
+apply the same principle at a second location and make the resulting change
+attributable to neither mechanism alone.
 
-\subsection{Parameter blocks and the projection operator}
+\subsection{Parameter blocks and projection}
 \label{ssec:lex_blocks}
 \label{ssec:lex_projection}
 
@@ -582,24 +595,26 @@ where two or more objectives may propose conflicting updates. A singleton block 
 conflict, so its gradient passes through unchanged; it may nevertheless be
 logged to analyse shared representation learning in a level-specific branch.
 
-The selected blocks used in the experiments are shown in Table~\ref{tab:lex_gradient_blocks}.
+The blocks used in the experiments are shown in Table~\ref{tab:lex_gradient_blocks}.
 
 \begin{table}[htbp]
 \centering
 \small
 \renewcommand{\arraystretch}{1.08}
-\begin{tabularx}{\textwidth}{@{}L{2.4cm}L{5.0cm}Y@{}}
+\begin{tabularx}{\textwidth}{@{}L{2.0cm}L{3.8cm}YY@{}}
 \toprule
-\textbf{Family} & \textbf{Architecture} & \textbf{Selected blocks} \\
+\textbf{Family} & \textbf{Architecture} & \textbf{Baseline diagnostics} & \textbf{Lexicographic projection} \\
 \midrule
-H-CAST & fine-to-coarse staged heads & \texttt{p123}, \texttt{p12}, \texttt{p1} \\
-HT-CapsNet & coarse-to-fine capsule cascade & \texttt{p123}, \texttt{p23}, \texttt{p3} \\
-Hier-COS & one shared network & \texttt{p123} \\
-HRN & shared network branched & \texttt{p123} \\
+H-CAST & fine-to-coarse staged heads & \texttt{p123}, \texttt{p12}, \texttt{p1}, \texttt{p2}, \texttt{p3} & \texttt{p123}, \texttt{p12} \\
+HT-CapsNet & coarse-to-fine capsule cascade & \texttt{p123}, \texttt{p23}, \texttt{p3} & \texttt{p123}, \texttt{p23} \\
+Hier-COS & one shared network & \texttt{p123} & \texttt{p123} \\
+HRN & shared network branched & \texttt{p123}, \texttt{p23}, \texttt{p3} & \texttt{p123}, \texttt{p23} \\
+LH-DNN & shared trunk with independent heads & \texttt{p123}, \texttt{p1}, \texttt{p2}, \texttt{p3} & --- \\
 \bottomrule
 \end{tabularx}
-\caption{Exact gradient-support blocks selected for diagnostics and, when
-lexicographic mode is active, projection. Singleton blocks are diagnostic only.}
+\caption{Exact gradient-support blocks used in the baseline and lexicographic
+arms. Baselines diagnose every non-empty block; lexicographic arms select only
+multi-objective blocks, because singleton blocks admit no inter-objective projection.}
 \label{tab:lex_gradient_blocks}
 \end{table}
 
@@ -612,13 +627,25 @@ HT-CapsNet has the reverse dependency: the middle capsule stage feeds the fine
 stage, so its parameters lie in $P_{23}$, while the final capsule stage is
 fine-only, $P_{3}$. Thus the same operator applies to both architectures,
 but not on the same blocks.
+H-CAST's level-specific heads additionally form singleton blocks $P_1$, $P_2$
+and $P_3$. These blocks contain only one objective and therefore admit no
+inter-objective projection; they are reported for the baseline diagnostics and
+excluded from the lexicographic projection set.
+HRN's conditional decomposition produces the same triangular pattern by a
+different route: the shared trunk and coarse branch form $P_{123}$, the middle
+branch forms $P_{23}$, and the fine-only branch forms $P_3$. Its two interacting
+blocks $P_{123}$ and $P_{23}$ are therefore selected for projection, while the
+singleton $P_3$ needs no inter-objective projection.
+LH-DNN's shared trunk forms $P_{123}$ and its three independent heads form
+$P_1$, $P_2$ and $P_3$. These blocks are diagnosed in its baseline, but no
+explicit lexicographic arm is defined for the family.
 
 For a block $B$ define the restricted inner product
 $\langle u,v\rangle_B := \sum_{i\in B} u_i v_i$ and the induced norm
 $\lVert u\rVert_B$. All projection coefficients below are computed with respect to these
 restricted inner products, one block at a time.
 
-\subsubsection{The projection operator}
+\subsubsection{Projection operator}
 
 Given a target gradient $g$, a reference gradient $r$ and a block $B$,
 the basic operation is the Euclidean projection of $g$ onto the orthogonal complement of $r$,
@@ -894,7 +921,7 @@ The remaining scope conditions are as follows.
 \subsection{Computational cost}
 \label{ssec:lex_cost}
 
-The implementation obtains the three level gradients with three calls to
+The procedure obtains the three level gradients with three calls to
 reverse-mode automatic differentiation from one forward graph. A standard
 scalarised step uses one backward pass. The graph is retained until the last
 level gradient has been computed, and the three gradient tuples coexist until
@@ -933,10 +960,10 @@ the shared representation.
 
 The generic construction is separated from its Hier-COS instantiation, which
 requires changes to the published model. The following sections state the
-architectural requirements, define the stop-gradient implementation, describe the
+architectural requirements, define the stop-gradient construction, describe the
 Hier-COS adaptation and delimit the resulting guarantee.
 
-\subsection{Setting and requirements}
+\subsection{Requirements}
 \label{ssec:lhproj_setting}
 
 The LH-projection is defined for a particular architectural structure rather than
@@ -959,16 +986,19 @@ operator definable, and the fourth ensures a non-trivial projected subspace.
     a normaliser, or are otherwise coupled across levels, the level-$l$ signal
     reaches the shared parameters through the other levels' branches as well, and
     filtering what branch $l$ reads no longer determines that signal.
-    \item \textbf{A non-trivial complement.} The reserved subspace must not exhaust
-    the representation, which requires $D>\sum_{l<L}C_l$. The stacked matrix at the
-    finest level has $R_L=\sum_{l<L}C_l$ rows in $\mathbb{R}^{D}$; if
-    $R_L\ge D$ and those rows are independent, their span is all of $\mathbb{R}^{D}$,
-    the complement is $\{0\}$ and the projection annihilates the entire learning
-    signal of the finest level. Since $R_l$ increases with $l$, the binding case is
-    $l=L$.
+    \item \textbf{A non-trivial complement.} The exact requirement is
+    $\operatorname{rank}(A^{(l)}[b])<D$, so that the reserved row space does not
+    exhaust the representation. The study uses the conservative sufficient
+    condition $D>\sum_{l<L}C_l$, which guarantees this inequality independently
+    of the learned head weights. At the finest level the stacked matrix has
+    $R_L=\sum_{l<L}C_l$ rows in $\mathbb{R}^{D}$; if $R_L\ge D$ and those rows are
+    independent, their span is all of $\mathbb{R}^{D}$, the complement is
+    $\{0\}$ and the projection annihilates the entire learning signal of the
+    finest level. Since $R_l$ increases with $l$, the binding sufficient
+    condition is the one at $l=L$.
 \end{enumerate}
 
-\subsubsection{Model families satisfying the conditions}
+\subsubsection{Compatible model families}
 
 Each model family has to be adapted differently to apply LH-projection:
 
@@ -987,10 +1017,17 @@ chained, each level receiving the previous level's output capsules among its
 inputs, and a level score is the norm of a capsule obtained by routing, not a
 linear map of a shared vector.
 
-\emph{HRN} has a shared backbone but cumulative level embeddings: level $l$ reads
-the sum of its own projection and those of all coarser levels, so the heads again
-do not read one common representation, and its level terms are coupled by the
-hierarchical residual construction of the loss.
+\emph{HRN} fails conditions~1--3 as published: its branches read the trunk's
+final \emph{spatial} feature map and pool it separately, each branch is a
+nonlinear stack of convolutions and normalised fully connected layers rather than
+a linear head, and level $l$ reads the sum of its own embedding and those of all
+coarser levels, so the level terms are coupled by the hierarchical residual
+construction. Like Hier-COS, however, it fails at points that can be
+\emph{substituted} rather than rebuilt: the existing pooling operation can be
+moved before the split to expose one shared vector, each complete nonlinear
+branch can be replaced by one direct affine level head, and the residual can be
+re-expressed in score space as the advantage parameterisation
+of~\cite{fiaschi2024informed}.
 
 \emph{Hier-COS} fails conditions~1--3 as published --- it emits a single node
 vector, maps it through a dense fixed frame shared by the whole taxonomy, scores
@@ -1000,7 +1037,14 @@ rather than rebuilt: the frame is a fixed matrix that can be chosen differently,
 the objective's normaliser can be scoped to a level, and the representation width
 $D$ is a free design parameter that condition~4 constrains.
 
-\subsection{The branch projection}
+Hier-COS and HRN are therefore the two host families for this mechanism, and the
+substitutions each requires are set out in \S\ref{ssec:lhproj_hiercos}
+and~\S\ref{ssec:lhproj_hrn}. They are hosts for different reasons: the Hier-COS
+package substitutes components of a short output path and can be decomposed into
+separately measurable steps, whereas the HRN package reshapes a branch structure
+and is evaluated only in its complete adapted form.
+
+\subsection{Branch projection}
 \label{ssec:lhproj_construction}
 \label{ssec:lhproj_forward}
 
@@ -1042,25 +1086,10 @@ The scores produced by a fixed parameter vector are therefore unchanged; only
 the level-$l$ gradient sent to the shared trunk is filtered. The higher-head
 weights and the activation derivative are detached when the projection matrix is
 built, so the level-$l$ loss cannot update them through this auxiliary path.
-\Cref{fig:lh_projection_branch} collects the construction.
-
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=\textwidth]{images/methodology/lh_projection_branch.pdf}
-\caption{The LH-projection at the branch point, drawn in the convention of
-\cite{fiaschi2024informed}. Every level head reads the same representation
-$z_b$: the first head reads it unfiltered, while for $l>1$ the projector
-$P^{(l)}_{\varepsilon}$ extracts the component $c_b^{(l)}$ lying in the subspace
-reserved by the heads above level $l$. The two branches are recombined
-additively, but only the perpendicular one, $z_b-c_b^{(l)}$, carries a
-derivative: the dotted branch is detached, so $z_b^{(l)}=z_b$ in value while
-$\partial z_b^{(l)}/\partial z_b=I-P^{(l)}_{\varepsilon}$ filters the gradient
-the level-$l$ loss sends to the shared trunk. The projector is rebuilt for each
-sample from the stacked higher-priority weights $W_{<l}$ and the activation
-derivative $\rho'(k_b)$, both detached, so the level-$l$ loss cannot reach them
-through this path either.}
-\label{fig:lh_projection_branch}
-\end{figure}
+The construction is unchanged from LH-DNN, whose compact layout is reproduced
+in \cref{fig:lhdnn-architecture}; what differs between the hosts is the model
+it is installed in, and \cref{fig:lhproj_hiercos,fig:lhproj_hrn} draw the two
+adapted models in full.
 
 The term $\varepsilon I$ keeps the system solvable when the stacked rows are
 linearly dependent or poorly conditioned. For $\varepsilon=0$ and full row rank,
@@ -1078,7 +1107,7 @@ path allows the changes required by the LH-projection to be introduced and
 evaluated separately. Three changes are structural; each alters the model on
 which the projection is subsequently measured.
 
-\subsubsection{(i) Identity frame and per-level heads}
+\subsubsection{(i) Identity frame and level heads}
 Hier-COS obtains its node coordinates by mapping the transformed backbone feature through a single
 $N\times N$ orthonormal matrix --- the \emph{frame} --- drawn at random once
 before training and frozen thereafter. The whole output path therefore contains one
@@ -1101,7 +1130,7 @@ weights of the finer heads as well, and the subspace reserved for the coarse
 levels would contain directions owned by the levels the projection is meant to
 leave free.
 
-\subsubsection{(ii) Level-scoped normalisation}
+\subsubsection{(ii) Per-level normalisation}
 
 Condition~3 requires each level term of the objective to be a differentiable
 function of its own head's output alone. That is stronger than requiring $L$
@@ -1133,9 +1162,10 @@ q_j(y)=
 0, & \text{otherwise.}
 \end{cases}
 \]
-It is a single scalar, and no per-level signal can be extracted from it at all.
-The \emph{intermediate} objective keeps that global softmax and reads off the
-target node of each level separately, giving one cross-entropy term per level,
+In its native presentation this is one coupled scalar. The exact regrouping
+derived for lexicographic mode in \S\ref{ssec:lex_family_adaptation} keeps that
+global softmax and reads off the target node of each level separately, giving
+one cross-entropy term per level,
 \[
 \ell^{\mathrm{glob}}_l=-\,\bar w_l\log p_{n_l(y)} .
 \]
@@ -1155,20 +1185,12 @@ with $e_c$ the standard basis vector of the target node, which reads
 $u_{\mathcal{N}_l}$ and nothing else and is therefore separable by construction. The softmax normaliser is thus the only quantity that changes
 across the three positions, and the only one that couples the levels.
 
-\paragraph{Exact decomposition under global normalisation.} Summing
-the intermediate terms recovers the published objective,
-\[
-\sum_{l=1}^{L}\ell^{\mathrm{glob}}_l
-=-\sum_{j=1}^{N}q_j(y)\log p_j
-=\mathcal{L}^{\mathrm{KL}}+H\big(q(y)\big),
-\qquad
-H\big(q(y)\big)=-\sum_{j=1}^{N}q_j(y)\log q_j(y),
-\]
-and the additive entropy term is a function of the fixed weights alone, not of
-$\theta$. The two positions therefore induce identical gradients: the
-intermediate objective is the published one re-read as an ordered list of $L$
-terms, not a different loss. Nothing about the training problem is traded away
-in taking that step, which is why it is not treated as a precondition below.
+\paragraph{Global normalisation as the matched reference.} By the identity in
+\S\ref{ssec:lex_family_adaptation}, the intermediate terms sum to the published
+classification objective up to the fixed target entropy. They therefore induce
+the same gradient. This position changes only the presentation of the objective
+and is retained here as the matched reference from which the effect of scoping
+the normaliser to each level can be isolated.
 
 \paragraph{Effect of level-scoped normalisation.} Under the
 global normaliser the derivative of the level-$l$ term does not vanish outside
@@ -1220,33 +1242,238 @@ requirement rather than the effect of a mechanism. \cref{ch:experiments} reports
 it as a two-row contrast at matched frame and weighting, and it also carries the
 baseline in both scopes, since comparing a mechanism arm trained under a
 per-level normaliser against a baseline trained under a global one would confound
-the mechanism with the normaliser. The published KL objective is not one of those
-rows: admitting no per-level decomposition, it cannot serve as the baseline for
-any arm in this thesis, and it is the starting point of the adaptation rather
-than a point of comparison within it. By the identity above this costs nothing,
-since the global-normaliser row optimises the same function as the published
-objective and therefore stands in for it.
+the mechanism with the normaliser. The published KL presentation is not a
+separate row: the global-normaliser row is its exact level-wise regrouping and
+therefore represents it without changing the objective gradient.
 
-\subsubsection{(iii) A representation width decoupled from the taxonomy}
+\subsubsection{(iii) Taxonomy-independent representation width}
 
-Condition~4 requires $D>\sum_{l<L}C_l$. In the published model the width is tied
-to the taxonomy size $N$, since the node coordinates are what the frame consumes;
-the projected variant therefore makes the width of the shared representation a
-free parameter.
+The sufficient condition adopted in Condition~4 is
+$D>\sum_{l<L}C_l$. In the published model the width is tied to the taxonomy size
+$N$, since the node coordinates are what the frame consumes; the projected
+variant therefore makes the width of the shared representation a free parameter.
 
 \paragraph{The activation.} The instantiation places a shared PReLU at the
 branch point, so the diagonal entering $A^{(l)}[b]$ is
 $\rho'(k)_j=\mathbf{1}[k_j>0]+a_j\,\mathbf{1}[k_j\le 0]$, with $a_j$ the learned
 slope of channel $j$, evaluated at the sample's own pre-activation.
 
-\paragraph{Advantage function.} Following \cite{fiaschi2024informed}, the \emph{advantage}
-parameterisation is included as an ablation. It expresses the logits of level $l$ as a residual on
-top of the parent logit, treated as constant for differentiation,
+\paragraph{Advantage function.} Following \cite{fiaschi2024informed}, the
+\emph{advantage} parameterisation is included as an ablation. In the Hier-COS
+adaptation it acts on the post-frame magnitude scores. Writing
+$a_l=\lvert u_{\mathcal{N}_l}\rvert$ before the recursion, the score supplied to
+level $l>1$ is
 \[
-z_l \leftarrow z_l + z_{l-1}[\pi_{l-1}(\cdot)] ,
+a_l \leftarrow a_l
++\operatorname{sg}\!\big(a_{l-1}[\pi_{l-1}(\cdot)]\big),
 \]
-so that the head predicts a correction to its parent rather than an absolute
-score.
+so that the current level predicts a magnitude correction to its detached parent
+score rather than an absolute score.
+
+\Cref{fig:lhproj_hiercos} draws the resulting model.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{images/methodology/lhproj_hiercos.pdf}
+\caption{The adapted Hier-COS model carrying the LH-projection, drawn for
+$L=3$. Boxes in accent are the substitutions of this subsection, each marked
+with the numeral of the step that introduces it; boxes in blue are published
+Hier-COS components the adaptation leaves alone. Step~(i) inserts one learnable
+head $W_l$ per level ahead of the frame and replaces the dense frame by the
+identity, so the node block of level $l$ is the output of that level's own head
+alone, $u_{\mathcal{N}_l}=W_lz_b^{(l)}$, and the three level rows never mix.
+Step~(ii) scopes the softmax normaliser to the block $\mathcal{N}_l$, which is
+what makes $\ell^{\mathrm{lvl}}_l$ a function of head $l$ alone. Step~(iii)
+places a shared PReLU at the branch point and frees the width $D$ from the
+taxonomy size $N$. The projection itself is the construction of
+\S\ref{ssec:lhproj_construction}, unchanged from LH-DNN
+(\cref{fig:lhdnn-architecture}): the coarsest head reads $z_b$ unfiltered,
+while for $l>1$ the projector $P^{(l)}_{\varepsilon}$ splits off the component
+$c_b^{(l)}$ reserved by the heads above level $l$, and the two branches are
+recombined additively with only the perpendicular one carrying a derivative,
+so that $z_b^{(l)}=z_b$ in value while
+$\partial z_b^{(l)}/\partial z_b=I-P^{(l)}_{\varepsilon}$. The advantage
+parameterisation introduced alongside step~(iii) is an ablation on top of this
+model rather than part of it, and is not drawn.}
+\label{fig:lhproj_hiercos}
+\end{figure}
+
+\subsection{HRN instantiation}
+\label{ssec:lhproj_hrn}
+
+HRN is the second host. Its published form splits the trunk's final feature map
+into three convolutional branches, pools each separately, and sums the resulting
+embeddings coarse-to-fine before scoring. The LH-compatible form makes three
+structural substitutions and checks one dimensional condition. They are applied
+together, so the resulting arm identifies the complete adaptation package rather
+than the projection operator alone (\S\ref{ssec:results_lhproj_hrn}). The two
+paths can be summarised as
+\[
+\begin{aligned}
+\text{published HRN:}\quad
+&\phi(x_b)\in\mathbb{R}^{D\times H\times W}
+ \longrightarrow B_l
+ \longrightarrow \operatorname{pool}
+ \longrightarrow F_l
+ \longrightarrow e_l\in\mathbb{R}^{E}
+ \longrightarrow \text{cumulative embedding}
+ \longrightarrow C_l,\\
+\text{LH-adapted HRN:}\quad
+&\phi(x_b)
+ \longrightarrow \operatorname{pool}
+ \longrightarrow u_b\in\mathbb{R}^{D}
+ \longrightarrow W_s
+ \longrightarrow \rho
+ \longrightarrow z_b^{(l)}\in\mathbb{R}^{D}
+ \longrightarrow W_l
+ \longrightarrow s_l\in\mathbb{R}^{C_l}.
+\end{aligned}
+\]
+Here $B_l$ and $F_l$ denote the published spatial RFM and fully connected
+branch blocks. They are absent from the adapted path: $W_l$ is one direct level
+head, not a chain of linear stand-ins for those blocks.
+
+\subsubsection{(i) Pooled branch point}
+
+Condition~1 requires one vector that every head reads. HRN's branches read a
+spatial map and pool it individually. The adapted model relocates the same
+global average pooling operation before the split:
+\[
+u_b=\operatorname{pool}\big(\phi(x_b)\big)\in\mathbb{R}^{D}.
+\]
+Pooling removes the $H\times W$ dimensions; it does not reduce $D$ to the number
+of classes. Nor is pooling required by the projection algebra: the spatial map
+could in principle be flattened into a vector of width $DHW$. The adapted arm
+uses the pooled vector because it preserves HRN's trunk width and avoids explicit
+heads and projector systems in the much larger $DHW$ space. Thus the adaptation
+does not add a new pooling stage; it moves HRN's existing per-branch pool to one
+shared position.
+
+Pooling alone is not sufficient, for a reason that the other two hosts never
+expose. The projection filters the gradient the level-$l$ loss delivers
+\emph{at} the branch point; whether that filtering survives the optimiser step
+depends on the parameters being stepped. For a linear map reading the
+branch-point vector $u$, the Jacobian satisfies $JJ^{\top}=\lVert u\rVert^{2}I$
+and the reserved subspace is preserved by the update. For a convolution reading a
+spatial map it does not, and the filtered gradient re-enters the reserved
+directions through the Gram factor. As published, \emph{every} shared parameter
+of HRN is convolutional trunk, so the projection would leave the higher-priority
+scores unprotected however the projector itself is built. The adapted model
+therefore inserts the shared linear map and terminal activation that LH-DNN
+carries explicitly and that Hier-COS supplies through its transformation head:
+\[
+k_b = W_{s}\,\mathrm{pool}\big(\phi(x_b)\big),
+\qquad
+z_b=\rho(k_b).
+\]
+This is the layer to which the guarantee attaches in all three models; the trunk
+below it is outside the scope of the projection in HRN exactly as the backbone is
+in Hier-COS and the convolutional stages are in LH-DNN
+(\S\ref{ssec:lhproj_limits}).
+
+\paragraph{The activation.} $\rho$ is the rectifier, so the diagonal entering
+$A^{(l)}[b]$ is $\rho'(k)_j=\mathbf{1}[k_j>0]$, evaluated at the sample's own
+pre-activation. It is read at the pre-activation rather than at $z_b$, which is
+already non-negative and would not distinguish the clipped channels. The choice
+differs from the shared PReLU of \S\ref{ssec:lhproj_hiercos}: a rectifier
+derivative is idempotent, $\rho'^{2}=\rho'$, which is the condition under which
+the first-order statement of \S\ref{ssec:lhproj_limits} closes exactly, whereas a
+PReLU slope $a\notin\{0,1\}$ leaves a residual proportional to $a(a-1)$. The
+trunk's own terminal activation is not reused for this purpose: it acts on the
+spatial map, before pooling, so its derivative is not a diagonal factor on the
+branch-point vector.
+
+\subsubsection{(ii) Linear level heads}
+
+Condition~2 requires an explicit matrix for each level. The published branch is
+a two-convolution RFM block, a batch-normalised fully connected stack and a
+classifier, with nonlinearities throughout. The adapted model replaces that
+entire path by one affine head
+\[
+r_l^{(b)}=W_l z_b^{(l)}+b_l,
+\qquad W_l\in\mathbb{R}^{C_l\times D}.
+\]
+There is deliberately no sequence of linear replacements for the convolutional
+and fully connected layers. Without intervening nonlinearities, any such
+sequence would collapse to one affine map, add no representational capacity, and
+introduce a redundant deep-linear parameterisation whose optimisation could
+confound the projection comparison. The direct head is both the model used in
+the forward pass and the matrix used to construct $A^{(l)}[b]$; its bias does not
+enter $A^{(l)}[b]$ because the score Jacobian with respect to $z_b^{(l)}$ is
+$W_l$. Replacing the branch also removes its BatchNorm, ReLU, ELU and dropout;
+this loss of the published HRN branch capacity remains part of the adaptation
+package and is not attributed to the projector alone.
+
+\subsubsection{(iii) Residual advantage}
+
+Condition~3 requires each level term to be a function of its own branch. HRN
+couples them by summing embeddings coarse-to-fine. The adapted model detaches
+the hierarchical contribution and moves it from the removed embedding path to
+the score, which gives the advantage parameterisation
+of~\cite{fiaschi2024informed} already described for Hier-COS. Writing
+$r_l^{(b)}=W_lz_b^{(l)}+b_l$ for the native output of the direct head,
+\[
+s_1^{(b)}=r_1^{(b)},\qquad
+s_l^{(b)} = r_l^{(b)}
++ \operatorname{sg}\!\big(s_{l-1}^{(b)}[\pi_{l-1}(\cdot)]\big),
+\quad l>1.
+\]
+The taxonomy map $\pi_{l-1}$ repeats each parent's scalar score at the positions
+of its children, changing the width from $C_{l-1}$ to $C_l$. The stop-gradient
+leaves this contribution present in the forward score but gives it zero
+derivative in the level-$l$ branch. Consequently, the gradient of level $l$
+returns through its own $W_l$ only, while the projector protecting levels
+$1,\ldots,l-1$ is built directly from their native weights $W_{<l}$. Score-space
+placement is also dimensionally natural after the $E$-dimensional embedding path
+has been removed: it retains HRN's coarse-to-fine conditioning without
+reintroducing a hidden branch or a second affine factor.
+
+\subsubsection{(iv) Representation width}
+
+The sufficient condition of Condition~4 is $D>\sum_{l<L}C_l$. Here $D$ is the
+trunk width --- $2048$ for the ResNet-50 presets and $512$ for the CIFAR-100 WideResNet --- against
+$\sum_{l<L}C_l$ of $28$, $51$ and $100$ on CIFAR-100, CUB-200-2011 and
+FGVC-Aircraft. The condition is met by a wide margin on all three datasets and
+does not require a free width parameter, unlike the Hier-COS case of
+\S\ref{ssec:lhproj_hiercos}(iii). The HRN arm consequently has no width axis to
+report.
+
+\paragraph{The two fine heads.} HRN scores its finest level twice, with a tree
+head feeding the hierarchical term and a separate head feeding the leaf
+cross-entropy and the reported prediction. The adapted form therefore has two
+direct maps $W_3,W_3^{\mathrm{leaf}}\in\mathbb{R}^{C_3\times D}$ reading the
+same $z_b^{(3)}$. Neither enters a projector: a level reserves subspace only
+against the levels above it, and no level follows the finest. Both receive the
+same detached parent advantage.
+
+\Cref{fig:lhproj_hrn} draws the resulting model, on the same skeleton as
+\cref{fig:lhproj_hiercos}, so that the two adaptation packages can be read
+against each other.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{images/methodology/lhproj_hrn.pdf}
+\caption{The adapted HRN model carrying the LH-projection. Boxes in accent are
+the substitutions of this subsection, each marked with the numeral of the step
+that introduces it; boxes in blue are published HRN components the adaptation
+leaves alone. Step~(i) relocates HRN's existing average pool before the split
+and inserts $W_s$ followed by the rectifier $\rho$; pooling maps
+$D\times H\times W$ to $D$, while $W_s$ keeps that width unchanged. Step~(ii)
+replaces each complete RFM--FC--classifier path with one direct affine map
+$W_l:\mathbb{R}^{D}\to\mathbb{R}^{C_l}$; the former branch blocks do not remain
+as redundant linear factors. Step~(iii) detaches the coarse-to-fine residual and
+adds it in score space rather than in the embedding,
+$s_l=W_lz_b^{(l)}+\operatorname{sg}\big(s_{l-1}[\pi_{l-1}(\cdot)]\big)$, which
+is why the added rows are gathered rows of $W_{<l}$ and already lie in the
+reserved subspace. Step~(iv) records that $D$ is the trunk width, so
+condition~4 holds without a free width parameter. The projection is the same
+operator as in \cref{fig:lhproj_hiercos} and is built from the same stacked
+$W_{<l}$. The finest level carries two heads, $W_3$ for the tree term and
+$W_3^{\mathrm{leaf}}$ for the auxiliary cross-entropy; both read the same
+projected representation and receive the same detached parent score, and
+neither enters a projector.}
+\label{fig:lhproj_hrn}
+\end{figure}
 
 \subsection{Guarantee and scope}
 \label{ssec:lhproj_limits}
@@ -1274,8 +1501,18 @@ carried into the interpretation of the results. They parallel those of
     fraction left along its corresponding reserved direction is
     $\varepsilon/(\sigma_i^2+\varepsilon)$. The removal therefore becomes less
     exact as $\sigma_i$ approaches zero.
+    \item \textbf{Batch-coupled.} The projector is built per sample, because
+    $A^{(l)}[b]$ depends on $\rho'(k_b)$, but the gradient with respect to a
+    shared weight matrix sums outer products over the batch. A sample's filtered
+    gradient is orthogonal to its own reserved subspace and not to those of the
+    other samples, so the summed update can re-enter reserved directions that no
+    single sample's projector removed. The experiments train at batch size $8$
+    (HRN) and $64$ (Hier-COS), not in the single-sample regime. The mechanism
+    should accordingly be read as attenuating cross-level interference at the
+    branch point, not as delivering an exact lexicographic ordering under the
+    batch sizes used here.
 \end{enumerate}
-\section{Supervision of taxonomy-subspace scores}
+\section{Taxonomy-subspace supervision}
 \label{sec:methodology_subspace}
 \label{ssec:methodology_subspace_ce}
 
@@ -1299,13 +1536,16 @@ ancestor coordinates inactive. The target used here is instead obtained by
 applying the subspace decoder itself to a canonical representation of the
 ground-truth path, as derived in \S\ref{ssec:subspace_objective}.
 
-\subsection{Setting and requirements}
+\subsection{Requirements}
 \label{ssec:subspace_setting}
 
 The mechanism requires a network that exposes, for every level, the vector of
-taxonomy-subspace scores that its own decoder consumes. All the families
-compared here have the possibility to do so, and the mechanism is therefore
-applicable to all of them.
+taxonomy-subspace scores that its own decoder consumes. This requirement is
+mathematically admissible for every family considered here: concatenating its
+per-level score vectors supplies node coordinates in an identity frame, after
+mapping them to the evidence space appropriate to that family. Applicability in
+this section refers to this output-space construction; experimental coverage is
+stated separately in \S\ref{ssec:design_support}.
 
 Two further restrictions are part of the condition. First, the objective is a deterministic function of the hard
 ground-truth path, so the arm uses neither label smoothing nor mixup or cutmix.
@@ -1317,7 +1557,7 @@ any of the other three. Against the LH-projection the exclusion is structural,
 as \S\ref{ssec:design_axis} sets out; against HCC and lexicographic mode it keeps
 the intervention attributable.
 
-\subsection{The target}
+\subsection{Target distribution}
 \label{ssec:subspace_objective}
 
 As in \S\ref{ssec:problem_scores}, $I_{l,c}\subseteq\{1,\dots,N\}$ contains
@@ -1370,15 +1610,15 @@ the target depend on the prediction and would preserve whichever path-energy
 allocation the model already produced. The fixed vector $u^*(y)$ supplies a
 taxonomy-defined, attainable reference instead.
 
-\subsection{The loss}
+\subsection{Loss function}
 \label{ssec:subspace_loss}
 
 For a non-zero coordinate vector $u$, define the normalised scores
 \[
 \bar z_l:=\frac{z_l}{\lVert u\rVert_2}.
 \]
-The same scale is used at every level. The implementation clips the denominator
-by a small positive constant when $\lVert u\rVert_2$ is close to zero.
+The same scale is used at every level. The denominator is lower-bounded by a
+small positive constant when $\lVert u\rVert_2$ is close to zero.
 
 The target and prediction distributions are obtained with the same temperature
 $\tau>0$:
@@ -1429,11 +1669,11 @@ u_j/z_l[c], & j\in I_{l,c},\\
 0, & j\notin I_{l,c},
 \end{cases}
 \]
-and at an exactly zero norm the implementation selects the finite zero
-subgradient. The loss therefore backpropagates through the same coordinates used
+and at an exactly zero norm the finite zero subgradient is selected. The loss
+therefore backpropagates through the same coordinates used
 to compute the Hier-COS readout.
 
-\subsection{The attainable margin}
+\subsection{Attainable margin}
 \label{ssec:subspace_margin}
 
 For an incorrect class at level $l$, $r_l(c)\leq l-1$. Substituting this bound
@@ -1495,7 +1735,7 @@ builds on the \textsc{HardNet} framework for imposing hard constraints on neural
 networks \cite{min2024hardnet}, of which it is the equality-only case applied
 recursively along a taxonomy.
 
-\subsection{Setting and requirements}
+\subsection{Requirements}
 \label{ssec:hcc_setting}
 
 HCC is defined on the level-wise scores of the classifier rather than on its
@@ -1518,12 +1758,11 @@ below, must be verified experimentally for each combination of model, dataset an
 decoding strategy.
 
 The mathematical construction is stated for arbitrary $L$, but every taxonomy
-in the experimental campaign has three levels and the shared implementation is
-specialised to exactly three. Thus the experiments evaluate the two-transition
-cascade $1\to2\to3$; they do not provide empirical evidence for longer
-compositions.
+in the experimental campaign has three levels. The experiments therefore
+evaluate only the two-transition cascade $1\to2\to3$ and do not provide
+empirical evidence for longer compositions.
 
-\subsubsection{The case for a hard constraint}
+\subsubsection{Hard-constraint motivation}
 
 Input--output relations are commonly introduced either as penalties, which do
 not guarantee satisfaction, or through specialised parameterisations that may
@@ -1533,7 +1772,7 @@ unconstrained parameter optimisation and universal approximation. HardNet-Aff is
 used here because its affine constraints admit a closed-form transformation,
 unlike iterative correction procedures such as DC3.
 
-\subsubsection{The HardNet-Aff projection}
+\subsubsection{HardNet-Aff projection}
 
 Let
 $f_\theta:\mathcal{X}\to\mathbb{R}^{n_{\mathrm{out}}}$ be a network. HardNet
@@ -1575,7 +1814,7 @@ entry per column. Only the two
 structural assumptions of \S\ref{ssec:problem_taxonomy} are required by the
 derivation that follows.
 
-\subsection{The hierarchical cascade}
+\subsection{Cascade construction}
 \label{ssec:hardnet_to_hcc}
 \label{ssec:hcc_extensions}
 
@@ -1648,7 +1887,7 @@ By Proposition 4.4 in \cite{min2024hardnet}, specialised to $b^l=b^u$, this
 projection satisfies the constraint \emph{exactly} for any $z_{l+1}$, whether or
 not the constraint was initially violated.
 
-\subsubsection{A structural property specific to taxonomies}
+\subsubsection{Taxonomy incidence structure}
 
 In the general case
 $A(x)$ may vary with the input and the invertibility of $A(x)A(x)^{\top}$ must be
@@ -1692,7 +1931,7 @@ the level above it, producing a coarse-to-fine cascade.
 
 The recursive construction introduces two choices not present in HardNet-Aff.
 
-\subsubsection{Previous-level detach}
+\subsubsection{Detaching the previous level}
 
 In the original formulation $b(x)$ does not
 depend on $\theta$, so derivative coupling between $b$ and the projection does not
@@ -1703,9 +1942,10 @@ that path. The operator $\operatorname{sg}(\cdot)$ treats $\hat z_l$ as fixed fo
 this derivative while preserving its value. This is what is called the
 \emph{previous-level detach} throughout: the finer level is projected onto the
 constraint set determined by the level above it, while the level above is detached
-from the backward pass of that projection. Influence is consequently directed
-from coarse to fine in both the score transformation and optimisation. The
-stabilised form used throughout is therefore
+from the backward pass of that projection. Influence through the cascade branch
+is consequently directed from coarse to fine in both the score transformation
+and its derivative; shared parameters may still couple the level objectives by
+paths outside the cascade. The stabilised form is
 \[
 \hat z_{l+1}
 =
@@ -1721,9 +1961,16 @@ M_lM_l^{\top}
 M_lz_{l+1}-\operatorname{sg}(\hat z_l)
 \right).
 \]
-For $\varepsilon=0$ and full row rank the constraints hold exactly; for
-$\varepsilon>0$ they hold up to the numerical precision set by the stabilisation
-term. \Cref{fig:hcc_cascade} shows the cascade and the placement of the detach.
+For $\varepsilon=0$ and full row rank the constraints hold exactly. For
+$\varepsilon>0$ the stabilisation introduces a controlled residual: if
+$r=M_lz_{l+1}-\operatorname{sg}(\hat z_l)$ before correction, then
+\[
+M_l\hat z_{l+1}-\operatorname{sg}(\hat z_l)
+=\varepsilon\big(M_lM_l^\top+\varepsilon I\big)^{-1}r.
+\]
+The regularised relation is therefore approximate and converges to the exact
+affine equality as $\varepsilon\to0$. \Cref{fig:hcc_cascade} shows the cascade
+and the placement of the detach.
 
 \begin{figure}[htbp]
 \centering
@@ -1733,25 +1980,25 @@ instantiated once per level transition: the coarsest level is left unchanged and
 acts as the reference, and each finer level is projected onto the affine set
 determined by the level above it. The dotted arrows carry the previous-level
 detach: the value of the coarser level is used as the constraint target while
-its gradient is blocked, so influence runs from coarse to fine in the score
-transformation and in the backward pass alike.}
+its gradient is blocked, so influence through this branch runs from coarse to
+fine in the score transformation and its derivative.}
 \label{fig:hcc_cascade}
 \end{figure}
 
-\subsubsection{Composition over several transitions}
+\subsubsection{Multi-level composition}
 
-HardNet-Aff is applied and
-evaluated as a single terminal layer in \cite{min2024hardnet}, whereas HCC applies
-it recursively across $L-1$ successive transitions. The guarantees of exact
-satisfaction (Proposition 4.4) and preservation of universal approximation
-(Theorem 4.6) concern a single application; their extension by induction over
-levels to the full cascade with $L>2$ is not proved in this work and remains an
-open question. Exact satisfaction between two consecutive levels is guaranteed by
-each projection taken individually, while the effect of composing the projections
-with the previous-level detach on the overall representational capacity must be assessed
-empirically.
+HardNet-Aff is applied and evaluated as a single terminal layer in
+\cite{min2024hardnet}, whereas HCC applies it recursively across $L-1$ successive
+transitions. For $\varepsilon=0$, exact constraint satisfaction composes
+immediately: after transition $l$ establishes
+$M_l\hat z_{l+1}=\hat z_l$, later transitions do not modify either side of that
+equality. Induction therefore gives all $L-1$ adjacent equalities simultaneously.
+The result does not by itself extend HardNet's preservation-of-universal-
+approximation theorem to the recursive cascade. Whether that capacity guarantee
+survives composition with the previous-level detach remains unproved here and
+must not be inferred from pairwise constraint satisfaction.
 
-\subsubsection{The training objective}
+\subsubsection{Training objective}
 
 HCC introduces no new loss: it changes the arguments on
 which the existing level objectives are evaluated,
@@ -1768,7 +2015,7 @@ projection is differentiable, the model is not merely corrected after the fact: 
 is trained on the corrected scores from the first step, and adapts its raw scores
 to the correction that will be applied to them.
 
-\subsection{Adaptation by model family}
+\subsection{Model-family adaptations}
 \label{ssec:hcc_family_adaptation}
 
 The affine operator is shared across families, but the phrase ``level-wise
@@ -1877,7 +2124,8 @@ not be read as evidence from an LH-DNN model trained under HCC.
 \label{ssec:hcc_guarantee}
 
 The cascade realises in output space the level-set restriction of
-\S\ref{ssec:problem_priority}. The projection can be written as
+\S\ref{ssec:problem_priority}. In the unregularised case the projection can be
+written as
 \[
 \hat z_{l+1}
 =
@@ -1890,12 +2138,13 @@ so the coarse level contributes an equality constraint --- a level set --- insid
 which the fine level is resolved in the minimum-perturbation sense. Three
 properties follow:
 \begin{itemize}
-    \item The dominance is one-directional: the coarse level determines
-    the feasible set for the fine level, and the previous-level detach extends that
-    asymmetry to the gradient.
-    \item The constraint is hard: being an equality
-    enforced exactly, coarse-level consistency is not traded against fine-level
-    accuracy at any finite value of the coefficients $w_l$.
+    \item The dominance is one-directional along the cascade branch: the coarse
+    level determines the feasible set for the fine level, and the previous-level
+    detach extends that asymmetry to the derivative carried by this branch.
+    \item For $\varepsilon=0$ the equality is enforced exactly, so its
+    satisfaction is not traded against fine-level accuracy at any finite value
+    of the coefficients $w_l$. Positive $\varepsilon$ replaces this by the
+    controlled residual derived above.
     \item  And the restriction is
     available in closed form by \cref{lemma:diag}, at the cost of a diagonal
     rescaling, where a lexicographic optimisation procedure would solve a constrained
@@ -1959,7 +2208,7 @@ Finally, the cascade constrains consistency in logit space and does not by itsel
 deliver consistent predictions; \S\ref{ssec:inference_interaction} states what it
 does and does not guarantee once a decoder is applied.
 
-\section{Hierarchical inference strategies}
+\section{Hierarchical inference}
 \label{sec:methodology_inference}
 
 The preceding sections described how a network is trained. Turning its scores
@@ -2075,8 +2324,8 @@ This is the rule the compared families report under. Their published metrics are
 per-level and none of them restricts a level by the prediction of the level above:
 H-CAST~\cite{park2024visually}, HRN~\cite{chen2022label},
 HT-CapsNet~\cite{noor2025taxonomy} and LH-DNN~\cite{fiaschi2024informed} read an
-unrestricted argmax at each level, and the reference Hier-COS
-implementation~\cite{sani2025hiercos} likewise ranks each level by its
+unrestricted argmax at each level, and the reference Hier-COS evaluation
+rule~\cite{sani2025hiercos} likewise ranks each level by its
 subspace-projection norms without masking.
 
 \subsubsection{Top-down decoding}
@@ -2102,7 +2351,7 @@ is attained on it and $\pi_{l-1}(\hat y_l)=\hat y_{l-1}$ holds by construction; 
 fallback branch is therefore never taken.
 \end{proof}
 
-\subsubsection{What each decoder buys}
+\subsubsection{Decoder trade-offs}
 
 The two decoders are not ordered by quality, and the trade-off between them is one
 of the objects of study of this thesis.
@@ -2132,7 +2381,7 @@ of the objects of study of this thesis.
     of any training-time mechanism invisible.
 \end{itemize}
 
-\subsection{The inference grid and post-hoc evaluation}
+\subsection{Inference grid}
 \label{ssec:inference_grid}
 
 The post-hoc evaluation starts from a fixed checkpoint and varies three choices:
@@ -2179,7 +2428,7 @@ exactly the correction such an arm performs inside its own forward pass, and the
 difference between the two isolates what training under the constraint changed
 rather than a difference in what was projected.
 
-\subsection{Model-state selection}
+\subsection{Checkpoint selection}
 \label{ssec:inference_selection}
 
 Independent and top-down decoding need not favour the same training epoch. Each
@@ -2200,7 +2449,7 @@ checkpoint and the independent row from the independently selected checkpoint.
 The epochs may differ. Reusing one of these checkpoints for both rows would make
 the decoder comparison partly a comparison of selection rules.
 
-\subsection{Which mechanisms act at inference}
+\subsection{Inference-time mechanisms}
 \label{ssec:inference_interaction}
 
 Of the four training interventions, only HCC remains part of the forward
@@ -2231,7 +2480,7 @@ combinations are well defined and which model families support them. These
 dimensions are compared below. Section~\ref{sec:results_design} later states the
 experimental questions and reporting protocol.
 
-\subsection{Where each mechanism acts}
+\subsection{Mechanism scope}
 \label{ssec:design_mechanisms}
 
 \begin{figure}[htbp]
@@ -2271,7 +2520,7 @@ diagrammatic form of \cref{tab:framework_mechanisms}.}
 Lexicographic mode & update direction & per batch & first order, per block & no \\
 LH-projection & update direction & per sample & first order, at the branch point & no \\
 Direct subspace supervision & training objective & per sample & --- (no ordering) & no \\
-HCC & logits & per sample & exact (affine equality) & yes \\
+HCC & logits & per sample & exact for $\varepsilon=0$; stabilised otherwise & yes \\
 \midrule
 Readout rule & level scores & per sample & --- & yes, only \\
 Top-down decoding & decoded path & per sample & exact (path consistency) & yes, only \\
@@ -2298,9 +2547,10 @@ mini-batch loss gradients within shared parameter blocks
 (\S\ref{ssec:lex_blocks}); the second uses the local Jacobian of a higher-level
 head to filter a per-sample gradient at the branch point
 (\S\ref{ssec:lhproj_construction}). Their guarantees are first-order guarantees
-on an update. HCC instead satisfies an exact affine constraint on every sample's
-logits, both while training and at inference, without directly resolving loss
-conflicts in shared parameters.
+on an update. In its unregularised form HCC instead satisfies an exact affine
+constraint on every sample's logits, both while training and at inference; the
+stabilised form approaches that equality as $\varepsilon\to0$. Neither form
+directly resolves loss conflicts in shared parameters.
 
 Differentiating through HCC does filter gradients, as discussed in
 \S\ref{ssec:hcc_gradient_cost}, but that effect is induced by the output
@@ -2310,7 +2560,7 @@ gradient-projection method. The readout and decoder form a further category:
 they can be changed without retraining the model
 (\S\ref{ssec:inference_grid}).
 
-\subsection{One mechanism per run}
+\subsection{Mechanism isolation}
 \label{ssec:design_axis}
 
 The training matrix uses mutually exclusive mechanism arms: a run contains no
@@ -2381,16 +2631,19 @@ comparison.
 \textbf{Family} & \textbf{Lex.} & \textbf{LH-proj.} & \textbf{Sub.\ CE} &
 \textbf{HCC} & \textbf{Condition} \\
 \midrule
-H-CAST   & yes & no  & no  & yes & three levels; no global KL term for lex.\ mode \\
+H-CAST   & yes & no  & yes\rlap{$^\dagger$} & yes & three levels; no global KL term for lex.\ mode; per-level softmax coordinates for sub.\ CE \\
 Hier-COS & yes & yes & yes & yes & decomposed loss for lex.\ and for the HCC arm; level softmax and identity frame for LH-proj. \\
-HRN      & yes & no  & no  & yes & exactly three levels; conditional split of the native loss for lex.\ mode \\
-HT-CapsNet & yes & no & no & yes & three capsule margin losses \\
-LH-DNN   & no  & built in & no & no & no three independent level objectives \\
+HRN      & yes & yes & yes\rlap{$^\dagger$} & yes & exactly three levels; conditional split of the native loss for lex.\ mode; pooled branch point, direct affine heads and score-space advantage for LH-proj. \\
+HT-CapsNet & yes & no & yes\rlap{$^\dagger$} & yes & three capsule margin losses; per-level softmax coordinates for sub.\ CE \\
+LH-DNN   & no  & built in & yes\rlap{$^\dagger$} & no & built-in branch projection retained without a second gradient intervention \\
 \bottomrule
 \end{tabularx}
 \caption{Mechanism support by model family. ``Sub.\ CE'' denotes direct
 subspace supervision; ``built in'' marks a fixed architectural component rather
-than an optional intervention. Multiple ``yes'' entries in one row do not
+than an optional intervention. Entries record what each family \emph{admits},
+not what was run: $\dagger$ marks the direct-subspace arms that are admissible
+but were not run, the mechanism having been evaluated on Hier-COS alone
+(\S\ref{sec:results_subspace}). Multiple ``yes'' entries in one row do not
 indicate joint use, since each experimental condition contains at most one
 mechanism (\S\ref{ssec:design_axis}).}
 \label{tab:framework_support}
@@ -2407,24 +2660,34 @@ Hier-COS, by contrast, admits all four interventions and thus provides the
 within-family comparison between lexicographic mode and the LH-projection. In
 that comparison the backbone, frame, loss and level-specific learning rates are
 matched; the associated structural ablations are described in
-\S\ref{ssec:lhproj_hiercos}. Direct subspace supervision is confined to this
-family because it is defined on taxonomy-subspace scores
-(\S\ref{ssec:subspace_setting}), which classifier-head models do not expose as a
-training quantity.
+\S\ref{ssec:lhproj_hiercos}. Direct subspace supervision is admitted by every
+family (\S\ref{ssec:subspace_setting}), since the subspace norm is definable on
+all of them (\S\ref{ssec:inference_readout}); it was nonetheless run on Hier-COS
+alone, the family whose native readout it targets and whose coordinates the
+objective already calibrates. The completed arm is negative there
+(\S\ref{sec:results_subspace}) and was not extended to the classifier-head
+families, whose coordinates reach the same scores only through their own output
+activations. That is a choice about the campaign and is recorded as an unrun
+arm, not an unavailable one.
+
+HRN admits the LH-projection under the adaptation package of
+\S\ref{ssec:lhproj_hrn}, and so provides a second host for the mechanism. The
+package differs from the Hier-COS one in kind: its three substitutions were
+evaluated jointly rather than through matched intermediate arms, so the HRN arm
+carries no structural ablation ladder and identifies the package as a whole.
 
 HRN's restriction to three hierarchy levels comes from the published method,
 not from the datasets selected for this study. It happens to match the
 three-level formulation used for lexicographic mode. HCC and the LH-projection,
 considered independently of HRN, are defined for arbitrary $L$.
 
-\subsection{Requirements by model family}
+\subsection{Model-family requirements}
 \label{ssec:design_space}
 
 The pattern in Table~\ref{tab:framework_support} is largely determined by the
 decomposition of the training objective. A loss coupled across all taxonomy
 nodes does not, as it stands, supply the separate gradients that either
-gradient-space method requires. Whether it can be regrouped so that it does
-receives three different answers here:
+gradient-space method requires. The relevant cases are:
 
 \begin{itemize}
     \item \textbf{Exact regrouping (Hier-COS and HRN).} Their level terms sum to
@@ -2437,16 +2700,20 @@ receives three different answers here:
           over the concatenated hierarchy, collapsing the support partition the
           experiment is meant to observe; it is therefore excluded rather than
           decomposed.
-    \item \textbf{No usable regrouping (LH-DNN).} Its native objective does not
-          supply the required level-wise decomposition.
+    \item \textbf{No regrouping required, arm excluded (LH-DNN).} Its native
+          objective already supplies one cross-entropy per level. The
+          lexicographic arm is excluded instead because the architecture already
+          contains the branch-point projection, and combining the two gradient
+          interventions would prevent clean attribution.
 \end{itemize}
 
 A global softmax is thus still compatible with
 lexicographic mode when its three level-specific terms remain available as
 differentiable scalars, even though they share a normaliser. The LH-projection
-demands stricter separation: each loss must be a function of its own branch, so
-normalisation must be carried out within the corresponding level block
-(\S\ref{ssec:lhproj_hiercos}).
+demands stricter separation: each loss must be a function of its own branch. In
+Hier-COS this means the normaliser is scoped to the corresponding level block
+(\S\ref{ssec:lhproj_hiercos}); in HRN it means the coarse-to-fine residual is
+detached and re-expressed in score space (\S\ref{ssec:lhproj_hrn}).
 
 Replacing global with level-wise normalisation, unlike an exact regrouping, does
 change the objective and not merely its presentation. For that reason, the
@@ -2454,9 +2721,11 @@ identity frame and the per-level softmax are evaluated as structural adaptations
 before the LH-projection is added. This prevents an effect caused by the revised
 objective from being attributed to the projection.
 
-The table leaves out two more specific constraints. First, the representation
-used by the LH-projection must be wider than the total number of non-leaf classes
-(\S\ref{ssec:lhproj_setting}). Second, direct subspace supervision assumes hard
+The table leaves out two more specific constraints. First, the study adopts the
+sufficient condition that the LH-projection representation be wider than the
+total number of non-leaf classes (\S\ref{ssec:lhproj_setting}); this binds on
+Hier-COS, where the width is a free parameter, and is met with a wide margin by
+HRN's trunk width. Second, direct subspace supervision assumes hard
 path labels. Label smoothing, mixup and cutmix are consequently disabled for
 that arm (\S\ref{ssec:subspace_setting}).
 

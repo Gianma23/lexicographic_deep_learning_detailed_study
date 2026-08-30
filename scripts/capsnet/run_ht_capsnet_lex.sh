@@ -127,7 +127,6 @@ printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lex projection mode: %s\n' "$LEX_PROJECTION_MODE"
 printf 'HT-CapsNet lex training epochs: 100\n'
-printf 'HT-CapsNet level weights: unit (weight_mode=none)\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -136,11 +135,10 @@ print_seed_run_settings
 for dataset in "${DATASETS[@]}"; do
   config="$(config_for_dataset "$dataset")"
   run_seeded_train "$config" "$(run_output_dir "$dataset")" \
-    "model.loss.weight_mode=none" \
     "train.epochs=100" \
     "train.lexicographic.enabled=true" \
     "train.lexicographic.projection_mode=$LEX_PROJECTION_MODE" \
-    "train.gradient_blocks=[p123,p23,p3]" \
+    "train.gradient_blocks=[p123,p23]" \
     "train.lexicographic.eps=1.0e-12" \
     "train.lexicographic.log_metrics=true"
 done

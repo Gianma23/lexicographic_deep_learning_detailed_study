@@ -80,7 +80,7 @@ dataset:
 
 dataloader:
   # run-HT-CapsNet.sh sets batch_size=32.
-  batch_size: 32
+  batch_size: 64
   num_workers: 8
   pin_memory: true
   windows_spawn_safe: true
@@ -97,6 +97,7 @@ train:
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/capsnet_cifar100
   smoothing: 0.0
+  gradient_blocks: [p123, p23, p3]
 
 optim:
   # Upstream optimizer default: Adam (lr=0.001).

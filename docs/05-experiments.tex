@@ -9,16 +9,18 @@ Cross-family results are also reported, but they compare complete architectures
 and training recipes rather than isolating one hierarchical mechanism.
 
 After describing the datasets, metrics, implementations and comparison protocol,
-the chapter establishes the baselines and evaluates alternative inference rules.
-The trained interventions are then considered according to where they act: HCC
-on the outputs, direct subspace supervision on the objective, and lexicographic
-ordering on the gradients. Ablations of the Hier-COS frame, normaliser and level
-weighting quantify the adaptations required by the LH-projection and test the
-sensitivity of gradient ordering to structural configuration and relative gradient
-scale. A CIFAR-100 backbone-capacity ladder separately tests whether that result
-depends on the default feature extractor. The final sections compare
-the intervention points and delimit the conclusions supported by the completed
-runs.
+the chapter establishes the baselines and first evaluates alternative inference
+rules on those baselines alone. The trained interventions are then considered
+according to where they act: HCC on the outputs, direct subspace supervision on
+the objective, and lexicographic ordering on the gradients. Ablations of the
+Hier-COS frame, normaliser and level weighting quantify the adaptations required
+by the LH-projection and test the sensitivity of gradient ordering to structural
+configuration and relative gradient scale. Once all mechanisms have been
+reported, the inference analysis is repeated on the explicit lexicographic and
+LH-projection checkpoints. Within the LH-projection analysis, a CIFAR-100
+backbone-capacity ladder tests whether the in-graph mechanism depends on the
+default feature extractor. The final sections compare the computational cost of
+the two gradient-priority mechanisms and summarise the supported conclusions.
 % ======================================================
 %                       DATASETS
 % ======================================================
@@ -218,7 +220,7 @@ dataset identifiers to the contiguous class indices seen by the models --- is co
 the training split and reused unchanged by validation and test, which prevents split-local
 relabelling and guarantees that a class index denotes the same concept in every split.
 
-\subsubsection{CIFAR-100: two official levels and one imposed level}
+\subsubsection{CIFAR-100 hierarchy}
 
 CIFAR-100 \cite{krizhevsky2009learning} publishes two of the three levels. The 100 fine labels are
 the leaves, and the 20 official superclasses --- which the dataset distributes as
@@ -251,7 +253,7 @@ collects five superclasses while the \emph{people} group collects one --- so CIF
 perfectly regular lower transition with a visibly irregular upper one, a combination that turns out
 to be useful when interpreting the analysis in \S\ref{sec:dataset_analysis}.
 
-\subsubsection{CUB-200-2011: a taxonomy inherited from the literature}
+\subsubsection{CUB-200-2011 hierarchy}
 
 CUB-200-2011 \cite{wah2011caltech} publishes 200 species and their images, but no higher taxonomic
 level. The hierarchy used here is the 13 orders / 38 families / 200 species tree retained from the
@@ -281,7 +283,7 @@ does not constitute verification. The adopted hierarchy still requires a
 systematic check of every order, family and species against an authoritative
 biological database before it can be treated as fully validated.
 
-\subsubsection{FGVC-Aircraft: the official hierarchy, joined from parallel annotations}
+\subsubsection{FGVC-Aircraft hierarchy}
 
 FGVC-Aircraft \cite{maji2013fine} is the only one of the three benchmarks that publishes a complete
 hierarchy, and it is used here without any external input. The official download distributes the
@@ -302,7 +304,7 @@ The official annotation also defines a fourth, finer \emph{model} level, which i
 levels are kept for comparability with CIFAR-100 and CUB-200-2011, and the variant level is the one
 on which the published FGVC-Aircraft results of HRN, H-CAST, and Hier-COS are reported.
 
-\subsubsection{Status of the three taxonomies}
+\subsubsection{Taxonomy provenance}
 
 The three trees consequently have different epistemic status, and this asymmetry is a threat to the
 external validity of any cross-dataset claim made in this work. The FGVC-Aircraft hierarchy is
@@ -324,7 +326,7 @@ from the training data adapters, using the same split sizes, label indices and
 hierarchy edges as the models. These statistics describe the data and label
 space, not model behaviour.
 
-\subsubsection{Splits and supervision per class}
+\subsubsection{Splits and class coverage}
 
 Table~\ref{tab:datasets_info} reports the datasets as they are distributed. The protocol departs
 from those published partitions in one respect only, and it does so because model selection requires
@@ -376,7 +378,7 @@ training split, and the only visible dispersion is the CUB test split, at 11 to 
 species. Class imbalance is not a confound in these experiments; imbalance of the \emph{hierarchy},
 examined next, is a different matter.
 
-\subsubsection{Shape of the label trees}
+\subsubsection{Taxonomy structure}
 
 Figure~\ref{fig:taxonomy_icicle} shows the three taxonomies drawn to scale: the three bands are the
 three levels, every rectangle is a class, its width is the fraction of leaf classes in its subtree,
@@ -430,7 +432,7 @@ FGVC-Aircraft & family $\to$ variant       & 70 & 100 & 1.0 & 8  & 54 (77\%) \\
 \end{tabularx}
 \end{table}
 
-\subsubsection{How much of the fine decision the coarse level already makes}
+\subsubsection{Coarse-level information}
 
 Branching statistics can be summarised in a single quantity per transition: the uncertainty about
 the child class that remains once the parent is known. Measuring it in bits as the conditional
@@ -467,7 +469,7 @@ or benefits from its enforcement. On this axis, Aircraft is close to determined
 by the parent, CUB is dominated by one branch, and CIFAR-100 has two similarly
 balanced transitions.
 
-\subsubsection{Image geometry and its interaction with the model presets}
+\subsubsection{Image resolution and model presets}
 
 Figure~\ref{fig:image_geometry} shows the native resolution of the training images. The three
 datasets occupy three separate regions: CIFAR-100 collapses into a single point at $32\times32$,
@@ -646,7 +648,7 @@ check that the decoder behaves as specified.
 %     points.
 %   * A cell that cannot exist by \S\ref{ssec:design_support} is marked n/a
 %     and is NOT a missing run; a cell that could exist but has not been run
-%     is marked \tbd and must be declared in Table~\ref{tab:results_coverage}.
+%     is marked \tbd and must be identified locally as an uncompleted run.
 %
 % Paragraphs marked "% [ANALYSIS]" are deliberately left unwritten: they are
 % the places where the numbers are interpreted, and they cannot be drafted
@@ -656,7 +658,7 @@ check that the decoder behaves as specified.
 \providecommand{\tbd}{\textcolor{gray}{--}}
 \providecommand{\na}{\textit{n/a}}
 
-\section{Baseline implementation and comparability}
+\section{Baseline comparability}
 \label{sec:fidelity}
 
 The five baselines originate from separate codebases, frameworks and evaluation
@@ -724,7 +726,7 @@ dropping incomplete evaluation batches and selecting results on test data. They
 also mean that the experiments below are controlled comparisons inside this
 framework, not exact reproductions of the published runs.
 
-\subsection{Model-specific adaptations and extrapolations}
+\subsection{Model adaptations}
 \label{ssec:fidelity_classes}
 \label{ssec:fidelity_families}
 
@@ -753,15 +755,48 @@ pre-head geometry and prevents the dense head from growing with image area.
 
 \paragraph{HT-CapsNet.} The TensorFlow/Keras source was ported to PyTorch while
 retaining its capsule stages, routing, taxonomy mask, attention, margin loss and
-dynamic level weighting. Where the paper and code differ, the port follows the
-released training code. In particular, it uses
+dynamic level weighting. Except for the capsule readout described below, where
+the paper and code differ the port follows the released training code. In
+particular, it uses
 $1-\mathrm{acc}_l^{(t)}\omega_l^{\mathrm{init}}$ inside the dynamic-weight
 callback, rather than the paper's
 $(1-\mathrm{acc}_l^{(t)})\omega_l^{\mathrm{init}}$; the two versions are derived
 and contrasted in \cref{subsec:htcapsnet}. It also retains the saved
-taxonomy-temperature settings and applies layer normalisation after the
-attention residual. The attention implementation is tested against the Keras
-projection semantics. The unified CUB hierarchy differs from the paper's
+taxonomy-temperature settings. The attention implementation is tested against
+the Keras projection semantics.
+
+The post-attention capsule readout is a deliberate protocol correction. The
+paper and released implementation apply layer normalisation to the sum of the
+routed capsule and its attention residual. This is incompatible with the
+subsequent readout: class evidence is the Euclidean length of each capsule, and
+the margin loss compares that length with $m^+=0.9$ and $m^-=0.1$. At the
+default layer-normalisation parameters, a $d$-dimensional capsule has
+$\lVert\operatorname{LN}(x)\rVert_2\simeq\sqrt{d}$ independently of its input
+scale. For the released capsule dimensions $64$, $32$ and $16$, the initial
+lengths are therefore approximately $8$, $5.66$ and $4$: they exceed both
+margins and are almost constant across classes. The normalisation consequently
+removes the magnitude that the capsule objective is designed to interpret as
+presence evidence.
+
+All HT-CapsNet experiments in this work instead apply the standard capsule
+squash function to the same residual sum,
+\[
+\operatorname{squash}(x)
+=\frac{\lVert x\rVert_2^2}{1+\lVert x\rVert_2^2}
+  \frac{x}{\lVert x\rVert_2},
+\qquad
+0\leq\lVert\operatorname{squash}(x)\rVert_2<1.
+\]
+This substitution preserves the attention and routing computations while
+restoring the bounded length semantics assumed by the margin loss. In a local
+memorisation diagnostic on the same 16 CIFAR-100 images for 60 updates, the
+released LayerNorm readout ended with total loss $362.15$ and accuracies
+$1.00/0.06/0.00$, whereas changing only this readout to squash ended with loss
+$0.082$ and accuracies $1.00/1.00/1.00$ in coarse-to-fine order. This diagnostic
+isolates the failure mode but is not treated as benchmark evidence. Because the
+substitution changes a computation specified by both the paper and its source,
+the resulting HT-CapsNet rows evaluate a corrected local adaptation rather than
+an exact reproduction. The unified CUB hierarchy also differs from the paper's
 hierarchy, and FGVC-Aircraft is an extrapolation.
 
 \paragraph{HRN.} The local model retains the ResNet-50 trunk, residual branches,
@@ -788,7 +823,7 @@ Hier-COS on CUB-200-2011 and on the three-level CIFAR hierarchy; HT-CapsNet on
 FGVC-Aircraft and on the unified CUB hierarchy; and LH-DNN on CUB-200-2011 and
 FGVC-Aircraft.
 
-\subsection{Verification and remaining limits}
+\subsection{Verification and limitations}
 \label{ssec:fidelity_verification}
 
 Automated tests cover the ported capsule equations and attention shapes, the
@@ -803,7 +838,7 @@ establish that a trained local model is numerically identical to a published
 checkpoint; the comparisons below do not rely on such an identity.
 
 % ======================================================================
-\section{Experimental design and protocol}
+\section{Experimental protocol}
 \label{sec:results_design}
 
 \subsection{Research questions}
@@ -840,7 +875,8 @@ coarse-heavy scalarisation arms \\
 \textbf{Q3} & Do HCC, the LH-projection, and explicit lexicographic mode produce
 different effects, can those differences be attributed to where they act, and
 do they arise during training or from inference-time processing? & Within-family
-deltas at the shared mechanism axis, the frozen-checkpoint inference grid,
+  deltas at the shared mechanism axis, the baseline and gradient-priority
+  frozen-checkpoint inference grids,
 trained-HCC versus post-hoc-HCC comparisons, and separate accounting for the
 Hier-COS frame, normaliser and weighting ablations \\
 \textbf{Q4} & Under which conditions does an effect persist: which model
@@ -887,7 +923,7 @@ resolved by lower TICE and then by higher wAP. Every result row is read from the
 checkpoint selected for its own mode. Reusing one checkpoint for both modes
 would confound a decoder comparison with a checkpoint-selection comparison.
 
-\subsection{Identification of mechanism effects}
+\subsection{Identifying mechanism effects}
 \label{ssec:design_locus}
 
 The experiments compare four interventions with an unmodified baseline: HCC,
@@ -924,7 +960,7 @@ changes the objective. Each is compared with the shared \emph{none} condition.
 The comparison concerns separate alternatives: their combinations are outside
 the design defined in \S\ref{ssec:design_axis}.
 
-\subsection{Direct supervision of the ranked quantity}
+\subsection{Direct supervision of subspace scores}
 \label{ssec:design_objective}
 
 The completed experiment is internal to Hier-COS. The objective is in principle
@@ -945,7 +981,7 @@ for identification is stated in \S\ref{ssec:results_subspace_tau}. This arm uses
 hard path labels, with label smoothing, mixup and cutmix disabled as required by
 \S\ref{ssec:subspace_setting}.
 
-\subsection{Required adaptations to Hier-COS}
+\subsection{Hier-COS adaptations}
 \label{ssec:design_substrate}
 
 The LH-projection cannot be attached directly to published Hier-COS. It requires
@@ -966,10 +1002,14 @@ before the LH-projection is compared with explicit lexicographic training.
     LH-projection requires per-level normalisation, because each loss must depend
     on its own branch alone.
     \item \textbf{Level weighting.} Uniform, Hier-COS leaf-heavy and
-    class-count-derived weights are crossed with the unmodified and
-    \texttt{coarse\_first} arms at the selected frame and per-level normaliser.
-    Aircraft additionally carries the marginal-branching rule, whose largest
-    coefficient is assigned to the middle level.
+    class-count-derived weights are evaluated on the LH-projection arm at the
+    selected frame and per-level normaliser. The unmodified and
+    \texttt{coarse\_first} arms are held at one rule rather than re-run at each,
+    because the weighting accumulates into the reserved subspace only under the
+    in-graph locus (\S\ref{ssec:results_lhproj_weight_transfer}); the cost is
+    that the weighting's main effect is not separated from a weight--mechanism
+    interaction. Aircraft additionally carries the marginal-branching rule, whose
+    largest coefficient is assigned to the middle level.
 \end{enumerate}
 
 The frame and softmax ablations first establish one LH-compatible structural
@@ -998,12 +1038,18 @@ coarse-first gradient ordering.
     reach that accuracy--consistency trade-off.
 \end{enumerate}
 
-\subsection{Controlled variables and limitations}
+\subsection{Limitations}
 \label{ssec:design_threats}
 
 The following limitations determine how the result tables may be read.
 
 \begin{itemize}
+    \item \textbf{HT-CapsNet capsule readout.} Every HT-CapsNet arm replaces the
+    released post-attention LayerNorm with capsule squash, as justified in
+    \S\ref{ssec:fidelity_classes}. This common correction keeps comparisons
+    between local HT-CapsNet arms matched, but it limits direct comparison with
+    the published implementation and prevents attributing local results to that
+    implementation unchanged.
     \item \textbf{Level weights.} Whenever possible, an intervention and its
     baseline use the same objective weights. H-CAST and HT-CapsNet expose
     unweighted level losses to lexicographic mode, whereas the native HT-CapsNet
@@ -1029,25 +1075,23 @@ The following limitations determine how the result tables may be read.
     automated search over learning rate, weighting and transform choices; the
     others use published or preset values. This asymmetry affects cross-family
     rankings, although no intervention was tuned separately from its baseline.
-    \item \textbf{Resource accounting.} The operation and storage costs of the
-    mechanisms are derived in \cref{ssec:lex_cost}, but the completed logs do not
-    provide hardware-normalised wall-clock and peak-memory measurements for
-    every matched arm. Computational overhead is consequently retained as a
-    reporting and feasibility criterion rather than an independent research
-    question. An empirical efficiency ranking remains unavailable unless those
-    measurements are added; the matched outcome comparison between the two
-    gradient-space mechanisms can still be made.
+    \item \textbf{Resource accounting.} The operation and storage costs of
+    explicit lexicographic mode are derived in \cref{ssec:lex_cost}. The matched
+    empirical comparison of the baseline, explicit lexicographic mode and the
+    LH-projection is structured in \cref{sec:results_computational_cost}; its
+    timing protocol and measurements remain to be completed. Until then, the
+    chapter makes no empirical efficiency ranking between the mechanisms.
     \item \textbf{Statistical scope.} Results are descriptive. Means include the
     sample standard deviation and seed count when multiple seeds exist; paired
     differences are computed per seed where possible. No significance test is
     applied, and the non-native cells of the inference grid are treated as
     diagnostics rather than candidates for post-hoc selection.
     \item \textbf{Incomplete coverage.} Not every supported configuration was
-    run. \Cref{sec:results_coverage} records the missing cells and the questions
-    that consequently remain unanswered.
+    run. Missing cells remain marked \tbd in their corresponding tables and are
+    treated as unanswered questions rather than negative results.
 \end{itemize}
 
-\subsection{Protocol and reporting rules}
+\subsection{Reporting protocol}
 \label{ssec:design_protocol}
 
 The following rules are applied throughout the chapter.
@@ -1101,7 +1145,7 @@ The following rules are applied throughout the chapter.
     this common per-mechanism set.
 \end{itemize}
 
-\subsection{Organisation of the experimental campaign}
+\subsection{Experiment overview}
 \label{sec:results_campaign}
 
 The results are presented in the following order:
@@ -1110,8 +1154,8 @@ The results are presented in the following order:
     \item \Cref{sec:results_baselines} establishes the unmodified reference for
     each family.
     \item \Cref{sec:results_inference} applies alternative readouts, HCC and both
-    decoders to frozen checkpoints. This isolates inference-time effects before
-    trained interventions are considered.
+    decoders to frozen baseline checkpoints only. This establishes the
+    inference-time effects before trained interventions are considered.
     \item \Cref{sec:results_hcc,sec:results_subspace,sec:results_lex} compare
     three directly trained interventions with their matched baselines, ordered by
     where each acts: on the outputs, on the objective, then on the gradient.
@@ -1122,11 +1166,17 @@ The results are presented in the following order:
     \item \Cref{sec:results_lhprojection} reports the LH-projection on that
     configuration: first against explicit lexicographic mode, then crossed with the
     level weighting, whose interaction is measured on each arm rather than
-    transferred between them.
+    transferred between them, and finally under the CIFAR-100 backbone-capacity
+    ladder.
     \item \Cref{sec:results_mechanisms} places the four mutually exclusive
     interventions in one comparison.
-    \item \Cref{sec:results_coverage,sec:results_summary} state what remains
-    untested and summarise the supported conclusions.
+    \item \Cref{sec:results_inference_priority} returns to the inference grid on
+    the explicit lexicographic and LH-projection checkpoints, after both
+    mechanisms and their matched comparison have been established.
+    \item \Cref{sec:results_computational_cost} compares model size and training
+    cost for the matched baseline, explicit lexicographic and LH-projection arms.
+    \item \Cref{sec:results_summary} summarises the supported conclusions and
+    names any remaining limitations locally.
 \end{enumerate}
 
 The target protocol of \S\ref{ssec:fidelity_protocol} uses three seeds per
@@ -1135,10 +1185,10 @@ where the count varies by row and in the caption otherwise; incomplete cells
 remain explicitly marked until the campaign is closed. Which configurations a
 family does not admit at all is fixed by Table~\ref{tab:framework_support};
 supported configurations that were not run are treated in
-\cref{sec:results_coverage}.
+the corresponding result section rather than interpreted as negative evidence.
 
 % ======================================================================
-\section{Baselines under the unified protocol}
+\section{Unified baselines}
 \label{sec:results_baselines}
 
 This section gives the no-mechanism reference for H-CAST, LH-DNN, HRN and
@@ -1172,7 +1222,7 @@ the published numbers: where each local implementation departs from its source
 is recorded in \S\ref{ssec:fidelity_classes}, and no claim below depends on
 agreement with a published score.
 
-\subsection{How the tables and figures are read}
+\subsection{Reading the results}
 \label{ssec:results_baseline_reading}
 
 The conventions stated here hold for every table and figure of this section and
@@ -1261,8 +1311,7 @@ coarse-to-fine degradation comparable across the three panels.
 \centering
 \caption{Baseline test results on CIFAR-100 ($8\to20\to100$).}
 \label{tab:results_baseline_cifar}
-\experimenttablesetup
-\footnotesize
+\resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
 \textbf{Family} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
@@ -1279,8 +1328,7 @@ LH-DNN   & \baselinemeanstd{74.43}{0.49} & \baselinemeanstd{63.25}{0.65} & \base
 \centering
 \caption{Baseline test results on CUB-200-2011 ($13\to38\to200$).}
 \label{tab:results_baseline_cub}
-\experimenttablesetup
-\footnotesize
+\resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
 \textbf{Family} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
@@ -1297,8 +1345,7 @@ LH-DNN   & \baselinemeanstd{71.30}{0.54} & \baselinemeanstd{30.62}{1.09} & \base
 \centering
 \caption{Baseline test results on FGVC-Aircraft ($30\to70\to100$).}
 \label{tab:results_baseline_aircraft}
-\experimenttablesetup
-\footnotesize
+\resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
 \textbf{Family} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
@@ -1451,7 +1498,7 @@ same checkpoints is deferred to the sections that introduce them.
 
 
 % ======================================================================
-\section{Inference: readout, transform and decoder}
+\section{Frozen-baseline inference}
 \label{sec:results_inference}
 
 All results in this section use the frozen baseline checkpoints of
@@ -1459,9 +1506,12 @@ All results in this section use the frozen baseline checkpoints of
 and every cell comes from a shared forward pass
 (\S\ref{ssec:inference_grid}). The comparisons isolate changes due to the
 readout or decoder. A trained mechanism must improve beyond this post-hoc effect
-before the difference can be attributed to learning.
+before the difference can be attributed to learning. Checkpoints trained with a
+mechanism are deliberately excluded here: the same analysis is resumed only
+after all mechanism results, in \cref{sec:results_inference_priority}, for the
+explicit lexicographic and LH-projection arms.
 
-\subsection{Independent against top-down decoding}
+\subsection{Independent vs. top-down decoding}
 \label{ssec:results_decoder}
 
 Top-down decoding sets TICE to zero by construction
@@ -1478,8 +1528,8 @@ each read from its own selected checkpoint. $\Delta$ columns are top-down minus
 independent, in percentage points; a negative $\Delta\mathrm{Acc}_3$ is the cost
 of enforcing consistency at decoding time.}
 \label{tab:results_decoder}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}CCCCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}|CCC|CCC|CC@{}}
 \toprule
 & & \multicolumn{3}{c}{\textbf{Independent}} & \multicolumn{3}{c}{\textbf{Top-down}} & \multicolumn{2}{c}{$\Delta$} \\
 \cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(l){9-10}
@@ -1515,7 +1565,7 @@ LH-DNN     & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \
 % of Table~\ref{tab:branching}, since the size of the sibling set is what
 % determines how much the restriction can remove.
 
-\subsection{Node score against subspace norm}
+\subsection{Node score vs. subspace norm}
 \label{ssec:results_readout}
 
 Hier-COS bundles a frozen orthonormal frame, a subspace-norm readout and a level
@@ -1534,8 +1584,8 @@ independent decoding and with no transform. The rightmost column names the
 family's native readout, under which its headline results are reported; the
 other group is the transplanted rule.}
 \label{tab:results_readout}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{1.8cm}CCCCCCL{2.6cm}@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{1.8cm}|CCC|CCC|L{2.6cm}@{}}
 \toprule
 & & \multicolumn{3}{c}{\texttt{node\_score}} & \multicolumn{3}{c}{\texttt{subspace\_norm}} & \\
 \cmidrule(lr){3-5}\cmidrule(lr){6-8}
@@ -1565,7 +1615,7 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \texttt{node\
 % frame. Nothing about the frame itself follows from this table --- that requires
 % \cref{ssec:results_frame}.
 
-\subsection{HCC applied post hoc}
+\subsection{Post-hoc HCC}
 \label{ssec:results_posthoc}
 
 The HCC transform can be applied to a checkpoint trained without it, at no
@@ -1588,8 +1638,8 @@ change the transform produces under top-down decoding. For signed node-score
 rows it must be exactly zero; for magnitude or subspace-norm rows it is an
 ordinary measured result and may be non-zero.}
 \label{tab:results_posthoc_hcc}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}CCCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}|CCC|CCC|C@{}}
 \toprule
 & & \multicolumn{3}{c}{\textbf{No transform}} & \multicolumn{3}{c}{\textbf{HCC transform}} & \textbf{Check} \\
 \cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(l){9-9}
@@ -1628,7 +1678,7 @@ LH-DNN     & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 % row, not merely its unconstrained baseline, to support a representational
 % claim.
 
-\subsection{What the grid fixes for the remainder of the chapter}
+\subsection{Baseline inference configuration}
 \label{ssec:results_inference_summary}
 
 % [ANALYSIS] Three or four sentences, no more. State (i) which readout is
@@ -1649,7 +1699,7 @@ no ramp and no activation epoch, so the arm is a single condition and the logged
 \texttt{proj\_constraint\_alpha} is a record that the projection ran, not a
 schedule to be read.
 
-\subsection{Effect against the matched baseline}
+\subsection{Matched-baseline comparison}
 \label{ssec:results_hcc_main}
 
 % One table per dataset. Arms: baseline and HCC, the only two conditions the
@@ -1664,8 +1714,8 @@ decoder, and each column is read from that decoder's own selected checkpoint.
 $n$ is the number of seeds; entries with $n>1$ are mean $\pm$ sample standard
 deviation.}
 \label{tab:results_hcc_cifar}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}CCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}|CC|C|C|C|C@{}}
 \toprule
 \textbf{Family} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{Acc}_3^{\text{t.d.}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1689,8 +1739,8 @@ HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \caption{HCC against the matched baseline on CUB-200-2011. Conventions as in
 Table~\ref{tab:results_hcc_cifar}.}
 \label{tab:results_hcc_cub}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}CCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}|CC|C|C|C|C@{}}
 \toprule
 \textbf{Family} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{Acc}_3^{\text{t.d.}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1714,8 +1764,8 @@ HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \caption{HCC against the matched baseline on FGVC-Aircraft. Conventions as in
 Table~\ref{tab:results_hcc_cifar}.}
 \label{tab:results_hcc_aircraft}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}CCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{1.8cm}|CC|C|C|C|C@{}}
 \toprule
 \textbf{Family} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{Acc}_3^{\text{t.d.}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1745,7 +1795,7 @@ HT-CapsNet & baseline               & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 % the independent and top-down columns are read together, which is why they are
 % printed side by side.
 
-\subsection{Training-time against test-time enforcement}
+\subsection{Training-time vs. test-time enforcement}
 \label{ssec:results_hcc_when}
 
 Three arms share a family and dataset and differ only in when the constraint is applied:
@@ -1765,8 +1815,8 @@ scores the evaluation-only arm is identical to the baseline under top-down
 decoding; magnitude and subspace-norm top-down effects belong to the separate
 inference-grid analysis.}
 \label{tab:results_hcc_when}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.6cm}L{1.6cm}L{3.5cm}CCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.6cm}L{1.6cm}L{3.5cm}|C|C|C|C@{}}
 \toprule
 \textbf{Family} & \textbf{Dataset} & \textbf{Enforcement} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -1783,7 +1833,7 @@ inference-grid analysis.}
 % correction rather than a training signal, and it must be stated in those
 % words.
 
-\subsection{Diagnostics: what the constraint actually does}
+\subsection{Constraint diagnostics}
 \label{ssec:results_hcc_diag}
 
 The metrics above record the outcome; the diagnostics of
@@ -1805,8 +1855,8 @@ fraction of samples whose fine argmax the projection changes; \emph{GT parent
 mass} is evaluated on the raw and on the effective logits; \emph{sibling rank}
 is the control, and is expected to be unchanged.}
 \label{tab:results_hcc_diagnostics}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}CCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}|C|C|C|C|C@{}}
 \toprule
 \textbf{Family} & \textbf{Dataset} & \textbf{Active} & $\ell_1$ \textbf{displ.} & \textbf{Flip rate} & \textbf{GT parent mass (raw $\to$ eff.)} & \textbf{Sibling rank} \\
 \midrule
@@ -1822,7 +1872,7 @@ is the control, and is expected to be unchanged.}
 % with an unchanged sibling rank localises the entire effect to cross-parent
 % reordering, exactly as the corollary predicts.
 
-\subsection{Interaction with the shape of the taxonomy}
+\subsection{Taxonomy-shape effects}
 \label{ssec:results_hcc_taxonomy}
 
 % [ANALYSIS] The three taxonomies differ in fan-out and in how much of the fine
@@ -1839,12 +1889,25 @@ is the control, and is expected to be unchanged.}
 \label{sec:results_subspace}
 
 Direct subspace supervision moves the loss from the taxonomy-node coordinates
-onto the subspace norms the decoder ranks (\S\ref{sec:methodology_subspace}). It
-is evaluated on Hier-COS because that family already uses the subspace norm as
-its native readout; the more general applicability of the objective is separate
-from the scope of the completed campaign. The mechanism is inactive at
-inference, so the readout and both decoders are those of the baseline row and
-any difference measured below is a difference in what was learned.
+onto the subspace norms the decoder ranks (\S\ref{sec:methodology_subspace}). The
+mechanism is inactive at inference, so the readout and both decoders are those of
+the baseline row and any difference measured below is a difference in what was
+learned.
+
+The mechanism is applicable to every family compared here. The subspace norm is
+definable on all of them (\S\ref{ssec:inference_readout}), and so therefore is
+supervision of it (\S\ref{ssec:subspace_setting}); nothing in the objective is
+specific to the fixed-frame family. It is nevertheless run on Hier-COS alone,
+and the restriction is a decision about the campaign rather than a limit of the
+mechanism. Hier-COS is the most favourable host available: its readout is native
+and its coordinate magnitudes are calibrated by the objective itself, whereas the
+classifier-head families reach the same scores only through their own output
+activations, whose magnitudes nothing in their training calibrates
+(\S\ref{ssec:inference_readout}). The arm is negative on that most favourable
+host, at a substantial accuracy cost and with no compensating gain
+(\S\ref{ssec:results_subspace_summary}), so it was not extended to hosts where
+the objective would start from a weaker footing. This is an unrun arm, not an
+inapplicable one.
 
 The arm and its baseline share the disabled label smoothing, mixup and cutmix that
 \S\ref{ssec:subspace_setting} requires, or the contrast is confounded with the
@@ -1856,7 +1919,7 @@ in full, including its coordinate regulariser, so the comparison estimates the
 complete intervention and does not separate the induced target profile from the
 removal of that regulariser.
 
-\subsection{Effect against the matched baseline}
+\subsection{Matched-baseline comparison}
 \label{ssec:results_subspace_main}
 
 Tables~\ref{tab:results_subspace_cifar}--\ref{tab:results_subspace_aircraft}
@@ -1874,8 +1937,7 @@ below.
 ($8\to20\to100$), under independent decoding. The direct-subspace arm uses
 $\tau=0.1$; backbone, frame, weighting, seeds and augmentation are matched.}
 \label{tab:results_subspace_cifar}
-\experimenttablesetup
-\footnotesize
+\resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
 \textbf{Arm} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
@@ -1892,8 +1954,7 @@ subspace sup. & \baselinemeanstd{\underline{90.94}}{0.20} & \baselinemeanstd{\un
 ($13\to38\to200$), under independent decoding. Conventions are as in
 Table~\ref{tab:results_subspace_cifar}.}
 \label{tab:results_subspace_cub}
-\experimenttablesetup
-\footnotesize
+\resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
 \textbf{Arm} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
@@ -1910,8 +1971,7 @@ subspace sup. & \baselinemeanstd{\mathbf{97.37}}{0.19} & \baselinemeanstd{\mathb
 ($30\to70\to100$), under independent decoding. Conventions are as in
 Table~\ref{tab:results_subspace_cifar}.}
 \label{tab:results_subspace_aircraft}
-\experimenttablesetup
-\footnotesize
+\resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{1.8cm}|CCC|C|C|C|C@{}}
 \toprule
 \textbf{Arm} & $\mathrm{Acc}_1\uparrow$ & $\mathrm{Acc}_2\uparrow$ & $\mathrm{Acc}_3\uparrow$ & $\mathrm{wAP}\uparrow$ & $\mathrm{FPA}\uparrow$ & $\mathrm{AHD}\downarrow$ & $\mathrm{TICE}\downarrow$ \\
@@ -1970,7 +2030,7 @@ guarantee. It nevertheless rules out an accuracy--consistency trade in which
 the lost FPA purchased more coherent independent predictions; both quantities
 move in the unfavourable direction.
 
-\subsection{Where the accuracy cost appears}
+\subsection{Sources of accuracy loss}
 \label{ssec:results_subspace_depth}
 
 The target margin decreases from $1.000$ at the coarsest level to $0.423$ and
@@ -2058,6 +2118,29 @@ the same matched seeds, are required to identify the sensitivity and determine
 whether the tested value is an interior setting or a boundary of a monotone
 trend. Until that sweep exists, the temperature question remains unidentified.
 
+\subsection{Interpretation}
+\label{ssec:results_subspace_summary}
+
+The arm is complete on its own terms and its result is negative. Supervising the
+ranked quantity directly, at $\tau=0.1$ and on all three datasets, costs
+independent FPA ($3.38\pm0.28$, $2.37\pm0.32$ and $1.77\pm0.23$~pp), raises AHD,
+and raises TICE rather than trading one for the other. The cost is concentrated
+at the leaf, where the attainable margin is smallest, and the coarse levels are
+unharmed or slightly improved on CUB-200-2011 and FGVC-Aircraft. Aligning the
+trained and ranked functions is therefore not sufficient on its own to improve
+the ranking, at least in the form tested here.
+
+Three limits bound that statement, and none is a missing run that the campaign
+intends to add. The objective replaces the native loss in full, including its
+coordinate regulariser, so the estimate is of the complete intervention rather
+than of the target profile alone. The temperature remains a single point
+(\S\ref{ssec:results_subspace_tau}), so the negative result is identified for
+$\tau=0.1$ and not for the mechanism at every scale. And the finding rests on one
+family. The mechanism is applicable to all of them, but only Hier-COS was run, so
+whether the same cost appears where the coordinates come from a classifier's
+output activation rather than from a calibrated frame is untested --- untested by
+choice, given the result here, rather than by obstacle.
+
 % Keep the common validation, loss and level-accuracy figures inside the
 % direct-subspace section.
 \FloatBarrier
@@ -2072,8 +2155,10 @@ update once per batch and has no direct effect at inference
 in what the model learned. For Hier-COS the configured coefficients remain
 inside the three exposed level losses and therefore scale the gradients supplied
 to lexicographic composition. Every comparison below consequently uses a
-baseline with the same numerical coefficients; their interaction with the
-projection is isolated later in \cref{ssec:results_lex_scaling}. Other families
+baseline with the same numerical coefficients, so the coefficients are held
+matched rather than varied: the weight cross of \cref{ssec:results_lex_scaling}
+is run on the LH arm only, so the interaction between the coefficients and
+\emph{this} locus is not identified by the campaign. Other families
 follow the adaptations of \cref{ssec:lex_family_adaptation}. HRN carries no
 analogous level coefficients, and its three exposed terms sum to the objective
 its baseline optimises, so its row isolates the projection alone.
@@ -2084,13 +2169,18 @@ and the one shared with \cref{sec:results_hcc,sec:results_subspace}. The
 LH-projection cannot be trained there, so the frame and normaliser are changed
 once, in \cref{sec:results_substrate}, and every result requiring the changed
 configuration is reported in \cref{sec:results_lhprojection}. That includes the
-level-weight cross, and on CIFAR-100 it is where the lexicographic result is
-weakest: under leaf-heavy weighting the two levels holding priority end
-substantially under-fitted and consistency degrades rather than improves
-(\cref{ssec:results_lex_scaling}). The rows below are therefore the
-published-configuration lexicographic result for Hier-COS, not the whole of it.
+level-weight cross, which is run on the LH arm alone
+(\cref{ssec:results_lex_scaling}) and therefore says nothing about how the
+lexicographic arm would behave at another rule. At the single leaf-heavy rule
+these rows are read at, the two levels holding priority on CIFAR-100 end
+substantially under-fitted and consistency degrades rather than improves; that
+observation comes from the per-level training signal of
+\cref{ssec:results_lex_diag}, not from a weight sweep, so it describes the
+reported setting and is not evidence of a monotone trend in the weighting. The
+rows below are therefore the published-configuration lexicographic result for
+Hier-COS at one weighting, not the whole of it.
 
-\subsection{Effect against the matched baseline}
+\subsection{Matched-baseline comparison}
 \label{ssec:results_lex_main}
 
 \begin{table}[htbp]
@@ -2100,8 +2190,8 @@ baseline, at matched weighting where available. $\Delta$ columns are the arm
 minus its baseline, computed per seed and then averaged where the seeds are
 matched.}
 \label{tab:results_lex_main}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{1.7cm}CCCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{1.7cm}|C|C|C|C|CC|C@{}}
 \toprule
 \textbf{Family} & \textbf{Dataset} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $\Delta$FPA & $\Delta$TICE & $n$ \\
 \midrule
@@ -2130,7 +2220,7 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 % unavailable, say what the comparison actually isolates rather than silently
 % attributing the difference to priority.
 
-\subsection{Is the ordering what matters?}
+\subsection{Effect of priority order}
 \label{ssec:results_lex_ordering}
 
 An improvement under \texttt{coarse\_first} has two possible explanations:
@@ -2150,8 +2240,8 @@ can reach the same accuracy--consistency trade-off.
 dataset and seeds. The last row carries no projection at all: it is the
 scalarised objective with a coarse-heavy weight vector.}
 \label{tab:results_lex_controls}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.4cm}L{3.2cm}CCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.4cm}L{3.2cm}|C|C|C|C|C@{}}
 \toprule
 \textbf{Family / dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{AHD}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2199,8 +2289,8 @@ block's own reference is expected to vanish on every selected block, while the
 residual cosine between the projected fine gradient and the coarse gradient is
 expected to vanish on a two-level block and \emph{not} on a three-level one.}
 \label{tab:results_lex_diagnostics}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.4cm}L{4.0cm}CCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.4cm}L{4.0cm}|C|C|C|C@{}}
 \toprule
 \textbf{Family / dataset} & \textbf{Mode / block} & \textbf{Pre-proj.\ cos.} & \textbf{Post-proj.\ cos.} & \textbf{Norm removed} & \textbf{Guard skips} \\
 \midrule
@@ -2217,6 +2307,84 @@ expected to vanish on a two-level block and \emph{not} on a three-level one.}
 % measured post-projection cosines match \cref{prop:lex_firstorder}. If they
 % do not, the discrepancy is itself the finding and the accuracy comparison is
 % reported as unidentified.
+%
+% ----------------------------------------------------------------------
+% [PLANNED ANALYSIS — blocked on the HRN lexicographic arm]
+%
+% HYPOTHESIS. The lexicographic effect is not constant across datasets or
+% across families, and the pre-projection gradient cosine predicts its sign.
+% Where the level objectives already conflict on the shared trunk (negative
+% cosine) the projection removes a real conflict and consistency improves;
+% where they are aligned (positive cosine) `orthogonalize_all' fires anyway
+% (`applied = denom > eps', train/lexicographic/gradients.py:387 — no
+% conflict gate) and deletes a component that was contributing to the
+% higher-priority objective, so the arm pays without collecting. If this holds,
+% "does lex help here?" reduces to a property of the *unmodified* optimisation
+% that can be measured before the lex run is launched.
+%
+% PREDICTOR. Baseline (no-lex) shared-trunk cos(fine, higher) on block p123,
+% averaged over epochs 81--100, read from the MATCHED UNMODIFIED run. It must
+% come from the baseline, not the lex arm: the quantity of interest is how much
+% conflict existed to resolve, which the projection itself alters.
+%
+% RESPONSE. Lex minus its matched baseline, paired per seed. TICE^ind is
+% primary — lex is inference-inactive, so a TICE change is a change in what was
+% learned (\cref{tab:framework_mechanisms}). FPA^t.d. secondary.
+%
+% MEASURED SO FAR (baseline cos, epochs 81--100, 3 seeds each):
+%
+%   family / substrate     CIFAR-100        CUB-200         Aircraft
+%   Hier-COS global         -0.820          -0.824           -0.864
+%   Hier-COS level          +0.335          +0.089           +0.239
+%   H-CAST                  +0.650          +0.372           +0.529
+%   HRN level_conditional     ---           +0.124           -0.403
+%   HT-CapsNet             not yet reliable (logs truncated; see below)
+%
+% The six Hier-COS cells already run in the predicted direction: all three
+% negative-cosine cells improve TICE under lex (-0.46+-0.07, -0.18+-0.23,
+% -0.19+-0.15 pp), while of the three positive-cosine cells one degrades
+% clearly (CIFAR-100, +0.34+-0.14 pp) and two are indistinguishable from zero.
+% Note the asymmetry: the positive side is mostly null rather than harmful, so
+% the claim to test is "negative cosine is necessary for a TICE gain", not
+% "positive cosine causes a TICE loss".
+%
+% WHY HRN IS THE DECIDING CASE. HRN level_conditional is the only family whose
+% baseline cosine changes SIGN across datasets at fixed loss and architecture:
+% -0.403 on Aircraft against +0.124 on CUB-200. That isolates the cosine from
+% the family and from the normaliser, which the Hier-COS cells cannot do (there
+% the sign moves with the global/level axis, so those six points are not
+% independent of \cref{ssec:results_softmax}). Its three exposed terms
+% telescope to the objective its baseline optimises, so the HRN row isolates
+% the projection alone. PRE-REGISTERED PREDICTION: HRN lex improves TICE on
+% Aircraft and does not on CUB-200. Record this before the runs land.
+%
+% COMPARABILITY CONDITIONS — check each before pooling points:
+%  (a) p123 must denote the same thing. In Hier-COS it covers the whole trainable
+%      model. In HRN it covers the shared trunk and coarse branch, while p23
+%      contains the middle/fine interaction and p3 is fine-only. In HT-CapsNet
+%      it is likewise only one part of the staged support. In H-CAST, 298.4
+%      against 442.4 at the final epoch places about a third of the parameter
+%      norm in p12/p1. Cross-family p123 cosines are therefore not on the same
+%      footing and must be marked, not silently pooled.
+%  (b) HRN emits cosines only under model.loss=level_conditional; the `native'
+%      objective exposes no per-level losses and logs none. Read the HRN
+%      predictor from the level_conditional baseline, which is also the correct
+%      matched baseline for its lex arm.
+%  (c) HT-CapsNet run_log.jsonl files in the current directories stop early
+%      (35, 4 and 72 epochs, one seed each) despite finished runs. Re-measure
+%      its cosine on complete logs before using it; the numbers currently
+%      obtainable are not a late-training window.
+%  (d) Legacy alias: t1 == p123. Verified bit-identical on the CIFAR-100
+%      baseline. Old logs emit only the t1 form.
+%
+% REPORTING. With at most twelve points, several of them non-independent, a
+% fitted correlation coefficient would overclaim. Report it as a sign and
+% ordering check — does every TICE gain come from a negative-cosine cell, and
+% does the size of the gain order with the cosine — and state the number of
+% independent cells behind it. If the pattern holds it belongs in
+% \cref{sec:results_mechanisms} as a scope condition on the lexicographic
+% claim, not as a headline result.
+% ----------------------------------------------------------------------
 
 % ======================================================================
 \section{Hier-COS ablations}
@@ -2241,12 +2409,13 @@ the cost of replacing the global node-wide normaliser by per-level normalisation
 at that frame. Together they establish one structural configuration per dataset,
 carried unchanged through \cref{sec:results_lhprojection}. The model's residual
 transform is held fixed throughout. The two remaining Hier-COS ablations are
-reported elsewhere for reasons of attribution: the level-weight cross with the
-LH-projection (\cref{ssec:results_lex_scaling}), because the weighting interacts
-differently with the two loci and cannot be fixed on one and carried to the
-other; and the backbone-capacity ladder in
-\cref{ssec:results_backbone_capacity}, because it runs at the published
-configuration and selects no LH setting.
+reported elsewhere for reasons of attribution: the level-weight cross, run on the
+LH-projection arm alone (\cref{ssec:results_lex_scaling}), because the weighting
+accumulates into the reserved subspace under that locus and not under the
+explicit one, so a rule fixed on either arm cannot be carried to the other; and
+the backbone-capacity ladder at the end of the LH-projection section
+(\cref{ssec:results_backbone_capacity}), because it varies the feature extractor
+only after the reference LH setting has been fixed.
 
 Two consequences are recorded here rather than assumed. The selected
 configuration differs across datasets, so it is carried as a column on every
@@ -2257,7 +2426,7 @@ published-configuration rows and the structural ones are stated separately and
 related only through the matched within-cell contrasts of
 \cref{sec:results_lhprojection}.
 
-\subsection{The Hier-COS frame ladder}
+\subsection{Frame ablation}
 \label{ssec:results_frame}
 
 The three rungs are the dense random orthonormal frame, the per-level
@@ -2278,8 +2447,8 @@ global normaliser, \texttt{kl\_leaf} weighting, representation width, readout
 and seeds. Selection of the LH-compatible configuration is performed within each
 dataset; the selected frame may therefore differ across datasets.}
 \label{tab:results_frame}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.7cm}YCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.7cm}Y|C|C|C|C|C@{}}
 \toprule
 \textbf{Dataset} & \textbf{Frame} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{AHD}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2303,7 +2472,7 @@ Aircraft            & dense random orthonormal & \tbd & \tbd & \tbd & \tbd & \tb
 % but never pass it to the LH-projection merely because it has the best absolute
 % value: dense mixing violates the independent-head construction.
 
-\subsection{Global or per-level softmax}
+\subsection{Global vs. per-level softmax}
 \label{ssec:results_softmax}
 
 The global node-wide normaliser makes every level's scores compete with every
@@ -2324,8 +2493,8 @@ representation width and seeds. The global-to-level difference is the
 normalisation cost carried by every subsequent row on the structural
 configuration.}
 \label{tab:results_softmax}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{2.2cm}YCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{2.2cm}Y|C|C|C|C|C@{}}
 \toprule
 \textbf{Dataset} & \textbf{Frame} & \textbf{Softmax} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{AHD}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2340,7 +2509,7 @@ Aircraft            & identity & global    & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \end{table}
 
 % ======================================================================
-\section{Priority inside the graph: the LH-projection and its adaptation package}
+\section{In-graph priority with LH-projection}
 \label{sec:results_lhprojection}
 
 The LH-projection imposes the same coarse-to-fine priority as
@@ -2353,23 +2522,80 @@ therefore carries the adaptation cost measured in
 \cref{ssec:results_frame,ssec:results_softmax}. No arm is compared with the
 dense-frame, globally normalised baseline of \cref{sec:results_baselines}.
 
-Enabling the LH-projection adds learnable per-level heads and a terminal PReLU as
-well as the backward projection, so this section identifies the complete LH
-adaptation package rather than the projection operator alone; that limitation is
-restated wherever a row is interpreted. The section opens with the direct
-comparison against explicit lexicographic mode at matched frame, normaliser and
-weighting. It then crosses the level weights with the unmodified, lexicographic
-and LH arms, because the same numerical coefficients become relative per-level
-gradient scales once either mechanism is enabled. It then records why a weighting
-rule established on the lexicographic arm cannot be carried to the LH arm, and
-closes with the numerical and dimensional conditions the projection requires.
+On both host families, enabling the LH-projection also enables the structural
+changes the mechanism requires, so every row identifies the complete adaptation
+package rather than the projection operator alone; that limitation is restated
+wherever a row is interpreted.
 
-\subsection{LH-projection against lexicographic mode}
+The section is organised by host. It opens with the choice of the two hosts. The
+Hier-COS arm follows: the direct comparison against explicit lexicographic mode
+at matched frame, normaliser and weighting; then the level weights evaluated on
+the LH arm alone, because the coefficients accumulate into the reserved subspace
+under this locus and not under the explicit one; then why a weighting rule
+established on the lexicographic arm cannot be carried to the LH arm. The HRN arm follows, where the package is not
+decomposable and no ablation ladder exists. The section closes with the
+numerical and dimensional conditions the projection requires on both hosts.
+
+\subsection{Host model families}
+\label{ssec:results_lhproj_hosts}
+
+Of the five families, three cannot host the mechanism at all: H-CAST has no
+single branch point, HT-CapsNet chains its level capsules and scores them by
+capsule norm rather than a linear map, and LH-DNN already carries the projection
+as part of its architecture (\S\ref{ssec:lhproj_setting}). The mechanism is
+therefore available on Hier-COS and HRN, and on no others.
+
+That the two admissible families are also the strongest baselines under the
+unified protocol is what makes the arm worth running rather than merely possible.
+Across
+\cref{tab:results_baseline_cifar,tab:results_baseline_cub,tab:results_baseline_aircraft},
+Hier-COS and HRN hold the best row on every metric and dataset with a single
+exception: H-CAST ties HRN on CUB-200-2011 coarse accuracy at $98.49$. Hier-COS
+leads CIFAR-100 outright and holds the best TICE on all three datasets
+($1.04$, $0.60$ and $0.78$), while HRN leads CUB-200-2011 and FGVC-Aircraft on
+$\mathrm{Acc}_3$, FPA and AHD ($85.06$/$83.10$/$0.242$ and
+$85.15$/$83.25$/$0.303$). H-CAST is second on CIFAR-100 and on CUB-200-2011, so
+the admissible set is not simply the strong set; but H-CAST is excluded
+structurally --- it has no single branch point --- rather than by selection, and
+LH-DNN, the weakest baseline by a wide margin on all three datasets, is the one
+family for which the mechanism is native.
+
+This matters for what a deficit would mean. A mechanism that trades accuracy for
+consistency is most informative where the accuracy it might spend has already
+been established, and least informative on a family whose baseline is not
+competitive, since a deficit there could not be separated from the baseline's own
+weakness. Hier-COS additionally enters with the lowest TICE of the field, which
+is the metric the mechanism is meant to improve, so the arm is tested against a
+strong incumbent on its own target rather than against a permissive one. The two
+families are also read under different native rules --- \texttt{subspace\_norm}
+for Hier-COS and \texttt{node\_score} for HRN --- so the pairing varies the
+readout as well as the architecture; \cref{ssec:results_readout} is where the
+contribution of the readout rule itself is separated.
+
+The two hosts are complementary in what they can identify, and this bounds what
+the section concludes. The Hier-COS package substitutes components of a short
+output path, and each substitution --- frame, normaliser, width --- is separately
+measurable, which is why \cref{ssec:results_frame,ssec:results_softmax} exist and
+why the LH rows can be read against an adapted rather than a published baseline.
+The HRN package instead reshapes a branch structure through three structural
+steps (\S\ref{ssec:lhproj_hrn}): relocating the existing pool and adding the
+shared map exposes a tractable common vector, direct affine heads make the
+stacked matrix explicit without redundant linear factors, and the detached
+score-space advantage retains coarse-to-fine conditioning while keeping each
+level gradient branch-local. The package is applied as one arm, so the
+HRN arm carries no ablation ladder and its rows identify the package as a whole.
+A difference on HRN therefore locates an effect in the package; only the Hier-COS
+arm can begin to locate it within one.
+
+\subsection{LH-projection vs. lexicographic optimisation}
 \label{ssec:results_lhproj}
 
 The two arms impose the same priority at different points and cannot be combined
-(\S\ref{ssec:design_locus}). Hier-COS is the only family supporting both, allowing
-a within-family comparison at matched backbone, frame, loss, weighting and seeds.
+(\S\ref{ssec:design_locus}). Both host families support both loci, but only
+Hier-COS supports them at matched backbone, frame, loss, weighting and seeds
+with the adapted baseline of \cref{ssec:results_frame,ssec:results_softmax}
+available as a reference, so the within-family comparison is made here and
+revisited on HRN in \cref{ssec:results_lhproj_hrn}.
 The comparison tests whether restricting the in-graph formulation to the branch
 point changes consistency, measured primarily through TICE and AHD.
 
@@ -2389,9 +2615,8 @@ independent-selected one (\S\ref{ssec:design_checkpoints}). Best per dataset in 
 second underlined; $\mathrm{Acc}_3$ and FPA are higher-is-better, AHD and TICE
 lower-is-better.}
 \label{tab:results_lhproj}
-\experimenttablesetup
-\footnotesize
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{4.0cm}CCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{4.0cm}|C|C|C|C|C@{}}
 \toprule
 \textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}\uparrow$ & $\mathrm{FPA}^{\text{t.d.}}\uparrow$ & $\mathrm{AHD}^{\text{t.d.}}\downarrow$ & $\mathrm{TICE}^{\text{ind}}\downarrow$ & $n$ \\
 \midrule
@@ -2450,22 +2675,38 @@ table is compared against the dense-frame, globally normalised baseline of
 block-diagonal frame because no unmodified per-level-softmax identity run exists
 for that dataset.
 
-\subsection{Level weighting and relative gradient scale}
+\subsection{Level weights and gradient scale}
 \label{ssec:results_lex_scaling}
 
 The frame and normaliser are fixed at the far rung established above: block and
 per-level softmax on CIFAR-100, identity and per-level softmax on CUB-200 and
-Aircraft. At each structural configuration, the same numerical weight vector is
-evaluated in
-the unmodified and \texttt{coarse\_first} arms. In the former it weights the
-scalarised classification objective; in the latter it scales the three level
-gradients before projection and composition. Comparing the two arms within one
-weight therefore isolates the lexicographic intervention at that scale, while
-comparing their deltas across weights identifies a weight--mechanism
-interaction. In the decomposed Hier-COS objective the coefficients multiply the
-classification terms, while the per-level regularisation coefficient remains
-fixed; unweighted classification losses are therefore retained in the analysis
-rather than reconstructed from the scalar total alone.
+Aircraft. The cross is run on the LH arm alone: the weight rules are evaluated
+under the LH-projection, and neither the unmodified nor the
+\texttt{coarse\_first} arm is re-run at each rule.
+
+The restriction follows the argument of
+\S\ref{ssec:results_lhproj_weight_transfer}. Explicit lexicographic mode rebuilds
+its reference from the current gradients at every step and normalises by that
+reference's own inner product, so a weight changes the magnitude a level
+contributes but not the subspace it is projected against. The LH-projection
+instead projects against the previous levels' head weights, which are an
+accumulated object: the coefficients change how the coarser heads train and
+therefore change the reserved subspace at every subsequent step. The weighting
+can consequently compound with the mechanism in the in-graph arm and cannot in
+the explicit one, which is where the ablation is spent. In the decomposed
+Hier-COS objective the coefficients multiply the classification terms while the
+per-level regularisation coefficient remains fixed; unweighted classification
+losses are therefore retained in the analysis rather than reconstructed from the
+scalar total alone.
+
+The cost of the restriction is stated rather than worked around. With no
+baseline or lexicographic row at each rule, a difference \emph{across} rules
+within the LH arm cannot be separated into a main effect of the weighting, which
+any arm would show, and an interaction between the weighting and the projection.
+The cross therefore identifies whether the LH arm is sensitive to the weighting
+and at which rule it performs best; it does not identify that sensitivity as
+belonging to the mechanism. Attribution to the mechanism would require the
+matched rows this design omits, and no such attribution is made below.
 
 Three rules are shared by all datasets: uniform weights, the leaf-heavy
 Hier-COS rule, and cumulative branching with $\beta=1$. With levels ordered
@@ -2490,53 +2731,45 @@ conditions are outside the planned ablation.
 
 \begin{table}[htbp]
 \centering
-\caption{Hier-COS level-weight ablation at each dataset's selected frame and
-the per-level normaliser. Every rule is crossed with the unmodified baseline
-and explicit \texttt{coarse\_first} training at matched backbone, transform,
-representation width and seeds. The leaf coefficient $w_3$ is shown because it
-orders the three common rules, but interpretation also uses the complete vector
-reported in the text.}
+\caption{Hier-COS level-weight ablation on the LH-projection arm, at each
+dataset's selected frame and the per-level normaliser, with matched backbone,
+transform, representation width and seeds. The unmodified and
+\texttt{coarse\_first} arms are not re-run at each rule, so rows are compared
+across weight rules within the arm and not against a per-rule baseline. The leaf
+coefficient $w_3$ is shown because it orders the three common rules, but
+interpretation also uses the complete vector reported in the text.}
 \label{tab:results_lex_scaling}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.6cm}L{2.5cm}C L{2.2cm}CCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{3.0cm}|C|C|C|C|C@{}}
 \toprule
-\textbf{Dataset} & \textbf{Weight rule} & $w_3$ & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
+\textbf{Dataset} & \textbf{Weight rule} & $w_3$ & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
-CIFAR-100           & uniform & .333 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & uniform & .333 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
-                    & \texttt{kl\_leaf} & .613 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & \texttt{kl\_leaf} & .613 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
-                    & cumulative $\beta=1$ & .781 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & cumulative $\beta=1$ & .781 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
+CIFAR-100 & uniform              & .333 & \tbd & \tbd & \tbd & \tbd \\
+          & \texttt{kl\_leaf}    & .613 & \tbd & \tbd & \tbd & \tbd \\
+          & cumulative $\beta=1$ & .781 & \tbd & \tbd & \tbd & \tbd \\
 \midrule
-CUB-200             & uniform & .333 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & uniform & .333 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
-                    & \texttt{kl\_leaf} & .613 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & \texttt{kl\_leaf} & .613 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
-                    & cumulative $\beta=1$ & .797 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & cumulative $\beta=1$ & .797 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
+CUB-200   & uniform              & .333 & \tbd & \tbd & \tbd & \tbd \\
+          & \texttt{kl\_leaf}    & .613 & \tbd & \tbd & \tbd & \tbd \\
+          & cumulative $\beta=1$ & .797 & \tbd & \tbd & \tbd & \tbd \\
 \midrule
-Aircraft            & uniform & .333 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & uniform & .333 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
-                    & \texttt{kl\_leaf} & .613 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & \texttt{kl\_leaf} & .613 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
-                    & cumulative $\beta=1$ & .500 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & cumulative $\beta=1$ & .500 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
-                    & marginal & .300 & baseline & \tbd & \tbd & \tbd & \tbd \\
-                    & marginal & .300 & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd \\
+Aircraft  & uniform              & .333 & \tbd & \tbd & \tbd & \tbd \\
+          & \texttt{kl\_leaf}    & .613 & \tbd & \tbd & \tbd & \tbd \\
+          & cumulative $\beta=1$ & .500 & \tbd & \tbd & \tbd & \tbd \\
+          & marginal             & .300 & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-The primary contrast is always lexicographic minus baseline at the same rule.
-The interaction is the change in that within-rule contrast between two rules;
-selecting the best lexicographic row and comparing it with a differently
-weighted baseline would confound scale with projection. Alongside the final
-metrics, the analysis reports unweighted per-level training cross-entropy. This
-distinguishes a consistency change caused by gradient ordering from one caused
-by an under-fitted priority head.
+The primary contrast is between weight rules within the LH arm, read together
+with the complete coefficient vectors above rather than with $w_3$ alone. The
+matched-baseline comparison for this arm remains the one at \texttt{kl\_leaf} in
+\cref{tab:results_lhproj}; no row here is differenced against a baseline trained
+at a different rule, which would confound scale with projection. Alongside the
+final metrics, the analysis reports unweighted per-level training cross-entropy,
+which distinguishes a consistency change caused by the reserved subspace from one
+caused by an under-fitted priority head.
 
-\subsection{Why the weighting does not transfer between the two loci}
+\subsection{Weighting across optimisation loci}
 \label{ssec:results_lhproj_weight_transfer}
 
 The two mechanisms project against different references, and the difference is
@@ -2551,23 +2784,133 @@ head weights. That reference is an accumulated object: the level weights change
 how the earlier heads train, hence the protected subspace at every subsequent
 step, so under the in-graph formulation the weights have full memory.
 
-The consequence for the campaign is that a weighting rule selected on the
-lexicographic arm is not evidence about the LH arm. This is why the cross above
-carries an LH column on CIFAR-100 rather than inheriting a rule fixed elsewhere,
-and why the LH rows on the remaining datasets state the weighting they were
-trained under instead of a rule imported from \cref{ssec:results_lex_scaling}.
+The consequence for the campaign is twofold. A weighting rule selected on the
+lexicographic arm is not evidence about the LH arm, so the LH rows elsewhere in
+this section state the weighting they were trained under rather than importing
+one. And, in the other direction, the accumulation is what makes the ablation
+worth running on this arm specifically, which is why
+\cref{ssec:results_lex_scaling} crosses the weight rules with the LH-projection
+and with no other arm.
 
 % [ANALYSIS] Report the per-level trunk gradient norms for the lexicographic and
-% LH arms at matched weighting, and state whether the two weight rules order the
-% same way in both arms. If the ordering agrees, the transfer assumption is
-% licensed and may be used for the datasets that carry no LH weight cross; if it
-% does not, every LH row must name its own weighting rule and the matched
-% comparison of \cref{ssec:results_lhproj} is restricted to the weighting it was
-% run at. Note that no diagnostic currently reports how much the in-graph
+% LH arms at the one matched weighting both are run at. The comparison across
+% weight rules is available on the LH arm only, so the question "do the two loci
+% order the weight rules the same way" is NOT answerable by this campaign and
+% must not be answered here: state it locally as unidentified. What can be said
+% is (i) whether the two loci
+% differ in per-level gradient scale at the shared rule, and (ii) whether the LH
+% arm's ranking of the rules in \cref{ssec:results_lex_scaling} is consistent
+% with the accumulation argument above --- consistent with, not evidence for,
+% since no per-rule baseline exists to remove the weighting's main effect.
+% Note also that no diagnostic currently reports how much the in-graph
 % projection removes, so a null result here is not evidence that the projection
 % is inactive.
 
-\subsection{Numerical and dimensional conditions}
+\subsection{LH-projection on HRN}
+\label{ssec:results_lhproj_hrn}
+
+The second host tests whether the ordering established on Hier-COS survives a
+change of architecture, readout and objective. HRN differs from Hier-COS on all
+three: it scores by node score rather than subspace norm, trains a hierarchical
+tree term with a separate leaf cross-entropy rather than a level softmax with a
+coordinate regulariser, and its unmodified baseline carries substantially
+larger nonlinear branches. The projected arm replaces those branches with direct
+heads, so branch capacity is not held fixed. HRN also runs at batch size $8$
+against Hier-COS's $64$, which
+matters for the mechanism specifically: the projector is per-sample and its
+guarantee degrades as the batch grows (\S\ref{ssec:lhproj_limits}), so HRN is the
+arm in which the projection is closest to the regime in which it is exact.
+
+\subsubsection{Model changes}
+
+The adaptation package is described in \S\ref{ssec:lhproj_hrn}. It relocates
+HRN's existing average pool before the split, inserts a shared linear map and
+rectifier, replaces each complete native branch by one direct affine head, and
+re-expresses the coarse-to-fine residual as a detached score-space advantage.
+These substitutions are applied together. The comparison is
+against the unmodified HRN baseline of \cref{sec:results_baselines} at matched
+backbone, dataset, schedule and seeds.
+
+Two consequences of the package should be carried into the reading of every row
+below, because both are plausible sources of a deficit that has nothing to do
+with the projection. First, replacing each RFM--FC path by one direct head
+removes all per-level spatial processing and nonlinearity above the trunk and
+reduces the branch parameter count. Second, the same replacement removes the
+branch normalisation layers on which published HRN relies
+(\S\ref{ssec:lhproj_hrn}(ii)). Neither can be isolated within this arm. A row below the
+baseline is therefore attributable to the package and not to the projection
+operator, and the section does not claim otherwise.
+
+\subsubsection{Matched-baseline comparison}
+
+\begin{table}[htbp]
+\centering
+\caption{LH-projection on HRN against the unmodified HRN baseline, at matched
+backbone, dataset, schedule and seeds. The projected arm carries the complete
+adaptation package of \S\ref{ssec:lhproj_hrn}; no intermediate ablation ladder
+was run. Top-down columns are read from the
+top-down-selected checkpoint and independent columns from the
+independent-selected one (\S\ref{ssec:design_checkpoints}).
+$\mathrm{Acc}_3$ and FPA are higher-is-better, AHD and TICE lower-is-better.}
+\label{tab:results_lhproj_hrn}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{4.0cm}|C|C|C|C|C@{}}
+\toprule
+\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}\uparrow$ & $\mathrm{FPA}^{\text{t.d.}}\uparrow$ & $\mathrm{AHD}^{\text{t.d.}}\downarrow$ & $\mathrm{TICE}^{\text{ind}}\downarrow$ & $n$ \\
+\midrule
+CIFAR-100 & baseline                 & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+CUB-200   & baseline                 & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+Aircraft  & baseline                 & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% [ANALYSIS] Report per-seed deltas against the matched baseline, mean +- sample
+% standard deviation over the shared seeds, in percentage points. The claims
+% available here are narrow and should be stated narrowly:
+%   (i) whether the package moves TICE and AHD, which is the consistency claim
+%       the mechanism is set up to test;
+%   (ii) whether the direction agrees with the Hier-COS in-graph rows of
+%       Table~\ref{tab:results_lhproj}. Agreement across two architectures,
+%       two readouts and two objectives is the only cross-family statement this
+%       section can support, and it is evidence about the mechanism, not a
+%       ranking of the families (\S\ref{ssec:design_threats}).
+%   (iii) whether the deficit, if present, is larger or smaller than Hier-COS's.
+%       Do NOT attribute a difference in magnitude to the batch size without a
+%       matched-batch arm; state it as consistent-with at most.
+% Every row carries the package, not the operator: repeat that before any
+% attribution. If the arm is below baseline on accuracy, the direct replacement heads
+% and the withdrawn branch normalisation are live alternative explanations and
+% must be named.
+
+\subsubsection{Ablation scope}
+
+The Hier-COS arm is preceded by two structural ablations
+(\cref{ssec:results_frame,ssec:results_softmax}) because its package decomposes:
+the frame, the normaliser scope and the representation width are independent
+substitutions, each measurable with the projection switched off. The HRN package
+is evaluated only as a complete adaptation. Relocating the pool makes the
+projected space tractable, the shared affine--rectifier pair supplies the
+branch-point parameterisation, the direct heads supply the explicit matrices
+$W_l$, and the score-space advantage retains the hierarchical forward
+conditioning without coupling the level gradients. No matched intermediate arm
+was run, so these effects cannot be separated empirically. The width axis of
+\cref{ssec:results_lhproj_variants} has no analogue here because condition~4 is
+met by the trunk width without a free parameter.
+
+The consequence for identification is stated rather than worked around: within
+the HRN arm, the projection operator and its adaptation package are
+confounded. What the arm does provide is a second, architecturally independent
+test of the direction of the effect, on a family whose baseline is competitive
+under the unified protocol (\S\ref{ssec:results_lhproj_hosts}) and at a batch
+size closer to the regime in which the projector's guarantee holds.
+
+\subsection{Numerical and dimensional stability}
 \label{ssec:results_lhproj_variants}
 
 Two of the three qualifications of \S\ref{ssec:lhproj_limits} can be probed
@@ -2592,8 +2935,8 @@ is reserved \emph{against}.
 representation width $D$ together with the number of non-leaf classes
 $\sum_{l<L}C_l$ it must exceed by condition~4 of \S\ref{ssec:lhproj_setting}.}
 \label{tab:results_lhproj_variants}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}YCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}Y|C|C|C|C|C@{}}
 \toprule
 \textbf{Dataset} & \textbf{Variant} & $D$ \textbf{/ non-leaf} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{t.d.}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
 \midrule
@@ -2611,8 +2954,60 @@ $\sum_{l<L}C_l$ it must exceed by condition~4 of \S\ref{ssec:lhproj_setting}.}
 % so it is reported as a model variant and never folded into the
 % LH-projection-versus-lexicographic contrast of \cref{ssec:results_lhproj}.
 
+\subsection{Backbone capacity on CIFAR-100}
+\label{ssec:results_backbone_capacity}
+
+The CIFAR-100 configuration uses a from-scratch WideResNet-28-8, whereas the
+fine-grained datasets use ImageNet-pretrained ResNet-50 backbones. The effect of
+the LH-projection on CIFAR-100 may therefore depend on the capacity or
+optimisation regime of its feature extractor. This final LH-projection ablation
+keeps the CIFAR-native WideResNet implementation and 32-pixel input fixed and
+compares the 23.35M-parameter WRN-28-8 anchor with WRN-16-8 (10.96M parameters)
+and WRN-28-4 (5.85M parameters). The two reduced rungs reach a similar capacity
+range by reducing depth and width respectively, so agreement between them is
+more informative than either reduction alone.
+
+Only the LH-projection arm is evaluated in this ladder. Every rung uses the
+per-level block-diagonal frame, per-level softmax, \texttt{kl\_leaf} weighting,
+the reference representation width and the same optimiser; the backbone is the
+only intended change. The comparison therefore measures the sensitivity of the
+complete LH-projection configuration to backbone capacity. Without a matched
+no-projection row at every rung, it does not identify a capacity--projection
+interaction.
+
+\begin{table}[htbp]
+\centering
+\caption{CIFAR-100 Hier-COS backbone-capacity sensitivity on the LH-projection
+arm. All rows retain the from-scratch CIFAR WideResNet implementation, 32-pixel
+inputs and the reference LH-projection configuration. Parameter counts are the
+nominal WideResNet sizes; $n$ records the realised seed coverage.}
+\label{tab:results_backbone_capacity}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}|L{2.0cm}|C|C|C|C|C@{}}
+\toprule
+\textbf{Backbone} & \textbf{Backbone parameters} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{AHD}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
+\midrule
+WRN-28-8 & 23.35M & \tbd & \tbd & \tbd & \tbd & \tbd \\
+WRN-16-8 & 10.96M & \tbd & \tbd & \tbd & \tbd & \tbd \\
+WRN-28-4 & 5.85M  & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The analysis will report the unweighted per-level training cross-entropies beside
+the outcome metrics. A systematic deterioration across both reduced rungs would
+show that the complete LH configuration is capacity-sensitive; stability across
+the two architecturally different reductions would instead make a simple
+parameter-count explanation less plausible. Since depth and width alter
+different properties of the feature extractor, the ladder is reported as a
+sensitivity and not fitted as a continuous scaling law.
+
+The separate CIFAR-100 ResNet-50/224-pixel pilot is excluded from this table: it
+changes architecture, ImageNet pretraining and input resolution together and
+therefore cannot identify a backbone-capacity effect.
+
 % ======================================================================
-\section{Output space against gradient space}
+\section{Output-space vs. gradient-space constraints}
 \label{sec:results_mechanisms}
 
 The four mechanisms and the shared \emph{none} baseline form five mutually
@@ -2637,8 +3032,8 @@ differences from the shared \emph{none} baseline of
 are improvements. Direct subspace supervision imposes no ordering, so its
 $\Delta$TICE is an unintended side effect and not a claim of the mechanism.}
 \label{tab:results_mechanism_axis}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{1.8cm}CCCCCCCC@{}}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{1.8cm}|CC|CC|CC|CC@{}}
 \toprule
 & & \multicolumn{2}{c}{\textbf{HCC}} & \multicolumn{2}{c}{\textbf{Lexicographic}} & \multicolumn{2}{c}{\textbf{LH-projection}} & \multicolumn{2}{c}{\textbf{Subspace sup.}} \\
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}\cmidrule(l){9-10}
@@ -2674,103 +3069,273 @@ HT-CapsNet & CIFAR-100 & \tbd & \tbd & \tbd & \tbd & \na & \na & \na & \na \\
 % (\cref{ssec:results_posthoc}) first.
 
 % ======================================================================
-\section{CIFAR-100 backbone-capacity sensitivity}
-\label{ssec:results_backbone_capacity}
+\section{Inference after gradient-priority training}
+\label{sec:results_inference_priority}
 
-The CIFAR-100 configuration uses a from-scratch WideResNet-28-8, whereas the
-fine-grained datasets use ImageNet-pretrained ResNet-50 backbones. The strong
-weight--lex interaction observed on CIFAR-100 may therefore be specific to the
-capacity or optimisation regime of its feature extractor. This sensitivity
-keeps the CIFAR-native WideResNet implementation and 32-pixel input fixed and
-compares the 23.35M-parameter WRN-28-8 anchor with WRN-16-8 (10.96M parameters)
-and WRN-28-4 (5.85M parameters). The two reduced rungs reach a similar capacity
-range by reducing depth and width respectively, so agreement between them is
-more informative than either reduction alone.
+The baseline analysis of \cref{sec:results_inference} held the parameter state
+fixed before any trained intervention was introduced. This section returns to
+the same inference grid only after the mechanism results have been established.
+Its scope is the matched Hier-COS comparison between explicit lexicographic mode
+and the LH-projection in \cref{ssec:results_lhproj}. These are the two mechanisms
+that impose the same coarse-to-fine priority in gradient space while acting at
+different loci, and neither remains active once the parameters are fixed
+(\S\ref{ssec:inference_interaction}).
 
-Every rung uses the dense random orthonormal frame, global softmax,
-\texttt{kl\_leaf} weighting, the same representation width and optimiser, and
-is crossed with the unmodified baseline and \texttt{coarse\_first} training.
-The completed WRN-28-8 rows are reused at three seeds; the two new rungs are a
-two-seed sensitivity rather than headline estimates. The identifying contrast
-is lexicographic minus baseline within each rung. Comparing raw scores between
-backbones without subtracting the matched baseline would confound capacity with
-the intervention.
+For each decoding mode, the checkpoint selected under that mode is held fixed
+while the readout and post-hoc transform are varied. Thus, every within-arm
+contrast below is an inference-time effect on an already trained model. A
+difference between the two arms under a common inference cell instead reflects
+what their distinct training loci left in the learned parameters. The unmodified
+checkpoints are not repeated here; their complete inference analysis is the one
+in \cref{sec:results_inference}, and the matched training comparison remains
+\cref{ssec:results_lhproj}.
+
+\subsection{Independent vs. top-down decoding}
+\label{ssec:results_priority_decoder}
+
+The first comparison varies only the decoder, using the adapted Hier-COS native
+readout and no HCC transform. It asks whether the relative behaviour of
+lexicographic mode and the LH-projection changes when exact path consistency is
+imposed after training. As in \cref{ssec:results_decoder}, the top-down columns
+measure a decoding trade-off rather than a further mechanism effect.
 
 \begin{table}[htbp]
 \centering
-\caption{CIFAR-100 Hier-COS backbone-capacity sensitivity. All rows retain the
-from-scratch CIFAR WideResNet implementation, 32-pixel inputs, dense random
-orthonormal frame, global normaliser and \texttt{kl\_leaf} weighting. Parameter
-counts are the nominal WideResNet sizes; $n$ records the realised seed coverage.}
-\label{tab:results_backbone_capacity}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{1.6cm}L{2.3cm}CCCCC@{}}
+\caption{Independent against top-down decoding on the frozen explicit
+lexicographic and LH-projection checkpoints. All rows use the native
+taxonomy-subspace readout and no post-hoc transform. $\Delta$ columns are
+top-down minus independent, in percentage points; each row aggregates the same
+three matched seeds as \cref{tab:results_lhproj}.}
+\label{tab:results_priority_decoder}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{3.0cm}|CCC|CCC|CC@{}}
 \toprule
-\textbf{Backbone} & \textbf{Parameters} & \textbf{Arm} & $\mathrm{Acc}_3^{\text{ind}}$ & $\mathrm{FPA}^{\text{ind}}$ & $\mathrm{AHD}^{\text{ind}}$ & $\mathrm{TICE}^{\text{ind}}$ & $n$ \\
+& & \multicolumn{3}{c}{\textbf{Independent}} & \multicolumn{3}{c}{\textbf{Top-down}} & \multicolumn{2}{c}{$\Delta$} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(l){9-10}
+\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3$ & FPA & AHD & $\mathrm{Acc}_3$ & FPA & AHD & $\mathrm{Acc}_3$ & FPA \\
 \midrule
-WRN-28-8 & 23.35M & baseline & \tbd & \tbd & \tbd & \tbd & \tbd \\
-         &        & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd & \tbd \\
-WRN-16-8 & 10.96M & baseline & \tbd & \tbd & \tbd & \tbd & \tbd \\
-         &        & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd & \tbd \\
-WRN-28-4 & 5.85M & baseline & \tbd & \tbd & \tbd & \tbd & \tbd \\
-         &       & \texttt{coarse\_first} & \tbd & \tbd & \tbd & \tbd & \tbd \\
+CIFAR-100 & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+CUB-200   & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+Aircraft  & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-The analysis additionally reports the unweighted per-level training
-cross-entropies used in the weight diagnosis. A widening lex-minus-baseline gap
-in coarse or middle loss as capacity falls would support a capacity-limited
-competition explanation; a stable gap across both reduced rungs would instead
-support the level-weight mechanism as the primary explanation. Because depth
-and width alter different architectural properties, the ladder is reported as
-a sensitivity, not fitted as a continuous scaling law.
+% [ANALYSIS] Compare each decoder delta first within an arm and dataset. Only
+% then compare the two arms. Relate the change to the baseline decoder delta in
+% \cref{tab:results_decoder}: the question is whether either training locus
+% changes the amount of correction that top-down decoding performs, not whether
+% top-down decoding enforces consistency, which it does by construction.
 
-The separate CIFAR-100 ResNet-50/224-pixel pilot is excluded from this table: it
-changes architecture, ImageNet pretraining and input resolution together and
-therefore cannot identify a backbone-capacity effect.
+\subsection{Node score vs. subspace norm}
+\label{ssec:results_priority_readout}
+
+The second comparison fixes independent decoding and no transform, and changes
+only how the frozen coordinates are reduced to node scores. Both arms share the
+same adapted Hier-COS frame, normaliser, weighting and seeds
+(\cref{ssec:results_lhproj}), so a different readout response can be associated
+with the training locus rather than with a different coordinate system.
+
+\begin{table}[htbp]
+\centering
+\caption{Readout rule applied post hoc to the frozen explicit lexicographic and
+LH-projection checkpoints, under independent decoding and with no transform.
+The taxonomy-subspace norm is the native Hier-COS readout; node score is the
+diagnostic alternative. Each row aggregates three matched seeds.}
+\label{tab:results_priority_readout}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{3.0cm}|CCC|CCC@{}}
+\toprule
+& & \multicolumn{3}{c}{\texttt{node\_score}} & \multicolumn{3}{c}{\texttt{subspace\_norm}} \\
+\cmidrule(lr){3-5}\cmidrule(l){6-8}
+\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3$ & FPA & AHD & $\mathrm{Acc}_3$ & FPA & AHD \\
+\midrule
+CIFAR-100 & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+CUB-200   & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+Aircraft  & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% [ANALYSIS] Use paired within-checkpoint differences. Compare their direction
+% with the frozen-baseline transplant in \cref{tab:results_readout}. A gain under
+% one arm does not by itself identify the training mechanism: the relevant
+% evidence is a readout delta that differs between the two matched arms.
+
+\subsection{Post-hoc HCC}
+\label{ssec:results_priority_posthoc}
+
+The final comparison applies HCC after training, without having differentiated
+through it. This does not create a joint mechanism arm: it measures the immediate
+output correction on parameters learned by each gradient-priority mechanism
+(\S\ref{ssec:design_axis}). Independent decoding is primary because it leaves
+TICE observable; the top-down check records whether the transform changes any
+decoded-label metric in that inference cell.
+
+\begin{table}[htbp]
+\centering
+\caption{HCC applied post hoc to the frozen explicit lexicographic and
+LH-projection checkpoints, under the native taxonomy-subspace readout and
+independent decoding. The check column reports the largest absolute change under
+top-down decoding. Each row aggregates three matched seeds.}
+\label{tab:results_priority_posthoc_hcc}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{1.8cm}L{3.0cm}|CCC|CCC|C@{}}
+\toprule
+& & \multicolumn{3}{c}{\textbf{No transform}} & \multicolumn{3}{c}{\textbf{HCC transform}} & \textbf{Check} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(l){9-9}
+\textbf{Dataset} & \textbf{Arm} & $\mathrm{Acc}_3$ & FPA & TICE & $\mathrm{Acc}_3$ & FPA & TICE & $\Delta^{\text{t.d.}}$ \\
+\midrule
+CIFAR-100 & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+CUB-200   & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+Aircraft  & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\FloatBarrier
+
+% [ANALYSIS] Report the post-hoc TICE reduction and its Acc_3 cost within each
+% arm, then compare those deltas with the baseline post-hoc effect in
+% \cref{tab:results_posthoc_hcc}. Because neither gradient-priority mechanism is
+% active in the forward pass, a different HCC response is evidence that training
+% changed the score geometry on which the same correction acts; it is not an
+% effect of a different inference implementation.
+
+\subsection{Second inference grid}
+\label{ssec:results_priority_inference_summary}
+
+% [ANALYSIS] Summarise only differences supported by the three tables above:
+% (i) whether decoder sensitivity differs between the loci, (ii) whether either
+% locus changes dependence on the Hier-COS native readout, and (iii) whether HCC
+% performs a different amount of post-hoc correction after the two training
+% procedures. Keep these claims separate from the native-cell training deltas in
+% \cref{ssec:results_lhproj}.
 
 % ======================================================================
-\section{Coverage: which claims are identified}
-\label{sec:results_coverage}
+\section{Computational cost}
+\label{sec:results_computational_cost}
 
-The design of \S\ref{sec:results_design} includes conditions that were not all
-run. A question is \emph{unidentified} when a required arm is missing: the
-available evidence does not decide it, rather than deciding against it.
-Table~\ref{tab:results_coverage} states the runs
-required by each question, whether those runs exist, and what their absence
-prevents the chapter from concluding. Implementation fidelity is addressed
-separately by the source audit, verification tests and unified-protocol baselines
-of \cref{sec:fidelity,sec:results_baselines}; it establishes fidelity of the
-local implementations, not numerical identity with published results. Q4 is a
-synthesis question and is identified only to the extent that the applicable
-family--dataset comparisons and the component conditions listed below are
-complete.
+This section compares the computational cost of the three matched training
+conditions used in \cref{ssec:results_lhproj}: the ordinary scalarised baseline
+(also referred to as \emph{no-lex}), explicit lexicographic mode, and the
+LH-projection. The comparison is kept within Hier-COS and within each dataset;
+cross-family timing would additionally mix backbone, input resolution, batch
+size and implementation choices. All numerical entries remain \tbd until the
+timing protocol and the corresponding measurements are fixed.
+
+\subsection{Parameter count}
+\label{ssec:results_parameter_cost}
+
+Parameter count separates architectural cost from optimisation cost. Explicit
+lexicographic mode changes how gradients are assembled but adds no model
+parameters, so its count must equal that of its matched no-lex baseline. For the
+LH-projection, the reported count covers the complete trainable model used by the
+arm, including any component introduced by its adaptation package. Fixed frames
+and other stored but non-trainable tensors are reported separately rather than
+being silently included in the trainable count.
 
 \begin{table}[htbp]
 \centering
-\caption{Coverage of the design. A question is identified only if every arm in
-the second column exists at the same family, dataset and seeds.}
-\label{tab:results_coverage}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}YYCY@{}}
+\caption{Parameter count for the matched Hier-COS cost comparison. The delta and
+ratio are computed against the no-lex row within the same dataset.}
+\label{tab:results_parameter_cost}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.2cm}L{3.1cm}|C|C|C|C@{}}
 \toprule
-\textbf{Question} & \textbf{Arms required} & \textbf{Status} & \textbf{Cost of the absence} \\
+\textbf{Dataset} & \textbf{Arm} & \textbf{Trainable} & \textbf{Non-trainable} & $\Delta$ \textbf{trainable} & \textbf{Ratio} \\
 \midrule
-Q3/Q4: Is Hier-COS's benefit the frame or the readout? & frame ladder; post-hoc readout transplant & \tbd & \tbd \\
-Q4: Where must the softmax live? & baseline at both scopes, matched frame & \tbd & \tbd \\
-Q1: Does gradient-space ordering work? & baseline and \texttt{coarse\_first} at matched weights & \tbd & \tbd \\
-Q2: Is the \emph{ordering} what matters? & \texttt{fine\_first} and coarse-heavy weighting, at matched seeds & \tbd & \tbd \\
-Q4: Does the relative gradient scale matter? & uniform, \texttt{kl\_leaf} and cumulative $\beta=1$ in both arms on all datasets; marginal in both Aircraft arms & \tbd & \tbd \\
-Q4: Is the CIFAR-100 effect capacity-dependent? & matched baseline and \texttt{coarse\_first} rows at WRN-28-8, WRN-16-8 and WRN-28-4 & \tbd & \tbd \\
-Q3: One principle, two gradient implementations & LH-projection and lex.\ mode on Hier-COS & \tbd & \tbd \\
-Q3: Output space against gradient space & the cells of the mechanism axis & \tbd & \tbd \\
-Q3: What is inference-time versus training-induced in HCC? & baseline, post-hoc HCC, trained HCC & \tbd & \tbd \\
-Q3 comparator: Does supervising the ranked quantity help? & Hier-COS baseline and subspace-supervision arm, over $\tau$ & partial & effect at $\tau=0.1$ identified; temperature sensitivity remains unidentified \\
-Reporting criterion: What is the empirical resource overhead? & matched wall-clock and peak-memory ratios for every mechanism & partial & analytic cost is known; no empirical efficiency ranking is identified \\
+CIFAR-100 & baseline (no-lex)         & \tbd & \tbd & ---  & $1.00\times$ \\
+          & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+CUB-200   & baseline (no-lex)         & \tbd & \tbd & ---  & $1.00\times$ \\
+          & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+Aircraft  & baseline (no-lex)         & \tbd & \tbd & ---  & $1.00\times$ \\
+          & lexicographic (explicit) & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & \tbd & \tbd & \tbd & \tbd \\
 \bottomrule
 \end{tabularx}
 \end{table}
+
+\subsection{Training time and peak memory}
+\label{ssec:results_training_time}
+
+Training time will be measured under a common hardware and software environment,
+with matched batch size, numerical precision, data-loading configuration,
+and software configuration. A dedicated ten-epoch run is used as a computational
+benchmark rather than as a replacement training run. The first epoch warms up
+the accelerator, data pipeline and memory allocator; mean epoch time is computed
+over epochs 2--10. The timed region contains the training batches only, with
+validation, logging and checkpoint I/O excluded, and the accelerator is
+synchronised at its boundaries. This estimates mechanism overhead without
+requiring the complete experiments to be repeated or conflating runtime with
+the epoch at which a checkpoint is selected.
+
+Peak accelerator memory is recorded during the same ten-epoch run after model,
+optimiser and data loader initialisation. The table reports peak allocated
+memory; peak reserved memory may additionally be retained in the raw benchmark
+log, but the two definitions are not mixed. Timing and memory ratios are always
+formed against the no-lex row on the same dataset and hardware.
+
+\begin{table}[htbp]
+\centering
+\caption{Ten-epoch training-cost benchmark for the matched Hier-COS arms. Epoch
+1 is warm-up; epoch time is reported as mean $\pm$ sample standard deviation
+over epochs 2--10. These nine observations describe within-run timing variation,
+not independent training repetitions. Peak GPU memory is the maximum allocated
+memory during the benchmark.}
+\label{tab:results_training_time}
+\resulttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{3.0cm}|C|C|C|C|C@{}}
+\toprule
+\textbf{Dataset} & \textbf{Arm} & \textbf{Timed epochs} & \textbf{Epoch time} & \textbf{Time ratio} & \textbf{Peak GPU memory} & \textbf{Memory ratio} \\
+\midrule
+CIFAR-100 & baseline (no-lex)         & 2--10 & \tbd & $1.00\times$ & \tbd & $1.00\times$ \\
+          & lexicographic (explicit) & 2--10 & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & 2--10 & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+CUB-200   & baseline (no-lex)         & 2--10 & \tbd & $1.00\times$ & \tbd & $1.00\times$ \\
+          & lexicographic (explicit) & 2--10 & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & 2--10 & \tbd & \tbd & \tbd & \tbd \\
+\midrule
+Aircraft  & baseline (no-lex)         & 2--10 & \tbd & $1.00\times$ & \tbd & $1.00\times$ \\
+          & lexicographic (explicit) & 2--10 & \tbd & \tbd & \tbd & \tbd \\
+          & LH-projection (in-graph) & 2--10 & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The expected sources of overhead differ. The no-lex baseline obtains one
+backward pass from the scalarised loss. Explicit lexicographic mode obtains three
+level gradients from the retained graph and then projects and stores them as
+described in \cref{ssec:lex_cost}. The LH-projection retains the ordinary
+end-to-end optimisation schedule but adds the per-sample projection operations
+inside the computational graph. The measured ratios, rather than the number of
+backward calls alone, will determine the practical ranking.
+
+Peak memory is especially informative for explicit lexicographic mode because
+the three level-gradient tuples coexist before the optimiser update
+(\cref{ssec:lex_cost}). It complements epoch time: the former measures whether
+the mechanism reduces the feasible batch size, while the latter measures its
+steady-state time overhead.
 
 % ======================================================================
 \section{Summary of findings}
@@ -2785,5 +3350,5 @@ Reporting criterion: What is the empirical resource overhead? & matched wall-clo
 %   * Negative and null results reported in the same register as positive ones:
 %     that a mechanism failed to beat its post-hoc control, or that a control
 %     reproduced the effect, is a finding of this chapter and is stated as such.
-%   * Questions left unidentified by Table~\ref{tab:results_coverage} are named
-%     here as open, not quietly omitted.
+%   * Questions left unidentified by incomplete tables are named here as open,
+%     not quietly omitted.

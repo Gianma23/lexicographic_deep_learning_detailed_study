@@ -21,13 +21,15 @@ HRN, `subspace_norm` for Hier-COS, and the HCC-prefixed cell for an HCC-trained 
 | `lexmode.ipynb` | The same, for lexicographic (coarse-first) gradient projection. |
 | `hcc.ipynb` | The same, for HCC-trained checkpoints, whose native cell is HCC-prefixed. |
 | `lhprojection.ipynb` | The same, for the LH-DNN branch-point projection (Hier-COS only). |
-| `subspace_supervision.ipynb` | The same, for direct subspace-norm supervision (Hier-COS only). |
 | `all_mechanics.ipynb` | Which (mechanism, inference) combination is best overall, and how mechanisms compare at cells that are not their own. |
 
-The five per-mechanism notebooks report the **within-checkpoint** gain against that checkpoint's
+The four per-mechanism notebooks report the **within-checkpoint** gain against that checkpoint's
 native cell: one set of weights, two inference rules, so the effect isolates the readout. Their
 numbers are each measured against a different zero point, so they cannot be compared across
 notebooks — that is what `all_mechanics.ipynb` is for.
+
+Direct subspace supervision remains available as a family in `all_mechanics.ipynb`, but it has no
+dedicated per-mechanism notebook.
 
 `all_mechanics.ipynb` compares training runs against each other, which is a weaker comparison: the
 two rows share only the seed, the dataset and the test split, so a difference mixes the training
@@ -44,12 +46,22 @@ saves, so two concurrent sweeps make the slower one fail at save time. Because t
 run directory, work done by one notebook is reused by all the others — `all_mechanics.ipynb`
 defaults to `RUN_EVALUATION = False` for that reason.
 
+Every notebook exposes `RUN_ROOTS` in its setup cell. A per-mechanism notebook maps
+`dataset -> model -> experiment directory`; `all_mechanics.ipynb` uses the corresponding full
+`family -> dataset -> model -> experiment directory` mapping. A directory may be an absolute path
+or a name relative to `/scratch/g.saggini1/outputs`. This makes it possible to switch among
+automatic-width, `d512`, `equal`, `kl_leaf`, or future runs without editing the shared utility.
+
+After changing `RUN_ROOTS`, re-run the discovery cell and every cell below it. The discovery cell
+prints every selected root and whether it exists before reporting completed/evaluated coverage, so
+a missing or incomplete selection cannot silently disappear from the analysis.
+
 Figures are written under `/scratch/g.saggini1/outputs/analysis/inference_analysis/<notebook>/`, as
 PDF for LaTeX plus PNG for previews. Plotting calls print the saved paths but do not emit LaTeX
 figure environments.
 
 ## Shared code
 
-All six notebooks are thin: run discovery, the evaluator sweep, the loaders, the gain tables and
+All five notebooks are thin: run discovery, the evaluator sweep, the loaders, the gain tables and
 every figure live in [`../utils/posthoc_inference_utils.py`](../utils/posthoc_inference_utils.py).
 Edit that module to change a figure everywhere; edit a notebook only to change what it selects.

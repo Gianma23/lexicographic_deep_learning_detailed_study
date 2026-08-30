@@ -136,7 +136,7 @@ for ds in "${DATASETS[@]}"; do
   cfg="$(config_for_dataset "$ds")"
   run_seeded_train "$cfg" "$(run_output_dir "$ds")" \
     "train.lexicographic.enabled=false" \
-    "train.gradient_blocks=[p123,p12,p1]"
+    "train.gradient_blocks=[p123,p12,p1,p2,p3]"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

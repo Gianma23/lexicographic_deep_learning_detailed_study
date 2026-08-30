@@ -97,19 +97,23 @@ specific property
 that makes H-CAST informative for this study. `globalkl: false` is therefore a
 deliberate design choice, not only a plumbing convenience.
 
-**Quirk — level weights are dropped.** `total` uses the *weighted* level losses
-but `aux["level_losses"]` holds the **unweighted** tensors
-(`models/hcast/losses.py:243-274`). Under lex, `model.loss.level_weighting.mode:
-dynamic` therefore has no effect on the update, only on the logged scalar. The
-shipped lex presets set `mode: static` (all weights 1.0), so they are unaffected;
-deviating from that is the trap.
+**Level weights reach the step.** `aux["level_losses"]` holds the *weighted*
+tensors, so `sum(level_losses) == total` exactly whenever `globalkl: false`
+(`models/hcast/losses.py:243-278`). `model.loss.level_weighting.mode: dynamic`
+therefore changes the projected update as well as the logged scalar, and
+projection is a plugin over the configured objective rather than a substitute
+for it. The `loss_level_*` metrics stay **unweighted** and are reported next to
+`loss_weight_level_*`, so the per-level scalars remain comparable across weight
+modes. Before 2026-08-30 this channel carried the unweighted tensors and level
+weights were a silent no-op under lex; runs from before that date are
+effectively unit-weighted regardless of what `config_resolved.yaml` records.
 
 ### 3.2 Hier-COS (`model.name: hiercos`)
 
 **Level objectives.** `level_losses[l] = ce_level_l + alpha * reg_level_l`
 (`models/hiercos/losses.py`). Level weights are folded **inside**
-`ce_level_losses` by `_weighted_target_ce_level_losses`, so unlike H-CAST and
-HT-CapsNet they do survive into the update.
+`ce_level_losses` by `_weighted_target_ce_level_losses`, so they survive into
+the update; H-CAST and HT-CapsNet now follow the same convention.
 
 **Required config.**
 
@@ -143,20 +147,23 @@ weight effect alone is worth roughly 1-2 pp of fine accuracy.
 
 **Required config.** No loss-mode coercion is enforced, but the launcher
 `scripts/capsnet/run_ht_capsnet_lex.sh` deliberately sets
-`model.loss.weight_mode=none`. It also passes `train.epochs=100`, which is now
-the baseline preset's value as well, so the arms are training-budget matched;
-the override is kept as an explicit guard. Comparisons with the native baseline
-therefore remain not level-weight matched, but are no longer budget-mismatched.
+`model.loss.weight_mode=none`, while the baseline preset ships
+`weight_mode: dynamic` (`configs/capsnet/capsnet_cifar100.yaml:46`). It also
+passes `train.epochs=100`, which is now the baseline preset's value as well, so
+the arms are training-budget matched; the override is kept as an explicit guard.
+Comparisons with the native baseline therefore remain not level-weight matched,
+but are no longer budget-mismatched. Since the weights now reach the step (see
+below), dropping the `weight_mode=none` override is what makes the two arms
+weight-matched — at the cost of superseding every earlier HT-CapsNet lex run.
 
-**Quirk — level weights are dropped, and `dynamic` is misleading.** As with
-H-CAST, `total` is the weighted sum while `aux["level_losses"]` holds the
-unweighted tensors. The baseline preset ships `weight_mode: dynamic`
-(`configs/capsnet/capsnet_cifar100.yaml:29`), and under lex the
-`post_optimizer_step` callback keeps updating `level_loss_weights` every batch
-with **no effect on the optimizer step**. Static validation accepts this
-combination without warning (`tests/test_lexicographic_model_support.py:44-46`).
-Using the launcher's `weight_mode=none` makes the actual behaviour explicit;
-running lex at `dynamic` silently produces a unit-weight run.
+**Level weights reach the step.** `aux["level_losses"]` holds the *weighted*
+margins, so `sum(level_losses) == total` exactly
+(`models/ht_capsnet/losses.py:242-266`), and the `level_loss_weights` that
+`post_optimizer_step` refreshes every batch under `weight_mode: dynamic` now
+scale the projected per-level gradients. The `loss_level_*` metrics stay
+**unweighted** next to `loss_weight_level_*`. Before 2026-08-30 the channel
+carried the unweighted margins, so a lex run at `dynamic` silently produced a
+unit-weight update; runs from before that date are effectively unit-weighted.
 
 ### 3.4 HRN (`model.name: hrn`)
 
@@ -181,14 +188,15 @@ model:
   loss: level_conditional # required; `native` exposes no per-level tensors
 ```
 
-Launcher: `scripts/hrn/run_hrn_lex.sh:163`.
+Launcher: `scripts/hrn/run_hrn_lex.sh`.
 
 **Quirk — the auxiliary leaf head is projected as a fine-level term.**
 `classifier_3_1` is trained through `ce_loss`, which sits inside the fine level
 objective. Lexicographic projection therefore treats that auxiliary head as part
-of the fine hierarchical objective and will orthogonalize it against the coarse
-and mid gradients. This is a modelling choice, not a neutral wiring detail, and
-should be stated when reporting HRN lex results.
+of the fine hierarchical objective and orthogonalizes it against the coarse and
+mid gradients on the selected `p123` and `p23` competing blocks. This is a
+modelling choice, not a neutral wiring detail, and should be stated when
+reporting HRN lex results.
 
 **Comparability.** Unlike the previous `level_marginal` mode (removed), which
 summed the three *cumulative* marginals and so optimised a `(3, 2, 1)`-weighted
@@ -214,11 +222,14 @@ per parameter. Their canonical name is `p` followed by the active level indices:
 The partition is a property of the **architecture**, not of the config, and it
 differs sharply across models.
 
-**H-CAST uses `p123`, `p12`, and `p1`.** Its heads read
-different trunk depths — `head(out2)` fine, `family_head(out3)` mid,
+**H-CAST's competing blocks are `p123` and `p12`.** Its heads read different
+trunk depths — `head(out2)` fine, `family_head(out3)` mid, and
 `manufacturer_head(out4)` coarse
 (`models/hcast/internal/cast_deit_hier.py:221-223`) — so blocks below each head
-are exclusive to the coarser levels. Measured on
+are exclusive to the coarser levels. The complete support partition also
+contains the singleton blocks `p1`, `p2`, and `p3`; no inter-objective
+projection is defined on them. Baseline configs diagnose all five nonempty
+blocks, whereas the lex launcher selects only `p123` and `p12`. Measured on
 `/scratch/g.saggini1/outputs/hcast_cifar100_lex/seed_0`, epoch 2, seed 0:
 
 | | `p123` (`t1`) | `p12` (`t2`) | `p1` (`t3`) |
@@ -230,20 +241,38 @@ The projection also behaves differently per block in that run:
 coarse gradients are strongly aligned on the fully shared trunk but nearly
 orthogonal on the coarse+mid-only trunk.
 
-**Hier-COS and HRN reduce to `p123` as their only competing block.** Hier-COS has a single shared
-backbone with no branches and a frozen fixed frame, so all trainable parameters
-receive all three level gradients. Measured on the Aircraft lex runs, epoch 2,
-seed 0: `param_norm_t1 = param_norm_t2t1 = param_norm_t3t2t1 = 98.6`
+**Hier-COS reduces to `p123` as its only competing block.** It has a single
+shared backbone with no branches and a frozen fixed frame, so all trainable
+parameters receive all three level gradients. Measured on the Aircraft lex runs,
+epoch 2, seed 0: `param_norm_t1 = param_norm_t2t1 = param_norm_t3t2t1 = 98.6`
 (`global_softmax_ce_reg`) and `98.7` (`level_softmax_ce_reg`) — identical under
 both loss modes, confirming the degeneracy is architectural rather than
 loss-induced. This is expected for Hier-COS, not a defect.
 
+**HRN uses `p123`, `p23`, and `p3`.** The conditional loss construction detaches
+scores finer than the level being defined, so its support is triangular. The
+shared trunk and coarse branch are reached by all three level objectives
+(`p123`), the middle branch by the middle and fine objectives (`p23`), and the
+fine branch by the fine objective alone (`p3`). The matched baseline and lex
+settings use different block lists by design: the baseline diagnoses
+`[p123,p23,p3]`, while the lex launcher selects the projection-relevant
+`[p123,p23]`. The singleton `p3` needs no inter-objective projection.
+
 **HT-CapsNet instead uses `p123`, `p23`, and `p3`.** Its capsule stages are
 chained coarse-to-fine: the coarse stage is reached by all three losses, the
 middle stage by middle and fine, and the final stage by the fine loss only.
-The HT-CapsNet launchers therefore set
-`train.gradient_blocks=[p123,p23,p3]`; coarse-first mode additionally
-projects the fine gradient against the middle gradient on `p23`.
+The baseline configs therefore diagnose `[p123,p23,p3]`, while the lex launcher
+selects `[p123,p23]`; coarse-first mode additionally projects the fine gradient
+against the middle gradient on `p23`.
+
+**Parameters reached by no level objective are outside the `p...` partition.**
+The executable support audit also found two such cases: HT-CapsNet's three
+`post_attn_norms` modules are inactive when `attn_postprocess: squash`, and the
+CIFAR WideResNet used by HRN and Hier-COS does not use the `bn1` affine
+parameters in the first unequal-width block of stages 2 and 3. Their gradients
+are `None` for all three objectives, so they require no projection and produce
+no block diagnostics. They nevertheless remain registered as trainable
+parameters and are therefore relevant to raw parameter-count reporting.
 
 Practical consequences:
 
@@ -251,8 +280,8 @@ Practical consequences:
   mask is non-empty, so the absence of (for example) `grad_norm_p23_*` is not an
   error when that support does not occur.
 - `projection_mode: coarse_first` means structurally different things across
-  models. On H-CAST it acts on `p123` and `p12`; on HT-CapsNet it acts on
-  `p123` and `p23`; on the remaining families it reduces to `p123`.
+  models. On H-CAST it acts on `p123` and `p12`; on HT-CapsNet and HRN it acts
+  on `p123` and `p23`; on Hier-COS it reduces to `p123`.
 - These numbers are single-seed, single-epoch snapshots. Confirm stability across
   epochs and seeds before treating them as load-bearing thesis claims.
 
@@ -287,10 +316,10 @@ training objective.
 
 ## 6. Summary table
 
-| Model | Supported | Required loss config | Trunk partition | Level weights reach the step |
-| --- | --- | --- | --- | --- |
-| H-CAST | yes | `loss.globalkl: false` | `p123`+`p12`+`p1` | no (unweighted tensors) |
-| Hier-COS | yes | `loss: global_softmax_ce_reg` or `level_softmax_ce_reg`; `projection.enabled: false` | `p123` only | yes |
-| HT-CapsNet | yes | none enforced; launcher sets `weight_mode: none` | `p123`+`p23`+`p3` | no (unweighted tensors) |
-| HRN | yes | `loss: level_conditional` | `p123` only | n/a (unweighted objective) |
-| LH-DNN | **no** | — | — | — |
+| Model | Lex supported | Required lex loss config | Baseline diagnostic blocks | Lex projection blocks | Level weights reach the step |
+| --- | --- | --- | --- | --- | --- |
+| H-CAST | yes | `loss.globalkl: false` | `p123`+`p12`+`p1`+`p2`+`p3` | `p123`+`p12` | yes (since 2026-08-30) |
+| Hier-COS | yes | `loss: global_softmax_ce_reg` or `level_softmax_ce_reg`; `projection.enabled: false` | `p123` | `p123` | yes |
+| HT-CapsNet | yes | none enforced; launcher sets `weight_mode: none` | `p123`+`p23`+`p3` | `p123`+`p23` | yes (since 2026-08-30) |
+| HRN | yes | `loss: level_conditional` | `p123`+`p23`+`p3` | `p123`+`p23` | n/a (unweighted objective) |
+| LH-DNN | **no** | — | `p123`+`p1`+`p2`+`p3` | — | — |

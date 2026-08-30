@@ -177,8 +177,12 @@ H-CAST, HT-CapsNet, HRN, and decomposed-loss Hier-COS. LH-DNN is excluded.
 `train.gradient_blocks` selects the exact gradient-support blocks used by
 both diagnostics and projection. Blocks use compact support names (`p123`,
 `p12`, `p23`, `p1`, and so on); omitting the field preserves the historical
-`[p123, p12, p1]` behavior. HT-CapsNet launchers select
-`[p123, p23, p3]` for its coarse-to-fine capsule cascade.
+`[p123, p12, p1]` behavior. Baseline configs list every nonempty block so their
+diagnostics cover the complete support partition; lex launchers override that
+list with only the multi-objective blocks on which projection is defined. Thus
+H-CAST uses `[p123,p12,p1,p2,p3]` versus `[p123,p12]`, HT-CapsNet and HRN use
+`[p123,p23,p3]` versus `[p123,p23]`, and Hier-COS uses `[p123]` in both cases.
+LH-DNN's baseline-only partition is `[p123,p1,p2,p3]`.
 
 ### LH-DNN
 
@@ -259,6 +263,59 @@ leaf CE added to the fine term. The three terms sum to the `native` total and
 carry the same gradient, so without lexicographic projection the two modes train
 identically; the split exists so lexicographic mode has three level objectives
 to project. HRN lexicographic training requires this mode.
+
+The optional `model.projection.enabled: true` path applies the LH-DNN
+projection to a shared vector derived from HRN's trunk feature map. The native
+map from that spatial tensor to a level's logits is not of the LH form, so
+enabling the projection also replaces the output branches, with no separate
+switches:
+
+- HRN's existing global average pool is relocated from the three individual
+  branches to one position immediately after the trunk. It changes
+  `[B,D,H,W]` into `[B,D]`: pooling removes the spatial dimensions and does not
+  reduce `D` to a class count. Pooling is a tractable implementation choice, not
+  a requirement of the projection algebra; flattening the spatial map would
+  instead require heads and projector systems of width `D*H*W`.
+- A shared `shared_linear` + `shared_relu` pair is inserted at the branching
+  point, named and shaped after LH-DNN's own. This is the layer the guarantee
+  bites on: without it every shared parameter is convolutional trunk, and
+  orthogonality of the fine gradient at the branching point does not survive the
+  trunk's Gram factor. Stepping the convolutional trunk therefore remains
+  outside the branch-point guarantee. LH-DNN's `shared_linear` and Hier-COS's
+  `f_theta` play the corresponding role, and their convolutional stacks are
+  likewise uncovered. `rho' = 1[pre_activation > 0]` is read at the ReLU's
+  pre-activation, so it is idempotent in the projector construction.
+- Each complete RFM--FC--classifier branch is replaced by one direct
+  `Linear(D, C_l)` head. The code does not retain a chain of linear stand-ins:
+  without intervening nonlinearities that chain would be exactly one affine map
+  but would introduce redundant parameters and different deep-linear
+  optimisation. This substitution removes the native branch convolutions,
+  BatchNorm, ReLU, ELU, dropout, and the `embedding_dim` bottleneck from the
+  projected arm; those capacity changes remain confounded with the projection
+  and must not be attributed to it alone.
+- The coarse-to-fine residual moves from the embedding to the score and becomes
+  LH-DNN's advantage: every level adds its detached parent's advantage score,
+  gathered through the taxonomy. Enabling the projection therefore requires a
+  taxonomy with parent mappings.
+
+`A = [W_1; ...; W_(l-1)] * rho'` is then built directly from the preceding
+heads' weights. The detached advantage remains present in the forward score but
+has zero derivative through the current level, so each branch-local gradient
+returns through its own `W_l`. The backward-only `z - c + sg(c)` construction
+leaves forward values untouched, the shared width must exceed
+`sum(num_classes_per_level[:-1])`, `model.dropout` must be 0, and the path is
+rejected together with `hcc.enabled: true`.
+
+The fine level retains two direct `Linear(D, C_3)` heads, one for the tree term
+and one for leaf CE/reporting. Nothing follows the fine level, so neither enters
+a later projector. Both read the same projected input and receive the same
+parent advantage.
+
+Replacing every native branch by a direct head is a deliberate departure from
+paper-HRN. The result is HRN's trunk with LH-DNN's minimal head structure; it is
+a study of the projection adaptation package, not an HRN reproduction.
+Checkpoints produced by the former factorised-linear projected branch are not
+state-dict compatible with this direct-head implementation and must be retrained.
 
 ### Hier-COS
 

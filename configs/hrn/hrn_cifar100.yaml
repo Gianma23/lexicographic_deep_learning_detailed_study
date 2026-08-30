@@ -45,7 +45,7 @@ dataset:
     mixup_mode: batch
 
 dataloader:
-  batch_size: 8
+  batch_size: 16
   num_workers: 4
   pin_memory: true
   windows_spawn_safe: true
@@ -62,6 +62,7 @@ train:
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hrn_cifar100_wrn28_8
   smoothing: 0.0
+  gradient_blocks: [p123, p23, p3]
 
 optim:
   name: sgd

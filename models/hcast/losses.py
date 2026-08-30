@@ -271,5 +271,9 @@ def compute_loss(
     if not return_aux:
         return total, metrics
 
-    aux_payload: Dict[str, Any] = {"level_losses": list(level_losses)}
+    # Each entry is this level's contribution to `total`, i.e. the weighted
+    # tensor. Lexicographic mode consumes `level_losses` as the only channel
+    # into the update, so exporting the unweighted losses here would make
+    # `model.loss.level_weighting` a silent no-op whenever projection is on.
+    aux_payload: Dict[str, Any] = {"level_losses": list(weighted_level_losses)}
     return total, metrics, aux_payload

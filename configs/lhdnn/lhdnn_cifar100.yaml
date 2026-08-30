@@ -60,6 +60,7 @@ train:
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/lhdnn_cifar100_v2
   # Paper-faithful default CE behavior (label smoothing not specified in paper).
   smoothing: 0.0
+  gradient_blocks: [p123, p1, p2, p3]
 
 optim:
   # The LH-DNN paper keeps the B-CNN optimizer family; its reference code uses

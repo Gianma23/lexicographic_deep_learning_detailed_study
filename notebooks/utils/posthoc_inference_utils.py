@@ -192,25 +192,98 @@ def completed_seed_dirs(root: Path):
     return [path for path in candidates if all((path / name).is_file() for name in required)]
 
 
-def discover_runs(families, datasets=DATASETS, outputs_root=OUTPUTS_ROOT, verbose=True):
+def _family_names(families):
+    return [families] if isinstance(families, str) else list(families)
+
+
+def resolve_run_roots(families, roots=None, outputs_root=OUTPUTS_ROOT):
+    """Normalize a notebook's configurable run-root mapping.
+
+    ``roots`` may have the full ``{family: {dataset: {model: root}}}`` shape or,
+    when exactly one family is requested, the shorter
+    ``{dataset: {model: root}}`` shape. A relative root is resolved underneath
+    ``outputs_root``; an absolute root is preserved.
+    """
+    families = _family_names(families)
+    configured = experiment_roots(outputs_root) if roots is None else roots
+    if len(families) == 1 and families[0] not in configured:
+        configured = {families[0]: configured}
+
+    unknown = [family for family in families if family not in configured]
+    if unknown:
+        raise ValueError(
+            f'No run roots configured for {unknown}; available families: '
+            f'{list(configured)}.'
+        )
+
+    outputs_root = Path(outputs_root)
+    resolved = {}
+    for family in families:
+        resolved[family] = {}
+        for dataset, model_roots in configured[family].items():
+            resolved[family][dataset] = {}
+            for model, root in model_roots.items():
+                path = Path(root)
+                resolved[family][dataset][model] = (
+                    path if path.is_absolute() else outputs_root / path
+                )
+    return resolved
+
+
+def run_roots_table(families, datasets=DATASETS, roots=None, outputs_root=OUTPUTS_ROOT):
+    """One row per configured run root, including roots that do not exist yet."""
+    families = _family_names(families)
+    resolved = resolve_run_roots(families, roots=roots, outputs_root=outputs_root)
+    rows = []
+    for family in families:
+        for dataset in datasets:
+            model_roots = resolved[family].get(dataset, {})
+            if not model_roots:
+                rows.append({
+                    'family': family,
+                    'dataset_slug': dataset,
+                    'model': None,
+                    'run_root': None,
+                    'root_exists': False,
+                })
+                continue
+            for model, root in model_roots.items():
+                rows.append({
+                    'family': family,
+                    'dataset_slug': dataset,
+                    'model': model,
+                    'run_root': str(root),
+                    'root_exists': root.is_dir(),
+                })
+    return pd.DataFrame(
+        rows,
+        columns=('family', 'dataset_slug', 'model', 'run_root', 'root_exists'),
+    )
+
+
+def discover_runs(families, datasets=DATASETS, outputs_root=OUTPUTS_ROOT, verbose=True,
+                  roots=None):
     """One row per completed run directory, for every requested family.
 
     Returns a frame with ``family``, ``dataset_slug``, ``model``, ``run_dir`` and
     ``has_result`` (whether the post-hoc YAML already exists). ``model`` is the
     directory-level key (``htcapsnet``); the loader later uses the model name the
     evaluator writes into the YAML (``ht_capsnet``).
+
+    ``roots`` follows :func:`resolve_run_roots`: a single-family notebook may
+    pass its shorter dataset/model mapping, while a multi-family notebook passes
+    the full mapping. Relative roots are interpreted underneath ``outputs_root``.
     """
-    if isinstance(families, str):
-        families = [families]
-    roots = experiment_roots(outputs_root)
-    unknown = [family for family in families if family not in roots]
-    if unknown:
-        raise ValueError(f'Unknown family {unknown}; expected some of {list(roots)}.')
+    families = _family_names(families)
+    roots = resolve_run_roots(families, roots=roots, outputs_root=outputs_root)
 
     rows = []
     for family in families:
         for dataset in datasets:
-            for model, root in roots[family].get(dataset, {}).items():
+            model_roots = roots[family].get(dataset, {})
+            if not model_roots and verbose:
+                print(f'[missing config] {family}/{dataset}: no run root configured')
+            for model, root in model_roots.items():
                 paths = completed_seed_dirs(root)
                 if not paths and verbose:
                     print(f'[missing] {family}/{dataset}/{model}: no completed run under {root}')
@@ -223,16 +296,21 @@ def discover_runs(families, datasets=DATASETS, outputs_root=OUTPUTS_ROOT, verbos
                         'run_dir': path,
                         'has_result': (path / RESULT_FILENAME).is_file(),
                     })
-    frame = pd.DataFrame(rows)
+    frame = pd.DataFrame(
+        rows,
+        columns=('family', 'dataset_slug', 'model', 'run_root', 'run_dir', 'has_result'),
+    )
     if frame.empty:
-        print('No completed runs found. Check experiment_roots() against the output directories.')
+        print('No completed runs found. Check the configured roots against the output directories.')
     return frame
 
 
 def coverage_table(run_table):
     """Runs and already-evaluated runs per (family, dataset, model)."""
     if run_table.empty:
-        return run_table
+        return pd.DataFrame(
+            columns=('family', 'dataset_slug', 'model', 'runs', 'evaluated')
+        )
     return (
         run_table.groupby(['family', 'dataset_slug', 'model'], as_index=False)
         .agg(runs=('run_dir', 'size'), evaluated=('has_result', 'sum'))
@@ -375,9 +453,11 @@ def load_results(run_table=None, paths=None, verbose=True):
     from the run table, which is what makes a cross-mechanism comparison
     possible; everything else is read from the YAML the evaluator wrote.
     """
-    if run_table is not None and not run_table.empty:
-        sources = [(Path(row.run_dir) / RESULT_FILENAME, row.family)
-                   for row in run_table.itertuples()]
+    if run_table is not None:
+        sources = [
+            (Path(row.run_dir) / RESULT_FILENAME, row.family)
+            for row in run_table.itertuples()
+        ]
     elif paths is not None:
         sources = [(Path(path), None) for path in paths]
     else:
@@ -833,7 +913,7 @@ def best_cells(absolute_table, metric='fpa', decoder='independent',
 # Width of the text block the figure is included in, read from the one place the
 # thesis geometry is written down. main.tex uses a4paper with inner=3cm,
 # outer=2.5cm and bindingoffset=0.5cm, which leaves 150 mm = 5.906 in.
-from thesis_style import TEXT_WIDTH_IN  # noqa: E402
+from thesis_style import TEXT_WIDTH_IN, use_paper_style  # noqa: E402
 # True: no in-figure title or explanatory paragraph, because in a thesis both
 # belong to the LaTeX caption. False: keep them, for reading in the notebook.
 THESIS_STYLE = True
@@ -886,8 +966,12 @@ def _scope_note(datasets, series_list, decoders=None, extra=None):
         parts.append(extra)
     return ' \u00b7 '.join(parts)
 
-# Vector output for LaTeX, with fonts embedded as TrueType rather than Type 3.
-mpl.rcParams.update({'pdf.fonttype': 42, 'ps.fonttype': 42, 'svg.fonttype': 'none'})
+# Use the same serif typography, font sizes, grid treatment and vector-font
+# settings as the model-analysis notebooks.  The inference figures keep their
+# own task-specific layouts and colour encodings, but should not look like a
+# separate document when placed beside the model-analysis figures.
+use_paper_style()
+mpl.rcParams.update({'svg.fonttype': 'none'})
 
 # --- design tokens: dataviz reference palette ------------------------------
 # Diverging pair (polarity: worse <-> better) with a neutral gray midpoint.
@@ -951,6 +1035,10 @@ def save_figure(fig, save_path):
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     for suffix in ('.pdf', '.png'):
         out = Path(save_path).with_suffix(suffix)
+        # These figures use explicit inch-based ``add_axes`` geometry.  The
+        # shared paper style enables constrained layout for the model-analysis
+        # GridSpec figures, so disable it again before every backend render.
+        fig.set_layout_engine('none')
         fig.savefig(out, dpi=300, facecolor='white')
         print('[saved]', out)
 
@@ -1110,7 +1198,7 @@ def effect_grid(gain_table, seed_table, absolute_table, metrics=('fpa', 'tice'),
               f'(tile labels land at {FS_TILE * TEXT_WIDTH_IN / width_in:.1f} pt). '
               'Show fewer metrics, or place it on a landscape page.')
 
-    fig = plt.figure(figsize=(width_in, height))
+    fig = plt.figure(figsize=(width_in, height), layout='none')
     x = gutter
     for p in panels:
         cols = [(dec, c) for dec in p['decoders'] for c in CELL_ORDER]
@@ -1361,7 +1449,7 @@ def absolute_grid(absolute_table, metrics=('fpa', 'tice'), datasets=None, series
         print(f'[note] {total_cols} columns need {width_in:.2f} in; at width=\\textwidth '
               f'LaTeX scales it to {TEXT_WIDTH_IN / width_in:.0%}.')
 
-    fig = plt.figure(figsize=(width_in, height))
+    fig = plt.figure(figsize=(width_in, height), layout='none')
     x = gutter
     for p in panels:
         cols = [(dec, c) for dec in p['decoders'] for c in CELL_ORDER]
@@ -1584,7 +1672,7 @@ def accuracy_consistency_map(absolute_table, datasets=None, series=None,
     axis_lab = 0.44
     height = top + panel_h + axis_lab + legend_h + foot_h
 
-    fig = plt.figure(figsize=(width_in, height))
+    fig = plt.figure(figsize=(width_in, height), layout='none')
     axes = []
     for n, ds in enumerate(datasets):
         ax = fig.add_axes([(left + n * (panel_w + gap)) / width_in,
@@ -1841,7 +1929,7 @@ def decoder_gain_figure(summary, readout, datasets=None, series=None, save_path=
     panel_h = max(1.08, 0.36 * len(series_list))
     foot_h = 0.24 if show_footer and not THESIS_STYLE else 0.0
     height = top + panel_h + bottom + foot_h
-    fig = plt.figure(figsize=(width_in, height))
+    fig = plt.figure(figsize=(width_in, height), layout='none')
 
     bar_h = 0.42
     lookup = data.set_index(['dataset', 'series']).to_dict('index')
@@ -2024,7 +2112,7 @@ def best_inference_chart(absolute_table, metric='fpa', decoder='independent',
     panel_h = max(1.2, 0.26 * len(series_list))
     height = top + panel_h + bottom
 
-    fig = plt.figure(figsize=(width_in, height))
+    fig = plt.figure(figsize=(width_in, height), layout='none')
     for panel, dataset in enumerate(datasets):
         ax = fig.add_axes([(left + panel * (panel_w + gap)) / width_in,
                            1 - (top + panel_h) / height,

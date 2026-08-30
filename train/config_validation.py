@@ -61,6 +61,7 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
         "embedding_dim",
         "dropout",
         "trunk_lr_scale",
+        "projection",
         "loss",
     },
     "hiercos": {
@@ -765,6 +766,28 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         dropout = _finite_float(model.get("dropout", 0.0), "model.dropout")
         if dropout < 0.0 or dropout >= 1.0:
             raise ValueError("`model.dropout` must be in [0, 1).")
+        projection = model.get("projection")
+        if projection is not None:
+            if not isinstance(projection, Mapping):
+                raise ValueError("HRN `model.projection` must be a mapping.")
+            for unsupported in ("feature_dim", "advantage_enabled"):
+                if unsupported in projection:
+                    raise ValueError(
+                        f"`model.projection.{unsupported}` is not supported for "
+                        "model.name='hrn'."
+                    )
+            hrn_projection_enabled = _require_bool(
+                projection.get("enabled", False),
+                "model.projection.enabled",
+            )
+            if _finite_float(projection.get("eps", 1e-6), "model.projection.eps") <= 0.0:
+                raise ValueError("HRN projection epsilon must be > 0.")
+            if hrn_projection_enabled and dropout > 0.0:
+                raise ValueError(
+                    "HRN `model.projection.enabled=true` replaces the native "
+                    "branch stacks with direct linear heads, so "
+                    "`model.dropout` must be 0."
+                )
 
     if model_name == "hiercos":
         _validate_optional_bool(model, "pretrained", "model.pretrained")
@@ -860,7 +883,7 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
         if hcc_enabled:
             if _finite_float(hcc.get("eps", 0.0), "hcc.eps") <= 0.0:
                 raise ValueError("Enabled HCC requires hcc.eps > 0.")
-            if model_name == "hiercos":
+            if model_name in {"hiercos", "hrn"}:
                 projection = model.get("projection")
                 projection_enabled = (
                     _require_bool(projection.get("enabled", False), "model.projection.enabled")
@@ -868,10 +891,14 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
                     else False
                 )
                 if projection_enabled:
+                    owner = (
+                        "Hier-COS's own LH-DNN-style projection"
+                        if model_name == "hiercos"
+                        else "HRN's branch-point LH-DNN-style projection"
+                    )
                     raise ValueError(
                         "hcc.enabled=true is not supported together with "
-                        "model.projection.enabled=true (Hier-COS's own LH-DNN-style "
-                        "projection); disable one of the two."
+                        f"model.projection.enabled=true ({owner}); disable one of the two."
                     )
 
     if hiercos_projection_enabled:

@@ -388,9 +388,11 @@ three baseline presets:
 * Resume with strict config checking, `run_log.jsonl`, `config_resolved.yaml`,
   `test_metrics.yaml`, and config validation that rejects unknown keys.
 
-When a lex preset enables gradient projection, note that HT-CapsNet's dynamic
-level weights become no-ops on the projected step (see
-`docs/LEX_MODEL_ADAPTATION.md`).
+When a lex preset enables gradient projection, HT-CapsNet's level weights scale
+the per-level gradients before projection, so `weight_mode` is honoured on the
+projected step exactly as it is on a plain backward pass (see
+`docs/LEX_MODEL_ADAPTATION.md`). The shipped lex launcher nonetheless overrides
+`weight_mode=none`, so its runs are unit-weighted by choice, not by omission.
 
 ---
 

@@ -80,6 +80,8 @@ fatal errors.
 - `models/hcast/segments.py` — grid/SEEDS segmentation.
 - `models/common/hcc.py` — HCC affine hierarchy projection and the shared
   on/off controller used by every HCC-capable model.
+- `models/common/config.py` — small config parsing helpers shared by the model
+  families.
 - `models/common/subspace_supervision.py` — mixed-precision-safe taxonomy
   subspace norms, the attainable path-energy target profile rebuilt from the
   model's own level weights, decoder-aligned tempered soft cross-entropy on a
@@ -108,7 +110,11 @@ fatal errors.
 ### HRN
 
 - `models/hrn/model.py` — ResNet-50 RFM trunk, three branches, residual
-  fusion, leaf logits, and optimizer parameter groups.
+  fusion, leaf logits, and optimizer parameter groups. Under
+  `model.projection.enabled=true` each complete native branch is replaced by one
+  direct affine head per level, a LH-DNN-style `shared_linear`/`shared_relu` pair is
+  inserted at the pooled branching point, the residual becomes LH-DNN's
+  score-space advantage, and the LH-DNN projection is applied there.
 - `models/hrn/losses.py` — upstream-style tree-state loss plus leaf CE.
 - `models/hrn/factory.py` — exact three-level guard.
 
@@ -130,7 +136,8 @@ fatal errors.
   classifiers.
 - `models/hiercos/transforms.py` — residual feature transformation used before
   the fixed classifier.
-- `models/hiercos/config.py` — small Hier-COS config parsing helpers.
+- `models/hiercos/config.py` — compatibility shim re-exporting the shared
+  config parsing helpers.
 
 ## Training and evaluation
 
@@ -260,8 +267,8 @@ them drive the CLI documented in `evaluation/README.md`, read the per-run
 `notebooks/utils/posthoc_inference_utils.py`:
 
 - `notebooks/inference_analysis/baseline.ipynb`,
-  `lexmode.ipynb`, `hcc.ipynb`, `lhprojection.ipynb`,
-  `subspace_supervision.ipynb` — one notebook per training mechanism, each
+  `lexmode.ipynb`, `hcc.ipynb`, `lhprojection.ipynb` — four dedicated
+  single-mechanism notebooks, each
   reporting the within-checkpoint gain of every readout x transform cell against
   that mechanism's own native inference.
 - `notebooks/inference_analysis/all_mechanics.ipynb` — every mechanism on one
@@ -311,27 +318,37 @@ above:
   `notebooks/inference_analysis/`.
 
 Current-run trade-off analyses live under `notebooks/tradeoff_analysis/`, one
-notebook per model family:
+notebook per model family plus one cross-model notebook:
 
-- `notebooks/tradeoff_analysis/hiercos_current_plots.ipynb` — the full Hier-COS
+- `notebooks/tradeoff_analysis/hiercos_tradeoff.ipynb` — the full Hier-COS
   baseline, lexicographic, projection, and ablation analysis.
-- `notebooks/tradeoff_analysis/hcast_current_plots.ipynb` — H-CAST baseline,
+- `notebooks/tradeoff_analysis/hcast_tradeoff.ipynb` — H-CAST baseline,
   no-global-KL baseline, explicit-lexicographic, and HCC comparison.
-- `notebooks/tradeoff_analysis/hrn_current_plots.ipynb` — HRN baseline,
+- `notebooks/tradeoff_analysis/hrn_tradeoff.ipynb` — HRN baseline,
   explicit-lexicographic, and HCC comparison.
-- `notebooks/tradeoff_analysis/lhdnn_current_plots.ipynb` — the single LH-DNN
+- `notebooks/tradeoff_analysis/lhdnn_tradeoff.ipynb` — the single LH-DNN
   baseline arm placed among the other model families on a shared scale.
-- `notebooks/tradeoff_analysis/htcapsnet_current_plots.ipynb` — HT-CapsNet
+- `notebooks/tradeoff_analysis/htcapsnet_tradeoff.ipynb` — HT-CapsNet
   baseline, explicit-lexicographic, and HCC comparison, with the
   margin-collapse check that must precede any reading of the numbers.
+- `notebooks/tradeoff_analysis/cross_model_tradeoff.ipynb` — the model
+  families' native baselines against each other on one shared scale, with no
+  mechanism arms. Inverts the single-family notebooks: every family is focal and
+  keeps its colour, so there is no grey reference set and no off-scale gutter.
+  `MODELS` selects the families and their order; both figures and the Pareto
+  test follow that one list, so narrowing to the competitive families is a
+  one-line edit (and closes the axis range onto them). Nothing is anchored on a
+  canonical family: there is no run the others are variations of, so the
+  trade-off is drawn with `baseline_marker=None` and the level figure is
+  `plot_level_accuracy` (absolute) rather than `plot_level_accuracy_deltas`.
+  Recipes, backbones, and epoch budgets differ per family, so it maps the
+  achievable operating region rather than isolating a mechanism.
 - `notebooks/utils/current_run_plot_utils.py` — shared aggregation,
-  reference-model discovery, the visual-encoding layer, off-scale gutter layout,
-  collision-aware labels, HCC-activation verification, trade-off plotting,
-  absolute and delta level-accuracy plotting, and Pareto-summary helpers for all
-  current-run notebooks.
-- `tests/test_current_run_encoding.py` — unit tests for the encoding layer:
-  channel resolution, collision detection, palette separation, legend mode, and
-  the point-label policy.
+  matched decoder/readout selection, reference-model discovery, the
+  visual-encoding layer, off-scale gutter layout, collision-aware labels,
+  HCC-activation verification, trade-off plotting, absolute and delta
+  level-accuracy plotting, and Pareto-summary helpers for all current-run
+  notebooks.
 
 ### Visual encoding
 
@@ -346,7 +363,18 @@ ENCODING = encode_rows(rows, hue=('mechanism', MECHANISM_COLORS),
 **Colour is globally semantic**: it encodes the `mechanism` — the intervention a
 run applies (`baseline`, `lex`, `hcc`, `projection`) — and
 means the same thing in every model's figure, so HCC `step@0` is the same green
-everywhere. **Shape is locally semantic**: each notebook declares what it
+everywhere. The one deliberate exception is `cross_model_tradeoff.ipynb`, which
+holds a single mechanism and five model families: colour is free there and
+encodes the family (`MODEL_COLORS`), redundantly with shape (`MODEL_MARKERS`,
+the same glyphs the reference set uses elsewhere). `model_baseline_specs()` is
+the focal counterpart of `model_reference_specs()` and builds those rows; both
+resolve their family selection through `select_model_keys(include, exclude)`,
+where `include` also fixes the order and an unknown family name raises rather
+than quietly shortening the figure. `model_baseline_specs()` flags no spec
+`canonical`. Every cross-model row is a `baseline`, so `default_baseline_selector`
+would fall back to whichever family comes first: pass `baseline_marker=None` to
+suppress the crosshair rather than relying on that fallback, and use
+`plot_level_accuracy` in place of the delta figure. **Shape is locally semantic**: each notebook declares what it
 separates (the variant within a mechanism for the single-family notebooks, the
 loss family for Hier-COS) and the legend spells it out. `fill` (hollow) and
 `ring` (a charcoal halo) carry one boolean each; anything left over goes to the
@@ -358,6 +386,11 @@ dimension. Bars reuse the same encoding with hatch standing in for marker shape.
 those pairs are separated only by their direct labels, which is why Hier-COS runs
 with `point_labels='all'` while the others use the default.
 
+A reference point's direct label carries its identity and its across-seed mean
+FPA and TICE, and nothing else: the seed count is uniform and stated in the
+caption, and the spread is already drawn as the individual seed markers, so
+neither earns width in a label that has to fit inside a gutter.
+
 `plot_tradeoff(point_labels=...)` selects which direct labels are drawn:
 `'off_scale'` (the default) keeps only the gutter-pinned references, whose drawn
 position is deliberately false and whose label is therefore the only record of
@@ -367,12 +400,23 @@ in-range references only on an unfrozen panel. A panel that never freezes has no
 pinned references, so under the default it carries no direct labels at all and
 relies on the legend and the axes.
 
-Every current-run notebook reads the independently selected checkpoint and the
-independent metric family. Top-down decoding is intentionally not offered there:
-its predicted path is consistent by construction, so `tice_topdown` is
-identically zero and `fpa_topdown` collapses onto top-down fine accuracy, leaving
-a top-down trade-off view with nothing to show. Top-down results remain available
-from `test_metrics.yaml` and from the `notebooks/model_analysis/` analyses.
+Every current-run notebook exposes `DECODER` and `READOUT`. The requested metric
+family is always read from the checkpoint selected for that decoder. `native`
+uses `test_metrics.yaml`; `node_score` and `subspace_norm` use the corresponding
+cell in `posthoc_inference_test_metrics.yaml`, with no fallback when a seed is
+missing. `SUBSPACE_SCORE_SPACE` must match the score space recorded by a
+`subspace_norm` result, preventing coordinate-space and probability-space rows
+from being mixed. With `RUN_INFERENCE=True`, missing non-native results are
+generated before row discovery for every completed seed used by the focal and
+reference run specifications. The shared helper evaluates both checkpoint
+selection modes and both selectable post-hoc readouts so later view changes can
+reuse the same YAML; the evaluator's verbose output is captured and the notebook
+displays only one `Loading inference` progress line. Existing incompatible
+result files are never replaced unless `OVERWRITE_INFERENCE=True`, and
+`INFERENCE_DEVICE` optionally overrides the configured evaluation device. Top-down remains available for
+completeness, but its FPA--TICE view is degenerate because `tice_topdown` is
+identically zero and `fpa_topdown` collapses onto top-down fine accuracy.
+Independent decoding therefore remains the default.
 
 Figures are authored for the thesis, not for the screen. `use_paper_style()` in
 `current_run_plot_utils.py` applies the same rcParams as

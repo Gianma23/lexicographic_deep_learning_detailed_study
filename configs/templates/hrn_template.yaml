@@ -8,7 +8,10 @@ model:
   wide_depth: 28                    # WideResNet only; must satisfy (depth - 4) % 6 == 0
   wide_widen_factor: 8              # WideResNet channel multiplier
   wide_drop_rate: 0.0               # WideResNet residual-block dropout
-  branch_hidden_dim: 1024           # Hidden width inside each HRN branch conv/fc stack
-  embedding_dim: 512                # Output embedding width used by per-level classifiers
-  dropout: 0.0                      # Optional dropout in branch FC blocks
+  branch_hidden_dim: 1024           # Native HRN only; projected HRN replaces the branch stack
+  embedding_dim: 512                # Native HRN only; projected heads map trunk width directly to classes
+  dropout: 0.0                      # Native branch FC dropout; must be 0 with projection
   trunk_lr_scale: 0.1               # LR multiplier for backbone trunk parameter group (SGD path)
+  projection:                       # LH-DNN projection at the HRN branching point
+    enabled: false                  # true uses pooled shared Linear+ReLU, direct D->C_l heads, and score-space advantage
+    eps: 1.0e-6                     # Stabilizer for the projection solve

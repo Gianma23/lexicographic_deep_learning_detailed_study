@@ -41,7 +41,7 @@ handle_exit() {
 trap handle_interrupt INT TERM
 trap handle_exit EXIT
 
-parse_choice_list DATASETS "cub200 cifar100" DATASETS \
+parse_choice_list DATASETS "cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -122,6 +122,7 @@ run_output_dir() {
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
+printf 'Gradient blocks: p123, p23, p3\n'
 printf 'Dry run: %s\n' "$DRY_RUN"
 printf 'Max parallel: %s\n' "$MAX_PARALLEL"
 printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
@@ -133,7 +134,7 @@ for ds in "${DATASETS[@]}"; do
     "${hard_target_overrides[@]}" \
     "model.loss=level_conditional" \
     "train.lexicographic.enabled=false" \
-    "train.gradient_blocks=[p123]"
+    "train.gradient_blocks=[p123,p23,p3]"
 done
 
 if [[ "$DRY_RUN" != "1" ]]; then

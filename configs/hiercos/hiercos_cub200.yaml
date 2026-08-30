@@ -60,6 +60,7 @@ train:
   amp: false
   resume: ""
   output_dir: ${oc.env:OUTPUTS_ROOT,/scratch/g.saggini1/outputs}/hiercos_cub200_global_softmax_ce_reg_baseline_kl_leaf
+  gradient_blocks: [p123]
 
 optim:
   name: sgd

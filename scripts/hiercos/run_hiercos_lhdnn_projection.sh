@@ -41,10 +41,10 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DRY_RUN="${DRY_RUN:-0}"
 MAX_PARALLEL="${MAX_PARALLEL:-1}"
 MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
-WEIGHT_MODE="${WEIGHT_MODE:-equal}"
+WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 WEIGHT_BETA="${WEIGHT_BETA:-0.5}"
-FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-identity}"
-FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-false}"
+FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
+FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-true}"
 FEATURE_DIM="${FEATURE_DIM:-512}"
 PROJECTION_EPS="${PROJECTION_EPS:-1.0e-6}"
 ADVANTAGE_ENABLED="${ADVANTAGE_ENABLED:-false}"
@@ -139,7 +139,7 @@ trap handle_exit EXIT
 
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cub200" DATASETS \
+parse_choice_list DATASETS "cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -213,13 +213,15 @@ run_output_dir() {
   if [[ "$FEATURE_DIM" != "0" ]]; then
     dimension_suffix="_d${FEATURE_DIM}"
   fi
-  if [[ "$WEIGHT_MODE" != "equal" ]]; then
-    weight_suffix="_${WEIGHT_MODE}"
-  fi
-  if [[ "$WEIGHT_MODE" == "cumulative_branching" ]]; then
-    local beta_tag="${WEIGHT_BETA//./p}"
-    weight_suffix="${weight_suffix}_beta${beta_tag}"
-  fi
+  case "$WEIGHT_MODE" in
+    equal) ;;
+    marginal_branching) weight_suffix="_mb" ;;
+    cumulative_branching)
+      local beta_tag="${WEIGHT_BETA//./p}"
+      weight_suffix="_cb${beta_tag}"
+      ;;
+    *) weight_suffix="_${WEIGHT_MODE}" ;;
+  esac
   if [[ "$FIXED_FRAME_PER_LEVEL_OVERRIDE" == "true" ]]; then
     frame_suffix="_block"
   elif [[ "$FIXED_FRAME_MODE" == "identity" ]]; then
