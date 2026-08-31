@@ -40,7 +40,7 @@ the two gradient-priority mechanisms and summarise the supported conclusions.
 % longer match the body text.
 %
 % Figures not reproduced here are collected in the supplementary-figures
-% appendix (docs/thesis_appendix_figures.tex).
+% appendix (docs/appendiceA.tex).
 %
 % Bibliography entries required by the new text (add if not already present):
 %   krizhevsky2009learning -- A. Krizhevsky. Learning Multiple Layers of
@@ -702,9 +702,10 @@ from the reconstruction itself.
 \label{ssec:fidelity_protocol}
 
 All families use the same coarse-to-fine label convention, dataset partitions
-and label indices. Validation and test include every sample, checkpoints are
-selected on validation data only, and a separate checkpoint is retained for each
-decoding mode according to \S\ref{ssec:inference_selection}. Metrics, logging,
+and label indices. Validation and test include every sample, and checkpoints are
+selected on validation data only. A run retains the mode-specific candidates
+defined in \S\ref{ssec:inference_selection}, but every paired post-hoc inference
+comparison uses one fixed, independently selected checkpoint. Metrics, logging,
 mixed-precision checks and resume validation are also shared.
 
 Every configuration is trained three times, from the seeds $0$, $1$ and $2$. The
@@ -919,9 +920,11 @@ Independent and top-down decoding may rank training epochs differently. Every
 run therefore retains one checkpoint per decoding mode, each selected on the
 validation split using that mode's own lexicographic criterion. The formal rule
 is defined in \S\ref{ssec:inference_selection}: FPA is compared first, ties are
-resolved by lower TICE and then by higher wAP. Every result row is read from the
-checkpoint selected for its own mode. Reusing one checkpoint for both modes
-would confound a decoder comparison with a checkpoint-selection comparison.
+resolved by lower TICE and then by higher wAP. Mode-specific checkpoints support
+end-to-end pipeline reporting. Whenever the purpose is to isolate a readout,
+decoder or post-hoc transform, however, all alternatives are evaluated on the
+same independently selected checkpoint; otherwise the contrast would also
+contain a checkpoint-selection effect.
 
 \subsection{Identifying mechanism effects}
 \label{ssec:design_locus}
@@ -1123,7 +1126,7 @@ The following rules are applied throughout the chapter.
     seed-to-seed spread, is not used to claim stable superiority. Truncated epoch
     logs are excluded before curves are averaged.
     \item \textbf{A common figure set accompanies every trained mechanism.}
-    Each mechanism section reports the independent-decoding validation
+    Each mechanism is accompanied by the independent-decoding validation
     trajectories of FPA, TICE, wAP and AHD, with the mean and one sample
     standard deviation over seeds and the independently selected checkpoint
     marked on every curve; the per-run, per-level training-objective curves
@@ -1132,7 +1135,10 @@ The following rules are applied throughout the chapter.
     produced by \texttt{plot\_final\_level\_test\_accuracy()}. The plotted
     \texttt{loss\_level\_*} values are the configured contributions to that
     run's objective. They support comparisons across depth within one arm, but
-    not numerical comparisons between arms whose objectives differ.
+    not numerical comparisons between arms whose objectives differ. The main
+    section retains the views needed for its argument; redundant endpoint and
+    checkpoint-selection views are placed in the supplementary-figures
+    appendix.
     \item \textbf{Constraint mechanisms receive a tailored diagnostic.} HCC is
     diagnosed by constraint activation, score displacement, argmax flips and
     ground-truth parent mass; explicit lexicographic training by pre- and
@@ -1523,10 +1529,10 @@ accuracy --- rather than as competing configurations.
 
 \begin{table}[htbp]
 \centering
-\caption{Independent against top-down decoding on frozen baseline checkpoints,
-each read from its own selected checkpoint. $\Delta$ columns are top-down minus
-independent, in percentage points; a negative $\Delta\mathrm{Acc}_3$ is the cost
-of enforcing consistency at decoding time.}
+\caption{Independent against top-down decoding on the same frozen baseline
+checkpoint, selected under independent decoding. $\Delta$ columns are top-down
+minus independent, in percentage points; a negative
+$\Delta\mathrm{Acc}_3$ is the cost of enforcing consistency at decoding time.}
 \label{tab:results_decoder}
 \resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{2.0cm}L{2.0cm}|CCC|CCC|CC@{}}
@@ -1848,6 +1854,19 @@ ground-truth class among its siblings, which the same corollary shows to be
 invariant and which therefore serves as a control --- a change in it cannot be
 attributed to the projection.
 
+The attachment-point diagnostic is especially important for HRN. On the
+unconstrained baseline checkpoints of the three datasets, projecting the fine
+tree logits would move each score by $1.9$ to $2.6$ times that head's own
+standard deviation, compared with $0.4$ to $0.6$ for the auxiliary classifier
+that supplies HRN's reported fine prediction. The corresponding figure for
+H-CAST, whose classifier logits are the native HCC attachment point, is about
+$1.0$. At the coarse-to-middle transition, HRN's displacement is about $1.0$ to
+$1.5$ times the middle head's standard deviation, compared with $0.3$ to $0.7$
+for H-CAST. Among the evaluated families, HRN's emitted scores therefore lie
+furthest from the cascade constraint. These measurements support the
+attachment-point interpretation in \S\ref{ssec:hcc_family_adaptation}; they are
+not a prerequisite of the HCC definition.
+
 \begin{table}[htbp]
 \centering
 \caption{HCC diagnostics at the reported checkpoint. \emph{Flip rate} is the
@@ -1982,35 +2001,12 @@ subspace sup. & \baselinemeanstd{\mathbf{92.62}}{0.15} & \baselinemeanstd{\under
 \end{tabularx}
 \end{table}
 
-Figures~\ref{fig:subspace_validation_cifar}--\ref{fig:subspace_validation_aircraft}
-show the four common validation trajectories behind the selected test rows.
+The four common validation trajectories behind the selected test rows are
+reported in supplementary
+Figures~\ref{fig:app_subspace_validation_cifar}--\ref{fig:app_subspace_validation_aircraft}.
 They use independent decoding throughout; a line is the mean over the three
 matched seeds, its band is one sample standard deviation, and its marker is the
 independently selected checkpoint of that arm.
-
-\begin{figure}[p]
-\centering
-\includegraphics[width=\basefigwidth]{images/experiments/subspace/hiercos_cifar100_validation_curves.pdf}
-\caption{CIFAR-100: validation FPA, wAP, TICE and AHD for the matched Hier-COS
-baseline and direct-subspace arm under independent decoding.}
-\label{fig:subspace_validation_cifar}
-\end{figure}
-
-\begin{figure}[p]
-\centering
-\includegraphics[width=\basefigwidth]{images/experiments/subspace/hiercos_cub200_validation_curves.pdf}
-\caption{CUB-200-2011: validation FPA, wAP, TICE and AHD for the matched
-Hier-COS baseline and direct-subspace arm under independent decoding.}
-\label{fig:subspace_validation_cub}
-\end{figure}
-
-\begin{figure}[p]
-\centering
-\includegraphics[width=\basefigwidth]{images/experiments/subspace/hiercos_aircraft_validation_curves.pdf}
-\caption{FGVC-Aircraft: validation FPA, wAP, TICE and AHD for the matched
-Hier-COS baseline and direct-subspace arm under independent decoding.}
-\label{fig:subspace_validation_aircraft}
-\end{figure}
 
 At $\tau=0.1$, supervising the ranked quantity does not improve that quantity on
 any of the three datasets. Independent FPA falls by $3.38\pm0.28$~pp on
@@ -2040,15 +2036,6 @@ Tables~\ref{tab:results_subspace_cifar}--\ref{tab:results_subspace_aircraft}
 therefore resolve the effect by depth rather than reporting only the leaf
 endpoint.
 
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=\basefigwidth]{images/experiments/subspace/hiercos_final_level_accuracy.pdf}
-\caption{Test accuracy at the independently selected checkpoints, resolved by
-hierarchy level for the matched Hier-COS baseline and direct-subspace arm. A
-point is the three-seed mean and its error bar is one sample standard deviation.}
-\label{fig:subspace_final_level_accuracy}
-\end{figure}
-
 The cost is concentrated at depth. On CIFAR-100 the accuracy change becomes
 progressively more negative from coarse to fine. On CUB, the objective improves
 the first two levels by $0.52$ and $0.86$~pp but loses $1.70$~pp at the leaf;
@@ -2057,8 +2044,10 @@ effectively unchanged and loses $1.42$~pp at the leaf. This pattern is
 consistent with the shrinking attainable margin making the fine decision the
 binding one, but it does not establish that explanation: the three margins are
 shared by all datasets, and the intervention also replaces the native
-coordinate regulariser. Figure~\ref{fig:subspace_final_level_accuracy} shows the
-same concentration at depth in absolute rather than delta form.
+coordinate regulariser. Supplementary
+Figure~\ref{fig:app_subspace_final_level_accuracy} shows the same concentration
+at depth in absolute rather than delta form; it is kept outside the main section
+because the same values are already reported in the tables.
 
 \subsection{Optimisation behaviour}
 \label{ssec:results_subspace_optimization}
@@ -2101,6 +2090,12 @@ matched Hier-COS baseline and direct-subspace arm. Conventions are as in
 \label{fig:subspace_losses_aircraft}
 \end{figure}
 
+The corresponding gradient-norm and pairwise-cosine trajectories are retained
+as supplementary
+Figures~\ref{fig:app_subspace_gradient_cifar100_norms}--\ref{fig:app_subspace_gradient_aircraft_alignment}.
+They document the gradient scale and conflict induced by the two objectives;
+parameter-scale and parameter-movement curves are not included.
+
 \subsection{Temperature}
 \label{ssec:results_subspace_tau}
 
@@ -2141,8 +2136,8 @@ whether the same cost appears where the coordinates come from a classifier's
 output activation rather than from a calibrated frame is untested --- untested by
 choice, given the result here, rather than by obstacle.
 
-% Keep the common validation, loss and level-accuracy figures inside the
-% direct-subspace section.
+% Keep the loss figures inside the direct-subspace section; the validation and
+% level-accuracy figures are supplementary.
 \FloatBarrier
 
 % ======================================================================
@@ -2282,10 +2277,10 @@ fixed. Both are logged, so both are checked here rather than assumed.
 \begin{table}[htbp]
 \centering
 \caption{Logged gradient-space diagnostics, averaged over training and reported
-per selected block. Pre-projection cosines measure how much conflict there was
+per projection-relevant block. Pre-projection cosines measure how much conflict there was
 to resolve; post-projection cosines verify that the intended orthogonality was
 obtained. By \cref{prop:lex_firstorder} the post-projection cosine against the
-block's own reference is expected to vanish on every selected block, while the
+block's own reference is expected to vanish on every projection-relevant block, while the
 residual cosine between the projected fine gradient and the coarse gradient is
 expected to vanish on a two-level block and \emph{not} on a three-level one.}
 \label{tab:results_lex_diagnostics}

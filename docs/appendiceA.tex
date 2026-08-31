@@ -151,3 +151,100 @@ are those of \cref{fig:app_baseline_losses_cifar}; magnitudes should be compared
 only within one model panel.}
 \label{fig:app_baseline_losses_aircraft}
 \end{figure}
+
+\section{Direct subspace supervision}
+\label{app:figures_subspace}
+
+The loss trajectories used to interpret the optimisation behaviour remain in
+Section~\ref{ssec:results_subspace_optimization}. The figures below provide the
+supporting views for the same matched Hier-COS comparison. The validation
+curves document checkpoint selection but do not add an endpoint comparison to
+Tables~\ref{tab:results_subspace_cifar}--\ref{tab:results_subspace_aircraft};
+the level-accuracy figure redraws values already given in those tables. They are
+therefore supplementary rather than part of the main argument.
+
+\subsection{Validation trajectories}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{images/experiments/subspace/hiercos_cifar100_validation_curves.pdf}
+\caption{CIFAR-100 validation FPA, weighted AP, TICE and AHD for the matched
+Hier-COS baseline and direct-subspace arm under independent decoding. Curves
+are means over three matched seeds, bands are one sample standard deviation and
+markers identify the independently selected checkpoints.}
+\label{fig:app_subspace_validation_cifar}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{images/experiments/subspace/hiercos_cub200_validation_curves.pdf}
+\caption{CUB-200-2011 validation FPA, weighted AP, TICE and AHD for the matched
+Hier-COS baseline and direct-subspace arm under independent decoding. Plotting
+conventions are those of \cref{fig:app_subspace_validation_cifar}.}
+\label{fig:app_subspace_validation_cub}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{images/experiments/subspace/hiercos_aircraft_validation_curves.pdf}
+\caption{FGVC-Aircraft validation FPA, weighted AP, TICE and AHD for the
+matched Hier-COS baseline and direct-subspace arm under independent decoding.
+Plotting conventions are those of
+\cref{fig:app_subspace_validation_cifar}.}
+\label{fig:app_subspace_validation_aircraft}
+\end{figure}
+
+\subsection{Accuracy by hierarchy level}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{images/experiments/subspace/hiercos_final_level_accuracy.pdf}
+\caption{Test accuracy at the independently selected checkpoints, resolved by
+hierarchy level for the matched Hier-COS baseline and direct-subspace arm. A
+point is the three-seed mean and its error bar is one sample standard
+deviation. The numerical values are reported in
+Tables~\ref{tab:results_subspace_cifar}--\ref{tab:results_subspace_aircraft}.}
+\label{fig:app_subspace_final_level_accuracy}
+\end{figure}
+
+\clearpage
+
+\subsection{Gradient diagnostics}
+\label{app:figures_subspace_gradients}
+
+The following figures retain the two gradient-space diagnostics for the matched
+Hier-COS baseline and direct-subspace arm: the norm with which each level pushes
+on each logged exact gradient-support block, and the pairwise cosine similarity
+between level gradients on that block. The dashed zero line in a cosine panel
+separates locally aligned from conflicting gradients. These curves supplement
+the loss view in Section~\ref{ssec:results_subspace_optimization}; parameter
+scale and movement are outside this comparison and are not included.
+
+\newcommand{\appendixsubspacegradientpair}[2]{
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{images/experiments/subspace/hiercos_#1_gradient_norms.pdf}
+\caption{#2: per-level gradient norms for the matched Hier-COS baseline and
+direct-subspace arm, resolved by exact shared parameter block. Each panel names
+the level loss and block whose gradient is measured; curves identify the two
+objectives shown in the legend.}
+\label{fig:app_subspace_gradient_#1_norms}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{images/experiments/subspace/hiercos_#1_gradient_alignment.pdf}
+\caption{#2: pairwise cosine similarities between level gradients for the
+matched Hier-COS baseline and direct-subspace arm, resolved by exact shared
+parameter block. Positive values indicate local alignment, negative values
+conflict and the dashed horizontal line marks zero.}
+\label{fig:app_subspace_gradient_#1_alignment}
+\end{figure}
+\clearpage
+}
+
+\appendixsubspacegradientpair{cifar100}{CIFAR-100}
+\appendixsubspacegradientpair{cub200}{CUB-200-2011}
+\appendixsubspacegradientpair{aircraft}{FGVC-Aircraft}
+
+\let\appendixsubspacegradientpair\relax

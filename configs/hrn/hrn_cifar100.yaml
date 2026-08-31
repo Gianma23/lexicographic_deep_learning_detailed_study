@@ -45,7 +45,7 @@ dataset:
     mixup_mode: batch
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
   num_workers: 4
   pin_memory: true
   windows_spawn_safe: true

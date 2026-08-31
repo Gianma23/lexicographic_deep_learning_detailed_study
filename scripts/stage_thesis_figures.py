@@ -48,6 +48,12 @@ GROUPS = {
             "hiercos_cub200_level_losses_per_run",
             "hiercos_aircraft_level_losses_per_run",
             "hiercos_final_level_accuracy",
+            "hiercos_cifar100_gradient_norms",
+            "hiercos_cifar100_gradient_alignment",
+            "hiercos_cub200_gradient_norms",
+            "hiercos_cub200_gradient_alignment",
+            "hiercos_aircraft_gradient_norms",
+            "hiercos_aircraft_gradient_alignment",
         ),
     ),
 }

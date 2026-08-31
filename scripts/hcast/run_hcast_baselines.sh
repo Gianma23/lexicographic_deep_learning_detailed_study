@@ -11,34 +11,14 @@ source "$ROOT_DIR/scripts/load_env.sh"
 load_project_env "$ROOT_DIR"
 source "$ROOT_DIR/scripts/run_seed_utils.sh"
 source "$ROOT_DIR/scripts/run_matrix_utils.sh"
+source "$ROOT_DIR/scripts/run_job_utils.sh"
 init_seed_runs
 
-PYTHON_BIN="${PYTHON_BIN:-python}"
-DRY_RUN="${DRY_RUN:-0}"
-MAX_PARALLEL="${MAX_PARALLEL:-1}"
-MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-1}"
+RUN_PREFLIGHT=none
+RUN_RETRY_REQUIRES_CHECKPOINT=0
+init_job_control
 
-kill_running_jobs() {
-  jobs -pr | xargs -r kill 2>/dev/null || true
-}
-
-handle_interrupt() {
-  echo "[INTERRUPT] Received signal, stopping running jobs..." >&2
-  kill_running_jobs
-  wait || true
-  exit 130
-}
-
-handle_exit() {
-  local rc=$?
-  if (( rc != 0 )); then
-    kill_running_jobs
-    wait || true
-  fi
-}
-
-trap handle_interrupt INT TERM
-trap handle_exit EXIT
+install_job_traps
 
 # Notebook-compatible outputs root.
 # Example:
@@ -60,56 +40,6 @@ config_for_dataset() {
   esac
 }
 
-run_train() {
-  local config="$1"
-  local run_dir="$2"
-  shift 2
-
-  local cmd=(
-    "$PYTHON_BIN" -m train.train
-    --config "$config"
-    "train.output_dir=$run_dir"
-    "$@"
-  )
-
-  if [[ "$DRY_RUN" == "1" ]]; then
-    printf '[DRY-RUN] '
-    printf '%q ' "${cmd[@]}"
-    printf '\n'
-    if (( MAX_RESUME_RETRIES > 0 )); then
-      printf '[DRY-RUN][RETRY x%s] ' "$MAX_RESUME_RETRIES"
-      printf '%q ' "${cmd[@]}" "train.resume=$run_dir/latest.pt"
-      printf '\n'
-    fi
-  else
-    while (( "$(jobs -pr | wc -l)" >= MAX_PARALLEL )); do
-      if ! wait -n; then
-        rc=$?
-        echo "[ERROR] One run failed (exit=${rc}); stopping remaining jobs." >&2
-        jobs -pr | xargs -r kill 2>/dev/null || true
-        exit "$rc"
-      fi
-    done
-
-    printf '[RUN] '
-    printf '%q ' "${cmd[@]}"
-    printf '\n'
-    (
-      set +e
-      "${cmd[@]}"
-      rc=$?
-      attempt=0
-      while (( rc != 0 && attempt < MAX_RESUME_RETRIES )); do
-        attempt=$((attempt + 1))
-        echo "[RETRY ${attempt}/${MAX_RESUME_RETRIES}] run_dir=$run_dir resume=$run_dir/latest.pt" >&2
-        "${cmd[@]}" "train.resume=$run_dir/latest.pt"
-        rc=$?
-      done
-      exit "$rc"
-    ) &
-  fi
-}
-
 run_output_dir() {
   local ds="$1"
   case "$ds" in
@@ -127,9 +57,7 @@ printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"
 printf 'Datasets: %s\n' "${DATASETS[*]}"
 printf 'Lexicographic mode: disabled\n'
 printf 'HCC: disabled\n'
-printf 'Dry run: %s\n' "$DRY_RUN"
-printf 'Max parallel: %s\n' "$MAX_PARALLEL"
-printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
+print_job_control_settings
 print_seed_run_settings
 
 for ds in "${DATASETS[@]}"; do
@@ -139,15 +67,6 @@ for ds in "${DATASETS[@]}"; do
     "train.gradient_blocks=[p123,p12,p1,p2,p3]"
 done
 
-if [[ "$DRY_RUN" != "1" ]]; then
-  while (( "$(jobs -pr | wc -l)" > 0 )); do
-    if ! wait -n; then
-      rc=$?
-      echo "[ERROR] One run failed (exit=${rc}); stopping remaining jobs." >&2
-      jobs -pr | xargs -r kill 2>/dev/null || true
-      exit "$rc"
-    fi
-  done
-fi
+drain_jobs
 
 printf 'Completed all requested H-CAST baseline runs.\n'

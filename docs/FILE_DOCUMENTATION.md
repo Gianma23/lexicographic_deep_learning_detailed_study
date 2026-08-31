@@ -200,6 +200,12 @@ Runtime modules:
 - `scripts/run_seed_utils.sh` — seed matrix and nested output helpers.
 - `scripts/run_matrix_utils.sh` — whitespace-separated environment matrix
   parsing and allowed-value validation.
+- `scripts/run_job_utils.sh` — shared job control for every launcher:
+  `init_job_control` (common knobs and validation), `install_job_traps`,
+  `run_train` (background launch plus resume retries), and `drain_jobs`. Each
+  launcher declares its resume policy through `RUN_PREFLIGHT`
+  (`none`/`resume`/`strict`) and `RUN_RETRY_REQUIRES_CHECKPOINT`; both change
+  which commands are launched, so they are part of an experiment's behaviour.
 - `scripts/hcast/` — base, HCC, and lexicographic studies.
 - `scripts/lhdnn/` — paper-aligned CIFAR-100 baseline plus explicit
   CUB/Aircraft protocol extrapolations.
@@ -211,7 +217,9 @@ Runtime modules:
   launcher.
 - `scripts/stage_thesis_figures.py` — stages the selected baseline and
   direct-subspace analysis PDFs under `docs/images/experiments/` and removes
-  raster duplicates from those destination directories.
+  raster duplicates from those destination directories. The direct-subspace
+  group includes its gradient-norm and gradient-alignment diagnostics but
+  deliberately excludes parameter-movement plots.
 - `scripts/migrate_single_seed_outputs.py` — dry-run-first historical output
   nesting migration.
 
