@@ -278,12 +278,19 @@ them drive the CLI documented in `evaluation/README.md`, read the per-run
   `lexmode.ipynb`, `hcc.ipynb`, `lhprojection.ipynb` — four dedicated
   single-mechanism notebooks, each
   reporting the within-checkpoint gain of every readout x transform cell against
-  that mechanism's own native inference.
+  that mechanism's own native inference, and closing with the soft readout
+  measured against top-down decoding on the same checkpoints. `baseline.ipynb`
+  adds a per-level section that splits the node_score -> subspace_norm change
+  across the levels of the taxonomy, which separates better leaf recognition
+  from cross-level reconciliation and locates the level a readout failure
+  starts at (`readout_level_gains`, `readout_level_figure`).
 - `notebooks/inference_analysis/all_mechanics.ipynb` — every mechanism on one
   grid at every inference cell, for the best (mechanism, inference) combination
   overall. Its cross-mechanism deltas pair two different training runs by seed
   only, so they mix the mechanism with the readout and are not the
-  within-checkpoint gains the per-mechanism notebooks report.
+  within-checkpoint gains the per-mechanism notebooks report. Its
+  soft-readout-against-top-down section is the exception: both sides of a bar
+  come from one training run.
 
 `notebooks/model_analysis/` holds one notebook per model family for finished,
 selected-checkpoint analysis. The five family notebooks are deliberately
@@ -343,6 +350,10 @@ notebook per model family plus one cross-model notebook:
   families' native baselines against each other on one shared scale, with no
   mechanism arms. Inverts the single-family notebooks: every family is focal and
   keeps its colour, so there is no grey reference set and no off-scale gutter.
+  A second frozen-baseline view holds the independently selected checkpoints
+  fixed and applies the probability-space `subspace_norm` readout to H-CAST,
+  HRN, and Hier-COS, resolving changes in the competitive Pareto frontier while
+  the thesis table retains the two omitted families.
   `MODELS` selects the families and their order; both figures and the Pareto
   test follow that one list, so narrowing to the competitive families is a
   one-line edit (and closes the axis range onto them). Nothing is anchored on a

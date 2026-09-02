@@ -1,4 +1,7 @@
-"""Utilities for the H-CAST / Hier-COS lexicographic conflict notebook.
+"""Utilities for the multi-model lexicographic conflict notebook.
+
+Four substrates are covered: H-CAST, Hier-COS (global and level softmax), HRN
+under the level-conditional objective, and HT-CapsNet.
 
 The analysis deliberately separates two questions:
 
@@ -55,8 +58,10 @@ COSINE_STAGES = {
 
 
 # The p12 block is reached by the coarse and middle objectives but not by the
-# fine one. It is architecture-specific: on Hier-COS the block is empty and the
-# logger writes a constant zero rather than a measured cosine.
+# fine one. It is architecture-specific: only H-CAST has a non-empty p12 block.
+# On Hier-COS, HRN and HT-CapsNet the block is empty and the logger writes a
+# constant zero rather than a measured cosine, so the stage is emitted for
+# H-CAST alone.
 P12_COSINE_STAGE = {
     "p12 mid / coarse": {
         "pre": ("cos_p12_mid_coarse", "cos_t2_mid_coarse"),
@@ -120,8 +125,37 @@ def joint_response_labels(decoder: str = "independent") -> list[str]:
 
 
 
+# Plotting order and identity of the substrates. Hier-COS is split by softmax
+# variant because the two are separate training objectives, not two readouts of
+# one run. Colours are Okabe-Ito so the five series stay separable.
+SUBSTRATE_ORDER = (
+    "H-CAST",
+    "Hier-COS global",
+    "Hier-COS level",
+    "HRN",
+    "HT-CapsNet",
+)
+
+SUBSTRATE_STYLES = {
+    "H-CAST": {"color": "#009E73", "marker": "s"},
+    "Hier-COS global": {"color": "#0072B2", "marker": "o"},
+    "Hier-COS level": {"color": "#D55E00", "marker": "^"},
+    "HRN": {"color": "#CC79A7", "marker": "D"},
+    "HT-CapsNet": {"color": "#E69F00", "marker": "v"},
+}
+
+
+def substrate_order(frame: pd.DataFrame | None = None) -> list[str]:
+    """Return the canonical substrate order, restricted to what a frame holds."""
+
+    if frame is None or "substrate" not in frame:
+        return list(SUBSTRATE_ORDER)
+    present = set(frame["substrate"].dropna().unique())
+    return [substrate for substrate in SUBSTRATE_ORDER if substrate in present]
+
+
 def default_run_specs(prefer_matched_hcast: bool = True) -> list[dict]:
-    """Return the current H-CAST and Hier-COS coarse-first comparison matrix."""
+    """Return the current coarse-first comparison matrix over all substrates."""
 
     datasets = {
         "cifar100": "CIFAR-100",
@@ -183,6 +217,36 @@ def default_run_specs(prefer_matched_hcast: bool = True) -> list[dict]:
                     f"hiercos_{dataset_key}_level_softmax_ce_reg_"
                     f"lex_coarse_first_kl_leaf_{level_frame}"
                 ),
+            }
+        )
+
+        # HRN is paired against the level-conditional control, which is the
+        # objective the lex arm actually projects. The plain HRN runs are a
+        # different objective and also differ in batch size, so they are not
+        # offered as a fallback control here.
+        specs.append(
+            {
+                "cell_id": f"HR-{dataset_key}",
+                "short_label": dataset_codes[dataset_key],
+                "family": "HRN",
+                "substrate": "HRN",
+                "dataset_key": dataset_key,
+                "dataset": dataset_label,
+                "baseline_candidates": [f"hrn_{dataset_key}_level_conditional"],
+                "lex_run": f"hrn_{dataset_key}_level_conditional_lex_coarse_first",
+            }
+        )
+
+        specs.append(
+            {
+                "cell_id": f"HT-{dataset_key}",
+                "short_label": dataset_codes[dataset_key],
+                "family": "HT-CapsNet",
+                "substrate": "HT-CapsNet",
+                "dataset_key": dataset_key,
+                "dataset": dataset_label,
+                "baseline_candidates": [f"capsnet_{dataset_key}"],
+                "lex_run": f"ht_capsnet_{dataset_key}_lex_coarse_first",
             }
         )
     return specs
@@ -536,7 +600,7 @@ def cosine_trajectories(
     One row per paired seed, stage and epoch. The baseline column comes from the
     no-lex arm and the two lex columns from the lex arm of the same pair, so the
     three are directly comparable at equal step count. The p12 stage is emitted
-    for H-CAST only, because on Hier-COS that block is empty.
+    for H-CAST only, because on every other substrate here that block is empty.
     """
 
     outputs_root = Path(outputs_root)
@@ -610,7 +674,7 @@ def window_joint_margins(
             subspace_score_space=subspace_score_space,
         )
         cells = summarize_cells(seed_df, cosine_df)
-        for substrate in ("H-CAST", "Hier-COS global", "Hier-COS level"):
+        for substrate in substrate_order(cells):
             substrate_cells = cells[cells["substrate"] == substrate]
             for stage, stage_cells in substrate_cells.groupby("stage", sort=False):
                 for _, cell in stage_cells.iterrows():

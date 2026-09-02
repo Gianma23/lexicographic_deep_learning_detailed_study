@@ -33,7 +33,7 @@ esac
 
 install_job_traps
 
-parse_choice_list DATASETS "aircraft cub200" DATASETS \
+parse_choice_list DATASETS "cub200 cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {

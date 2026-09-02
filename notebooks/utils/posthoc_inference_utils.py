@@ -40,8 +40,10 @@ import numpy as np
 import pandas as pd
 import yaml
 from matplotlib.colors import LinearSegmentedColormap, Normalize, SymLogNorm, to_rgb
+from matplotlib.font_manager import FontProperties
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
+from matplotlib.textpath import TextPath
 
 from multiseed_utils import discover_seed_dirs, sample_stats
 
@@ -514,11 +516,11 @@ INFERENCE_LABELS = {
 }
 CELL_LABELS = {'node_score': 'node\nscore', 'subspace_norm': 'subspace\nnorm',
                'hcc_node_score': 'hcc +\nnode', 'hcc_subspace_norm': 'hcc +\nsubspace'}
-MODEL_ORDER = ('hcast', 'ht_capsnet', 'hrn', 'hiercos')
+MODEL_ORDER = ('hcast', 'ht_capsnet', 'hrn', 'hiercos', 'lhdnn')
 MODEL_LABELS = {'hcast': 'H-CAST', 'ht_capsnet': 'HT-CapsNet',
-                'hrn': 'HRN', 'hiercos': 'Hier-COS'}
+                'hrn': 'HRN', 'hiercos': 'Hier-COS', 'lhdnn': 'LH-DNN'}
 MODEL_COLORS = {'hcast': '#2a78d6', 'ht_capsnet': '#9467bd',
-                'hrn': '#eb6834', 'hiercos': '#1baf7a'}
+                'hrn': '#eb6834', 'hiercos': '#1baf7a', 'lhdnn': '#e69f00'}
 DATASET_ORDER = ('cifar-100', 'cub-200-2011', 'fgvc-aircraft')
 DATASET_LABELS = {'cifar-100': 'CIFAR-100', 'cub-200-2011': 'CUB-200-2011',
                   'fgvc-aircraft': 'FGVC-Aircraft'}
@@ -992,6 +994,19 @@ MIN_COL_W = 0.43     # inches; narrower than this and the two-line cell labels c
 EPS = 1e-6
 
 
+def _text_width_in(text, fontsize, weight='normal'):
+    """Width a label actually occupies, in inches, measured from the font in use.
+
+    A per-character estimate is wrong by several points for a label whose
+    characters are wide, which is enough to slide 'HT-CapsNet' under the rotated
+    dataset name in the left gutter of the grids.
+    """
+    prop = FontProperties(size=fontsize, weight=weight,
+                          family=mpl.rcParams['font.family'])
+    width_pt = TextPath((0, 0), text or ' ', prop=prop).get_extents().width
+    return (width_pt + 0.6) / 72.0          # + the right side bearing
+
+
 def _text_on(rgb):
     r, g, b = to_rgb(rgb)
     return '#ffffff' if (0.299 * r + 0.587 * g + 0.114 * b) < 0.55 else INK
@@ -1046,14 +1061,17 @@ def save_figure(fig, save_path):
 def _row_geometry(series_list):
     """Left gutter and dataset-label offset, in inches and points.
 
-    A cross-mechanism grid has row labels like 'H-CAST · HCC', which do not fit
+    A cross-mechanism grid has row labels like 'H-CAST | HCC', which do not fit
     the gutter a model-only grid needs, so the space is measured rather than
-    fixed.
+    fixed. It is measured from the font: with a per-character estimate the
+    rotated dataset name lands on top of a wide label such as 'HT-CapsNet'.
     """
-    longest = max((len(series_label(s, short=True)) for s in series_list), default=8)
-    label_in = longest * (FS_TICK + 0.4) * 0.55 / 72.0
-    dataset_offset_pt = (label_in + 0.14) * 72.0
-    return max(1.0, label_in + 0.42), dataset_offset_pt
+    label_pt = 72.0 * max((_text_width_in(series_label(s, short=True), FS_TICK + 0.4)
+                           for s in series_list), default=0.45)
+    # row labels stand 4 pt clear of the grid; the rotated dataset name then
+    # needs the longest of them, a gap, and its own half height
+    dataset_offset_pt = label_pt + 4.0 + 3.0 + 0.5 * FS_GROUP
+    return max(1.0, (dataset_offset_pt + 0.5 * FS_GROUP) / 72.0 + 0.10), dataset_offset_pt
 
 
 def _draw_row_labels(ax0, rows, datasets, series_list, dataset_offset_pt):
@@ -1617,170 +1635,6 @@ CELL_MARKERS = {'node_score': 'o', 'subspace_norm': 's',
                 'hcc_node_score': '^', 'hcc_subspace_norm': 'D'}
 
 
-def _colour_key(series_list):
-    """Colour by mechanism when several are shown, otherwise by model."""
-    families = {series_family(s) for s in series_list} - {None}
-    if len(families) > 1:
-        return 'family', {s: FAMILY_COLORS.get(series_family(s), INK_2) for s in series_list}
-    return 'model', {s: series_color(s) for s in series_list}
-
-
-def accuracy_consistency_map(absolute_table, datasets=None, series=None,
-                             save_path=None, width_in=None, caption_note=''):
-    """TICE against FPA under independent decoding, native cell -> every other cell.
-
-    Consistency is the x axis and accuracy the y axis, so the reader scans the
-    trade-off the way the thesis states it: does a readout buy consistency, and
-    what does it cost in accuracy. Top-down decoding is excluded on purpose: it
-    is consistent by construction, so its TICE is identically zero.
-    """
-    width_in = TEXT_WIDTH_IN if width_in is None else width_in
-    if absolute_table is None or absolute_table.empty:
-        print('Nothing to plot.')
-        return
-    A = absolute_table[absolute_table['decoder'].eq('independent')]
-    if A.empty:
-        print('This figure needs independent decoding rows.')
-        return
-    wide = A.pivot_table(index=['dataset', 'series', 'inference', 'is_native'],
-                         columns='metric_family', values='mean_value').reset_index()
-    if not {'fpa', 'tice'}.issubset(wide.columns):
-        print('Need both fpa and tice selected for this figure.')
-        return
-    datasets = [d for d in DATASET_ORDER if d in set(wide['dataset'])] \
-        if datasets is None else [d for d in datasets if d in set(wide['dataset'])]
-    series_list = order_series(set(wide['series'])) if series is None \
-        else [s for s in series if s in set(wide['series'])]
-    if not (datasets and series_list):
-        print('Nothing to plot.')
-        return
-    colour_by, colours = _colour_key(series_list)
-    floor = max(min(wide['tice'][wide['tice'] > 0], default=0.3) * 0.6, 0.05)
-    clamped = bool((wide['tice'] < floor).any())
-
-    # shared axes: the panels are directly comparable, and only one set of tick
-    # labels is needed, which leaves more room for the panels themselves
-    x_lo, x_hi = floor * 0.75, wide['tice'].max() * 1.5
-    y_lo, y_hi = wide['fpa'].min(), wide['fpa'].max()
-    y_pad = 0.08 * (y_hi - y_lo)
-
-    left, right, top, gap = 0.52, 0.04, 0.30, 0.13
-    legend_h = 0.34 + 0.17 * (1 + int(np.ceil(len(series_list) / 4)))
-    foot_h = 0.30 if not THESIS_STYLE else 0.0
-    panel_w = (width_in - left - right - gap * (len(datasets) - 1)) / len(datasets)
-    panel_h = panel_w * 1.02
-    axis_lab = 0.44
-    height = top + panel_h + axis_lab + legend_h + foot_h
-
-    fig = plt.figure(figsize=(width_in, height), layout='none')
-    axes = []
-    for n, ds in enumerate(datasets):
-        ax = fig.add_axes([(left + n * (panel_w + gap)) / width_in,
-                           1 - (top + panel_h) / height, panel_w / width_in,
-                           panel_h / height])
-        axes.append(ax)
-        d = wide[wide['dataset'].eq(ds)]
-        for sr in series_list:
-            dm = d[d['series'].eq(sr)]
-            if dm.empty:
-                continue
-            colour = colours[sr]
-            nat = dm[dm['is_native']]
-            if nat.empty:
-                continue
-            nx, ny = max(float(nat['tice'].iloc[0]), floor), float(nat['fpa'].iloc[0])
-            for _, r in dm[~dm['is_native']].iterrows():
-                x, y = max(float(r['tice']), floor), float(r['fpa'])
-                ax.annotate('', xy=(x, y), xytext=(nx, ny),
-                            arrowprops=dict(arrowstyle='-|>', color=colour, alpha=.34,
-                                            linewidth=1.1, shrinkA=5, shrinkB=5))
-                ax.scatter(x, y, s=36, marker=CELL_MARKERS[r['inference']], facecolor=colour,
-                           edgecolor='white', linewidth=1.0, alpha=.95, zorder=3)
-            ax.scatter(nx, ny, s=62, marker=CELL_MARKERS[nat['inference'].iloc[0]],
-                       facecolor='white', edgecolor=colour, linewidth=1.6, zorder=4)
-        ax.set_xscale('log')
-        ax.set_xlim(x_lo, x_hi); ax.set_ylim(y_lo - y_pad, y_hi + y_pad)
-        ax.set_title(DATASET_LABELS[ds], fontsize=FS_GROUP + 0.4, fontweight='bold',
-                     color=INK, pad=4)
-        ax.grid(color=GRID_LINE, linewidth=.6)
-        ax.set_axisbelow(True)
-        ax.tick_params(labelsize=FS_TICK, colors=INK_2, length=2.5, pad=1.5)
-        for s in ('top', 'right'):
-            ax.spines[s].set_visible(False)
-        for s in ('left', 'bottom'):
-            ax.spines[s].set_color(AXIS_LINE)
-        if n:
-            ax.tick_params(labelleft=False)
-    axes[0].set_ylabel('FPA (%)   ↑ better', fontsize=FS_GROUP, color=INK_2, labelpad=2)
-    x_mid = (left + (width_in - left - right) / 2) / width_in
-    fig.text(x_mid, (legend_h + foot_h + 0.17) / height,
-             'Tree inconsistency, TICE (%, log scale)   ← better',
-             ha='center', va='bottom', fontsize=FS_GROUP, color=INK_2)
-    fig.text(x_mid, (legend_h + foot_h + 0.04) / height,
-             f'independent decoding, mean of {seeds_phrase(absolute_table)}',
-             ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
-
-    if colour_by == 'family':
-        seen, series_keys = set(), []
-        for sr in series_list:
-            family = series_family(sr)
-            if family in seen:
-                continue
-            seen.add(family)
-            series_keys.append(Line2D([0], [0], marker='o', linewidth=0, markersize=5,
-                                      markerfacecolor=colours[sr], markeredgecolor='white',
-                                      label=FAMILY_LABELS.get(family, str(family))))
-    else:
-        seen, series_keys = set(), []
-        for sr in series_list:
-            model = series_model(sr)
-            if model in seen:
-                continue
-            seen.add(model)
-            series_keys.append(Line2D([0], [0], marker='o', linewidth=0, markersize=5,
-                                      markerfacecolor=colours[sr], markeredgecolor='white',
-                                      label=MODEL_LABELS.get(model, str(model))))
-    cell_keys = [Line2D([0], [0], marker=CELL_MARKERS[c], linewidth=0, markersize=5,
-                        markerfacecolor=INK_3, markeredgecolor='white',
-                        label=CELL_LABELS[c].replace('\n', ' ')) for c in CELL_ORDER]
-    cell_keys += [Line2D([0], [0], marker='o', linewidth=0, markersize=6,
-                         markerfacecolor='white', markeredgecolor=INK_2,
-                         markeredgewidth=1.4, label='hollow = native cell')]
-    for row, keys in enumerate((cell_keys, series_keys)):
-        legend = fig.legend(handles=keys, loc='lower center',
-                            ncol=min(len(keys), 5), frameon=False,
-                            fontsize=FS_NOTE + 0.4, handletextpad=.35, columnspacing=1.3,
-                            bbox_to_anchor=(0.5, (foot_h + 0.04 + row * 0.17) / height))
-        for text in legend.get_texts():
-            text.set_color(INK_2)
-        fig.add_artist(legend)
-    _caption('What each inference cell trades: consistency against accuracy',
-             _scope_note(datasets, series_list, ['independent']))
-    if not THESIS_STYLE:
-        fig.suptitle('What each inference cell trades: consistency against accuracy',
-                     fontsize=11, fontweight='bold', color=INK, y=1 - 0.04 / height)
-        fig.text(.5, .01,
-                 'Arrows start at each checkpoint’s native readout. Up-and-left is a free '
-                 'win; straight left buys consistency at no accuracy cost; down is a loss.',
-                 ha='center', va='bottom', fontsize=FS_NOTE, color=INK_2)
-    save_figure(fig, save_path)
-    plt.show(); plt.close(fig)
-    if save_path:
-        latex_block(save_path,
-                    'What each inference cell trades. Absolute test TICE (horizontal, log scale, '
-                    'lower is better) against full-path accuracy (vertical, higher is better) '
-                    f'under independent decoding, averaged over {seeds_phrase(absolute_table)}. '
-                    'Each arrow starts at the checkpoint\'s own native readout (hollow marker) '
-                    'and ends at one alternative cell, so up-and-left is a free win, straight '
-                    'left buys consistency at no accuracy cost, and downward movement is an '
-                    'accuracy loss. Top-down decoding is omitted because it is consistent by '
-                    'construction (TICE $\\equiv 0$)'
-                    + (f'; TICE values below {floor:.2g}\\% are clamped to the axis floor so that '
-                       'they remain visible on the log scale' if clamped else '')
-                    + '.' + caption_note,
-                    'posthoc-accuracy-consistency')
-
-
 # A relative change is a ratio, so it explodes when the independent-decoding
 # baseline is near zero: HT-CapsNet on FGVC-Aircraft moves 0.8% -> 2.3% FPA and
 # scores +220%. Rows below this baseline are still drawn and still labelled with
@@ -2065,181 +1919,1105 @@ def decoder_gain_figure(summary, readout, datasets=None, series=None, save_path=
                     f'posthoc-decoder-gain-{readout.replace("_", "-")}')
 
 
-def best_inference_chart(absolute_table, metric='fpa', decoder='independent',
-                         datasets=None, series=None, save_path=None, width_in=None,
-                         caption_note=''):
-    """Every inference cell of every mechanism on one axis, per dataset.
+def decoder_gain_readout_figure(summary, datasets=None, series=None, save_path=None,
+                                width_in=None, xlim=None, show_footer=True,
+                                caption_note=''):
+    """One plot per readout, stacked, sharing a single horizontal scale.
 
-    This is the figure the per-mechanism notebooks cannot draw: it puts each
-    (model, mechanism) row on its own line and marks all four cells on it, so
-    the best readout *anywhere* — not only the best within one checkpoint — is
-    read off directly, together with how far it sits from the row's own native
-    cell and from the other mechanisms.
-
-    Each dataset panel has its own x range, because absolute levels are not
-    comparable across datasets. The dashed rule marks the best value in the
-    panel, so a row that never reaches it is visibly behind.
+    ``decoder_gain_figure`` draws one readout per figure file, so the finding
+    the comparison exists for --- the decoder is worth having under node scores
+    and worth almost nothing after the subspace norm --- is split across two
+    images the reader has to hold side by side. Interleaving the readouts as two
+    bars per row instead makes the contrast immediate but costs the per-readout
+    read, so each readout keeps its own plot here and the two are stacked on one
+    canvas: the same geometry and colour convention as ``decoder_gain_figure``,
+    one shared axis, one caption.
     """
     width_in = TEXT_WIDTH_IN if width_in is None else width_in
-    if absolute_table is None or absolute_table.empty:
-        print('Nothing to plot.')
+    data = summary if summary is not None else pd.DataFrame()
+    if data.empty:
+        print('Nothing to plot for the decoder comparison.')
         return
-    title, short, unit, higher_better, linthresh = METRIC_SPECS[metric]
-    table = absolute_table[absolute_table['metric_family'].eq(metric)
-                           & absolute_table['decoder'].eq(decoder)]
-    if table.empty:
-        print(f'No rows for {metric} under {decoder} decoding.')
-        return
-    datasets = [d for d in DATASET_ORDER if d in set(table['dataset'])] \
-        if datasets is None else [d for d in datasets if d in set(table['dataset'])]
-    series_list = order_series(set(table['series'])) if series is None \
-        else [s for s in series if s in set(table['series'])]
-    cells = [c for c in CELL_ORDER if c in set(table['inference'])]
-    if not (datasets and series_list and cells):
-        print('Nothing to plot.')
+    datasets = [d for d in DATASET_ORDER if d in set(data['dataset'])] \
+        if datasets is None else [d for d in datasets if d in set(data['dataset'])]
+    series_list = order_series(set(data['series'])) if series is None \
+        else [s for s in series if s in set(data['series'])]
+    readouts = [r for r in READOUT_LABELS if r in set(data['inference'])]
+    if not (datasets and series_list and readouts):
+        print('Nothing to plot for the decoder comparison.')
         return
 
-    values = table.set_index(['dataset', 'series', 'inference'])['mean_value'].to_dict()
-    native_of = (table[table['is_native']].groupby(['dataset', 'series'])['inference']
-                 .first().to_dict())
-    fmt = '{:.2f}' if unit == 'raw' else '{:.1f}'
+    if xlim is None:
+        xlim = relative_gain_limits(data)
+    x_min, x_max = xlim
 
-    left = max(0.90, _row_geometry(series_list)[0] - 0.10)
-    right, top, gap = 0.12, 0.44, 0.20
-    legend_h, foot_h = 0.40, 0.26 if not THESIS_STYLE else 0.0
-    bottom = 0.52 + legend_h + foot_h
+    offscale = [row for _, row in data.iterrows()
+                if np.isfinite(row['relative_gain'])
+                and (bool(row['weak_baseline'])
+                     or not (x_min <= row['relative_gain'] <= x_max))]
+
+    # ---- layout, in inches -------------------------------------------------
+    left = max(0.78, _row_geometry(series_list)[0] - 0.20)
+    right, gap = 0.10, 0.14
+    top_pad = 0.06
+    label_h = 0.24            # the readout name, above each plot
+    title_h = 0.24            # the dataset names, above the first plot only
+    block_gap = 0.40          # the upper plot's tick labels, plus visual separation
+    tick_h = 0.24             # the lower plot's tick labels
+    bottom = (0.62 + (0.15 if offscale else 0.0)) if show_footer else 0.16
     panel_w = (width_in - left - right - gap * (len(datasets) - 1)) / len(datasets)
-    panel_h = max(1.2, 0.26 * len(series_list))
-    height = top + panel_h + bottom
-
+    panel_h = max(1.08, 0.34 * len(series_list))
+    foot_h = 0.24 if show_footer and not THESIS_STYLE else 0.0
+    stack_h = (len(readouts) * (label_h + panel_h) + title_h
+               + block_gap * (len(readouts) - 1))
+    height = top_pad + stack_h + tick_h + bottom + foot_h
     fig = plt.figure(figsize=(width_in, height), layout='none')
+
+    bar_h = 0.42
+    lookup = data.set_index(['dataset', 'series', 'inference']).to_dict('index')
+    cursor = top_pad
+    for block, readout in enumerate(readouts):
+        # the readout is what separates the two plots, so it is named on the
+        # canvas and not only in the caption
+        fig.text(left / width_in, 1 - (cursor + 0.02) / height,
+                 f'Independent vs top-down · readout: {READOUT_LABELS[readout]}',
+                 ha='left', va='top', fontsize=FS_TITLE, fontweight='bold', color=INK)
+        cursor += label_h + (title_h if block == 0 else 0.0)
+        for panel, dataset in enumerate(datasets):
+            ax = fig.add_axes([(left + panel * (panel_w + gap)) / width_in,
+                               1 - (cursor + panel_h) / height,
+                               panel_w / width_in, panel_h / height])
+            for y, sr in enumerate(series_list):
+                row = lookup.get((dataset, sr, readout))
+                if row is None or not np.isfinite(row['relative_gain']):
+                    continue
+                gain = float(row['relative_gain'])
+                std = float(row['relative_std']) if np.isfinite(row['relative_std']) else 0.0
+                colour = POS_HUE if gain >= 0 else NEG_HUE
+                # a bar past the axis limit is drawn to the edge and marked, so
+                # the run stays visible without the axis stretching to reach it
+                clipped = not (x_min <= gain <= x_max)
+                weak = bool(row['weak_baseline'])
+                drawn = float(np.clip(gain, x_min, x_max))
+                ax.barh(y, drawn, height=bar_h, color=colour, alpha=0.88,
+                        edgecolor='white', linewidth=0.6, zorder=2)
+                if clipped:
+                    ax.plot(drawn, y, marker='>' if gain > 0 else '<', markersize=4.2,
+                            color=colour, markeredgecolor='white', markeredgewidth=0.5,
+                            clip_on=False, zorder=5)
+                # a collapsed baseline also blows up the spread: a +-35% whisker
+                # would be drawn across the panel, so it is listed instead
+                show_error = std > 0 and not clipped and not weak
+                if show_error:
+                    ax.errorbar(gain, y, xerr=std, fmt='none', ecolor=INK_2,
+                                elinewidth=0.8, capsize=1.8, zorder=4)
+                label = f'{gain:+.1f}%'
+                if not bool(row['sign_agrees']):
+                    label += '†'
+                tip = gain + (std if gain >= 0 else -std) if show_error else drawn
+                label_w = len(label) * FS_TILE * 0.62 * (x_max - x_min) / (panel_w * 72)
+                forward, back = ('left', 'right') if gain >= 0 else ('right', 'left')
+                if (tip + label_w <= x_max) if gain >= 0 else (tip - label_w >= x_min):
+                    anchor, side, colour_txt = tip, forward, INK_2      # outside the bar
+                elif abs(drawn) >= label_w:
+                    anchor, side, colour_txt = drawn, back, _text_on(colour)   # inside it
+                else:
+                    # a hairline bar with no room on its own side: the only space
+                    # left is across the zero line, which is why the sign is printed
+                    anchor, side, colour_txt = 0.0, back, INK_2
+                # a clipped bar ends in an arrow head, so its label starts further in
+                pad_pt = 8 if clipped else 3
+                ax.annotate(label, xy=(anchor, y),
+                            xytext=(pad_pt if side == 'left' else -pad_pt, 0),
+                            textcoords='offset points', va='center', ha=side,
+                            fontsize=FS_TILE, color=colour_txt, zorder=6, clip_on=False)
+            ax.axvline(0, color=INK_3, linewidth=0.9, zorder=3)
+            ax.grid(axis='x', color=GRID_LINE, linewidth=0.6)
+            ax.set_axisbelow(True)
+            ax.set_xlim(x_min, x_max); ax.set_ylim(len(series_list) - 0.5, -0.5)
+            ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4))
+            ax.xaxis.set_major_formatter(mpl.ticker.FuncFormatter(
+                lambda value, _pos: f'{value:g}'))
+            ax.set_yticks(range(len(series_list)))
+            ax.set_yticklabels([series_label(s, short=True) for s in series_list]
+                               if panel == 0 else [])
+            # the dataset names are written once, above the upper plot, since the
+            # panels are column-aligned; each plot keeps its own tick labels, so
+            # that it can be read on its own without tracing down the other
+            if block == 0:
+                ax.set_title(DATASET_LABELS[dataset], fontsize=FS_GROUP + 0.4,
+                             fontweight='bold', color=INK, pad=4)
+            ax.tick_params(axis='x', labelsize=FS_TICK, colors=INK_2,
+                           length=2.5, pad=1.5)
+            ax.tick_params(axis='y', labelsize=FS_TICK, colors=INK_2,
+                           length=2.5 if panel == 0 else 0, pad=1.5)
+            for spine in ('top', 'right', 'left'):
+                ax.spines[spine].set_visible(False)
+            ax.spines['bottom'].set_color(AXIS_LINE)
+        cursor += panel_h + block_gap
+
+    if show_footer:
+        base = foot_h + (0.24 if offscale else 0.09)   # inches from the figure bottom
+        x_mid = (left + (width_in - left - right) / 2) / width_in
+        fig.text(x_mid, (base + 0.17) / height,
+                 'Top-down decoding relative to independent decoding, '
+                 '$100\\,(\\mathrm{td}-\\mathrm{ind})/\\mathrm{ind}$ (%)',
+                 ha='center', va='bottom', fontsize=FS_GROUP, color=INK_2)
+        fig.text(x_mid, base / height,
+                 f'paired per seed over {seeds_phrase(data)} · bars right of zero: '
+                 'top-down wins · error bars: sample SD of the paired effect',
+                 ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+        if offscale:
+            parts = [f"{series_label(r['series'], short=True)} on {DATASET_SHORT[r['dataset']]} "
+                     f"at {READOUT_LABELS[r['inference']]} {r['relative_gain']:+.1f}% "
+                     f"from {r['independent_fpa']:.1f}%" for r in offscale]
+            fig.text(0.5, (foot_h + 0.07) / height,
+                     f'collapsed baseline (< {MIN_BASELINE_FPA:g}% independent FPA), '
+                     'error bar omitted: ' + '; '.join(parts),
+                     ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+    _caption('What top-down decoding buys, under each readout',
+             _scope_note(datasets, series_list,
+                         extra='relative FPA change, paired per seed'))
+    if not THESIS_STYLE:
+        fig.suptitle('What top-down decoding buys, under each readout',
+                     fontsize=11, fontweight='bold', color=INK, y=1 - 0.05 / height)
+        if show_footer:
+            fig.text(0.5, 0.01,
+                     'Relative change, not percentage points: +5% means 5% more full paths '
+                     'are correct, whatever the absolute level.',
+                     ha='center', va='bottom', fontsize=FS_NOTE, color=INK_2)
+    save_figure(fig, save_path)
+    plt.show(); plt.close(fig)
+    if save_path:
+        latex_block(save_path,
+                    'Relative gain of top-down over independent decoding, one plot per '
+                    'untransformed readout on a shared scale. Each bar is '
+                    '$100\\,(\\mathrm{FPA}_{\\text{top-down}} - \\mathrm{FPA}_{'
+                    '\\text{independent}}) / \\mathrm{FPA}_{\\text{independent}}$, formed '
+                    f'per seed and then averaged over {seeds_phrase(data)}; error bars are '
+                    'the sample standard deviation of that paired per-seed effect and '
+                    '$\\dagger$ marks an effect whose sign is not the same for every seed. '
+                    'The quantity is a relative change, not a percentage-point difference, '
+                    'so the same bar length means the same fraction of full paths recovered '
+                    'at every absolute accuracy level. Colour carries the sign. Each decoder '
+                    'is read from its own validation-selected checkpoint. TICE is not shown '
+                    'because top-down decoding makes it identically zero by construction.'
+                    + ('' if not offscale else
+                       ' A run whose independent-decoding FPA is below '
+                       f'{MIN_BASELINE_FPA:g}\\% neither sets the axis nor shows an error '
+                       'bar, because the ratio and its spread then describe the collapsed '
+                       'baseline rather than the decoder; such a bar is drawn to the axis '
+                       'edge with an arrow and its value is printed inside it'
+                       + (', with its baseline listed under the axis' if show_footer else '')
+                       + '.') + caption_note,
+                    'posthoc-decoder-gain')
+
+
+# --------------------------------------------------------------------------
+# Which level does the subspace readout act on?
+# --------------------------------------------------------------------------
+# The FPA/TICE tables say that `subspace_norm` buys full paths and costs almost
+# no consistency, but not *where* along the path it acts.  A subspace score
+# folds a node's ancestors and descendants into it, so the two plausible
+# mechanisms leave opposite signatures across the levels: better leaf
+# recognition would raise the fine accuracy, while cross-level reconciliation
+# would raise the coarse and middle accuracies and may spend a little of the
+# leaf.  Splitting the change per level separates them, and it is also where a
+# family that the readout hurts shows which level the failure starts at.
+
+LEVEL_METRICS = ('acc_level_0', 'acc_level_1', 'acc_level_2')
+LEVEL_LABELS = {'acc_level_0': 'coarse', 'acc_level_1': 'middle', 'acc_level_2': 'fine'}
+# Sequential ramp, light -> dark with the taxonomy: the levels are ordered, so
+# the encoding is ordered too.  Sign is carried by the side of the zero line.
+LEVEL_COLORS = {'acc_level_0': '#9ec5f4', 'acc_level_1': '#3987e5',
+                'acc_level_2': '#184f95'}
+
+
+def readout_level_gains(frame, datasets=None, series=None, decoder='independent'):
+    """Per-seed percentage-point change in each level accuracy, node -> subspace.
+
+    For every (dataset, series, level, seed) the paired quantity is
+
+        delta = 100 * (acc_subspace_norm - acc_node_score),
+
+    a percentage-point difference rather than the relative change the decoder
+    figure uses: a level accuracy that has collapsed to a few percent makes a
+    ratio describe the collapse and not the readout.  Both cells are read from
+    the same checkpoint under one decoder, so this is a within-checkpoint
+    paired comparison and the spread is the spread of the paired effect.
+    """
+    required = {'dataset', 'series', 'seed', 'checkpoint_mode', 'decoder',
+                'inference', 'metric_family', 'value'}
+    if frame.empty or not required.issubset(frame.columns):
+        print('No compatible rows for the per-level readout comparison.')
+        return pd.DataFrame()
+
+    selected = frame[
+        frame['inference'].isin(tuple(READOUT_LABELS))
+        & frame['metric_family'].isin(LEVEL_METRICS)
+        & frame['decoder'].eq(decoder)
+        & frame['decoder'].eq(frame['checkpoint_mode'])
+    ].copy()
+    if selected.empty:
+        print('No level-accuracy rows loaded; select acc_level_* metrics first.')
+        return pd.DataFrame()
+    datasets = [d for d in DATASET_ORDER if d in set(selected['dataset'])] \
+        if datasets is None else [d for d in datasets if d in set(selected['dataset'])]
+    series_list = order_series(set(selected['series'])) if series is None \
+        else [s for s in series if s in set(selected['series'])]
+    selected = selected[selected['dataset'].isin(datasets)
+                        & selected['series'].isin(series_list)]
+    selected['accuracy_percent'] = 100.0 * selected['value']
+
+    per_seed = (selected.pivot_table(
+        index=['dataset', 'series', 'metric_family', 'seed'], columns='inference',
+        values='accuracy_percent', aggfunc='first').reset_index())
+    if not set(READOUT_LABELS).issubset(per_seed.columns):
+        print('Need matched node_score and subspace_norm rows.')
+        return pd.DataFrame()
+    per_seed = per_seed.dropna(subset=list(READOUT_LABELS))
+    per_seed['delta_pp'] = per_seed['subspace_norm'] - per_seed['node_score']
+
+    rows = []
+    for keys, group in per_seed.groupby(['dataset', 'series', 'metric_family']):
+        dataset, sr, level = keys
+        node_mean, _, _ = sample_stats(group['node_score'].tolist())
+        sub_mean, _, _ = sample_stats(group['subspace_norm'].tolist())
+        delta_mean, delta_std, seeds = sample_stats(group['delta_pp'].tolist())
+        # same convention as the effect grid and the decoder figure: flag an
+        # effect whose sign is not the same for every seed, counting an exactly
+        # zero seed as no effect
+        effects = group['delta_pp'].to_numpy()
+        effects = effects[np.abs(effects) > 1e-9]
+        rows.append({
+            'dataset': dataset, 'series': sr, 'metric_family': level,
+            'node_score': node_mean, 'subspace_norm': sub_mean,
+            'delta_pp': delta_mean, 'delta_std': delta_std, 'seeds': seeds,
+            'sign_agrees': len(effects) < 2 or bool(np.all(effects > 0)
+                                                    or np.all(effects < 0)),
+        })
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        print('No paired seeds for the per-level readout comparison.')
+        return summary
+    summary['_dataset_rank'] = summary['dataset'].map({v: i for i, v in enumerate(datasets)})
+    summary['_series_rank'] = summary['series'].map({v: i for i, v in enumerate(series_list)})
+    summary['_level_rank'] = summary['metric_family'].map(
+        {v: i for i, v in enumerate(LEVEL_METRICS)})
+    return (summary.sort_values(['_dataset_rank', '_series_rank', '_level_rank'])
+            .drop(columns=['_dataset_rank', '_series_rank', '_level_rank'])
+            .reset_index(drop=True))
+
+
+def level_gain_limits(table, pad=0.22):
+    """An x range that holds every bar and its error bar, plus label room."""
+    lo, hi = 0.0, 0.0
+    for _, row in table.iterrows():
+        delta = float(row['delta_pp'])
+        if not np.isfinite(delta):
+            continue
+        std = float(row['delta_std']) if np.isfinite(row['delta_std']) else 0.0
+        lo, hi = min(lo, delta - std), max(hi, delta + std)
+    span = max(hi - lo, 1.0)
+    minor = 0.10 * max(abs(lo), abs(hi))
+    return (lo - (pad if lo < -minor else 0.04) * span,
+            hi + (pad if hi > minor else 0.04) * span)
+
+
+def readout_level_figure(summary, datasets=None, series=None, save_path=None,
+                         width_in=None, xlim=None, show_footer=True,
+                         decoder='independent', caption_note=''):
+    """Per-level accuracy change from node_score to subspace_norm.
+
+    Same geometry as ``decoder_gain_figure`` --- one panel per dataset, one row
+    per series, bars from a zero line with the sample SD of the paired per-seed
+    effect --- but each row carries one bar per hierarchy level, and colour
+    encodes the level rather than the sign. Read the sign from the side of the
+    zero line: a row whose coarse and middle bars point right while the fine bar
+    points left is the reconciliation signature.
+    """
+    width_in = TEXT_WIDTH_IN if width_in is None else width_in
+    data = summary if summary is not None else pd.DataFrame()
+    if data.empty:
+        print('Nothing to plot for the per-level readout comparison.')
+        return
+    datasets = [d for d in DATASET_ORDER if d in set(data['dataset'])] \
+        if datasets is None else [d for d in datasets if d in set(data['dataset'])]
+    series_list = order_series(set(data['series'])) if series is None \
+        else [s for s in series if s in set(data['series'])]
+    levels = [lv for lv in LEVEL_METRICS if lv in set(data['metric_family'])]
+    if not (datasets and series_list and levels):
+        print('Nothing to plot for the per-level readout comparison.')
+        return
+
+    if xlim is None:
+        xlim = level_gain_limits(data)
+    x_min, x_max = xlim
+
+    left = max(0.78, _row_geometry(series_list)[0] - 0.20)
+    right, top, gap = 0.10, 0.50, 0.14
+    bottom = 0.80 if show_footer else 0.20
+    panel_w = (width_in - left - right - gap * (len(datasets) - 1)) / len(datasets)
+    # each series owns one band holding all its level bars, so the row height
+    # grows with the number of levels rather than the number of models alone
+    band_h = 0.20 * len(levels)
+    panel_h = max(1.20, band_h * len(series_list))
+    foot_h = 0.24 if show_footer and not THESIS_STYLE else 0.0
+    height = top + panel_h + bottom + foot_h
+    fig = plt.figure(figsize=(width_in, height), layout='none')
+
+    # bars fill 78% of a band, so neighbouring series stay visually separated
+    bar_h = 0.78 / len(levels)
+    offsets = [(index - (len(levels) - 1) / 2) * bar_h for index in range(len(levels))]
+    lookup = data.set_index(['dataset', 'series', 'metric_family']).to_dict('index')
     for panel, dataset in enumerate(datasets):
         ax = fig.add_axes([(left + panel * (panel_w + gap)) / width_in,
                            1 - (top + panel_h) / height,
                            panel_w / width_in, panel_h / height])
-        panel_values = [values.get((dataset, sr, c)) for sr in series_list for c in cells]
-        panel_values = [v for v in panel_values if v is not None and np.isfinite(v)]
-        if not panel_values:
-            ax.set_axis_off()
-            continue
-        lo, hi = min(panel_values), max(panel_values)
-        span = max(hi - lo, 1e-9)
-        # the right margin carries each row's best value as text, so it is
-        # reserved rather than shared with the markers
-        x_lo, x_hi = lo - 0.10 * span, hi + 0.32 * span
-        # a heavy-tailed metric flattens on a linear axis: TICE spans 0.0 to 100,
-        # so the cells that differ by tenths of a point pile up on the zero line
-        if metric in ABS_SYMLOG_METRICS:
-            ax.set_xscale('symlog', linthresh=linthresh)
-            # headroom is multiplicative on a log axis: the right margin still has
-            # to hold the row's printed value without touching the last marker
-            x_lo, x_hi = min(0.0, lo), (hi * 8.0 if hi > 0 else 1.0)
-        best = max(panel_values) if higher_better else min(panel_values)
-
-        ax.axvline(best, color=INK_3, linewidth=0.8, linestyle=(0, (3, 2)), zorder=1)
         for y, sr in enumerate(series_list):
-            row_values = [(c, values.get((dataset, sr, c))) for c in cells]
-            row_values = [(c, v) for c, v in row_values if v is not None and np.isfinite(v)]
-            if not row_values:
-                continue
-            xs = [v for _, v in row_values]
-            ax.plot([min(xs), max(xs)], [y, y], color=AXIS_LINE, linewidth=1.0, zorder=2)
-            for cell, value in row_values:
-                is_native = native_of.get((dataset, sr)) == cell
-                is_best = abs(value - best) < 1e-9
-                ax.scatter(value, y, s=34 if not is_best else 52,
-                           marker=CELL_MARKERS[cell],
-                           facecolor='white' if is_native else INFERENCE_COLORS[cell],
-                           edgecolor=INFERENCE_COLORS[cell] if is_native else 'white',
-                           linewidth=1.5 if is_native else 0.8,
-                           zorder=4 if is_best else 3)
-            row_best = max(xs) if higher_better else min(xs)
-            ax.annotate(fmt.format(row_best), xy=(1.0, y),
-                        xycoords=('axes fraction', 'data'), xytext=(-2, 0),
-                        textcoords='offset points', ha='right', va='center',
-                        fontsize=FS_NOTE, color=INK_2, zorder=5)
-        ax.set_xlim(x_lo, x_hi); ax.set_ylim(len(series_list) - 0.5, -0.5)
+            for level, offset in zip(levels, offsets):
+                row = lookup.get((dataset, sr, level))
+                if row is None or not np.isfinite(row['delta_pp']):
+                    continue
+                delta = float(row['delta_pp'])
+                std = float(row['delta_std']) if np.isfinite(row['delta_std']) else 0.0
+                colour = LEVEL_COLORS[level]
+                drawn = float(np.clip(delta, x_min, x_max))
+                ax.barh(y + offset, drawn, height=bar_h * 0.86, color=colour,
+                        alpha=0.92, edgecolor='white', linewidth=0.4, zorder=2)
+                show_error = std > 0
+                if show_error:
+                    ax.errorbar(delta, y + offset, xerr=std, fmt='none', ecolor=INK_2,
+                                elinewidth=0.7, capsize=1.5, zorder=4)
+                label = f'{delta:+.2f}'
+                if not bool(row['sign_agrees']):
+                    label += '†'
+                tip = delta + (std if delta >= 0 else -std) if show_error else drawn
+                label_w = len(label) * FS_NOTE * 0.62 * (x_max - x_min) / (panel_w * 72)
+                forward, back = ('left', 'right') if delta >= 0 else ('right', 'left')
+                if (tip + label_w <= x_max) if delta >= 0 else (tip - label_w >= x_min):
+                    anchor, side, colour_txt = tip, forward, INK_2      # outside the bar
+                elif abs(drawn) >= label_w:
+                    anchor, side, colour_txt = drawn, back, _text_on(colour)  # inside it
+                else:
+                    # a hairline bar with no room on its own side: the only space
+                    # left is across the zero line, so the sign is printed too
+                    anchor, side, colour_txt = 0.0, back, INK_2
+                ax.annotate(label, xy=(anchor, y + offset),
+                            xytext=(3 if side == 'left' else -3, 0),
+                            textcoords='offset points', va='center', ha=side,
+                            fontsize=FS_NOTE, color=colour_txt, zorder=6, clip_on=False)
+            if y:
+                ax.axhline(y - 0.5, color=GRID_LINE, linewidth=0.6, zorder=1)
+        ax.axvline(0, color=INK_3, linewidth=0.9, zorder=3)
+        ax.grid(axis='x', color=GRID_LINE, linewidth=0.6)
+        ax.set_axisbelow(True)
+        ax.set_xlim(x_min, x_max); ax.set_ylim(len(series_list) - 0.5, -0.5)
+        ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4))
+        ax.xaxis.set_major_formatter(mpl.ticker.FuncFormatter(
+            lambda value, _pos: f'{value:g}'))
         ax.set_yticks(range(len(series_list)))
         ax.set_yticklabels([series_label(s, short=True) for s in series_list]
                            if panel == 0 else [])
-        ax.grid(axis='x', color=GRID_LINE, linewidth=0.6)
-        ax.set_axisbelow(True)
-        if metric not in ABS_SYMLOG_METRICS:
-            ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4))
-        else:
-            ax.xaxis.set_minor_locator(mpl.ticker.NullLocator())
-            ax.xaxis.set_major_formatter(mpl.ticker.FuncFormatter(
-                lambda value, _pos: f'{value:g}'))
-        ax.set_title(DATASET_LABELS[dataset], fontsize=FS_GROUP + 0.4, fontweight='bold',
-                     color=INK, pad=4)
+        ax.set_title(DATASET_LABELS[dataset], fontsize=FS_GROUP + 0.4,
+                     fontweight='bold', color=INK, pad=4)
         ax.tick_params(axis='x', labelsize=FS_TICK, colors=INK_2, length=2.5, pad=1.5)
         ax.tick_params(axis='y', labelsize=FS_TICK, colors=INK_2,
                        length=2.5 if panel == 0 else 0, pad=1.5)
         for spine in ('top', 'right', 'left'):
             ax.spines[spine].set_visible(False)
         ax.spines['bottom'].set_color(AXIS_LINE)
-        # hairline between models, so a mechanism block is visible as one group
-        models = [series_model(s) for s in series_list]
-        for k in range(1, len(series_list)):
-            if models[k] != models[k - 1]:
-                ax.axhline(k - 0.5, color=AXIS_LINE, linewidth=0.7, zorder=1)
 
-    unit_txt = ' (%)' if unit == 'pp' else ''
-    direction = '↑ better' if higher_better else '← better'
-    x_mid = (left + (width_in - left - right) / 2) / width_in
-    scale_txt = ', symmetric-log' if metric in ABS_SYMLOG_METRICS else ''
-    fig.text(x_mid, (legend_h + foot_h + 0.18) / height,
-             f'{title} ({short}){unit_txt}{scale_txt}, {DECODER_SHORT[decoder]} decoding'
-             f'   {direction}',
-             ha='center', va='bottom', fontsize=FS_GROUP, color=INK_2)
-    fig.text(x_mid, (legend_h + foot_h + 0.05) / height,
-             f'mean of {seeds_phrase(table)} · the number at the right of each row is that '
-             'row’s best cell · dashed rule: best in the panel',
-             ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
-    keys = [Line2D([0], [0], marker=CELL_MARKERS[c], linewidth=0, markersize=5,
-                   markerfacecolor=INFERENCE_COLORS[c], markeredgecolor='white',
-                   label=CELL_LABELS[c].replace('\n', ' ')) for c in cells]
-    keys += [Line2D([0], [0], marker='o', linewidth=0, markersize=6, markerfacecolor='white',
-                    markeredgecolor=INK_2, markeredgewidth=1.4, label='hollow = native cell')]
-    legend = fig.legend(handles=keys, loc='lower center', ncol=min(len(keys), 5),
-                        frameon=False, fontsize=FS_NOTE + 0.4, handletextpad=.35,
-                        columnspacing=1.3, bbox_to_anchor=(0.5, (foot_h + 0.06) / height))
-    for text in legend.get_texts():
-        text.set_color(INK_2)
-    # the caption differs in kind between a one-mechanism and a cross-mechanism
-    # figure, because only the latter compares separate training runs
-    multi_family = len({series_family(s) for s in series_list} - {None}) > 1
-    _caption(
-        'Best inference cell across '
-        + ('every mechanism' if multi_family else 'every model')
-        + f' ({short})',
-        _scope_note(datasets, series_list, [decoder]),
-    )
+    # colour is the only thing separating the three bars of a row, so the key
+    # goes on the canvas rather than into the caption
+    handles = [Rectangle((0, 0), 1, 1, facecolor=LEVEL_COLORS[level], alpha=0.92,
+                         edgecolor='white', linewidth=0.4) for level in levels]
+    fig.legend(handles, [LEVEL_LABELS[level] for level in levels],
+               loc='upper right', bbox_to_anchor=(1 - right / width_in,
+                                                  1 - 0.06 / height),
+               ncol=len(levels), frameon=False, fontsize=FS_NOTE,
+               handlelength=1.1, handleheight=0.9, columnspacing=1.0,
+               handletextpad=0.4, labelcolor=INK_2)
+    if THESIS_STYLE:
+        fig.text(left / width_in, 1 - 0.16 / height,
+                 'Readout: node_score → subspace_norm', ha='left', va='top',
+                 fontsize=FS_TITLE, fontweight='bold', color=INK)
+
+    if show_footer:
+        base = foot_h + 0.09
+        x_mid = (left + (width_in - left - right) / 2) / width_in
+        fig.text(x_mid, (base + 0.26) / height,
+                 'Level-accuracy change, '
+                 '$\\mathrm{Acc}^{\\mathrm{sub}}_l-\\mathrm{Acc}^{\\mathrm{node}}_l$ (pp)',
+                 ha='center', va='bottom', fontsize=FS_GROUP, color=INK_2)
+        # two short lines rather than one long one: at this width a single
+        # footer sentence runs past the panels and is clipped by the canvas
+        fig.text(x_mid, (base + 0.13) / height,
+                 'bars right of zero: the subspace readout wins that level',
+                 ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+        fig.text(x_mid, base / height,
+                 f'paired per seed over {seeds_phrase(data)} · '
+                 f'{DECODER_SHORT.get(decoder, decoder)} decoding · '
+                 'error bars: sample SD of the paired effect',
+                 ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+    _caption('Where along the path the subspace readout acts',
+             _scope_note(datasets, series_list, decoders=[decoder],
+                         extra='per-level accuracy change, paired per seed'))
     if not THESIS_STYLE:
-        scope = 'every mechanism' if multi_family else 'every model'
-        fig.suptitle(f'Best inference cell across {scope} ({short})',
-                     fontsize=11, fontweight='bold', color=INK, y=1 - 0.04 / height)
-        if multi_family:
+        fig.suptitle('Where along the path the subspace readout acts',
+                     fontsize=11, fontweight='bold', color=INK, y=1 - 0.05 / height)
+    save_figure(fig, save_path)
+    plt.show(); plt.close(fig)
+    if save_path:
+        latex_block(save_path,
+                    'Per-level accuracy change when a frozen checkpoint is re-read with '
+                    'the probability-space subspace norm instead of its node score, under '
+                    f'{DECODER_SHORT.get(decoder, decoder)} decoding. Each bar is '
+                    '$\\mathrm{Acc}^{\\mathrm{sub}}_l-\\mathrm{Acc}^{\\mathrm{node}}_l$ in '
+                    f'percentage points, formed per seed and then averaged over '
+                    f'{seeds_phrase(data)}; error bars are the sample standard deviation of '
+                    'that paired per-seed effect and $\\dagger$ marks an effect whose sign '
+                    'is not the same for every seed. Both readouts are evaluated on the '
+                    'same parameter state, so a bar is an inference effect and not a '
+                    'training difference. Colour encodes the level and the side of the zero '
+                    'line encodes the sign.' + caption_note,
+                    'posthoc-readout-level-gain')
+
+
+
+# --------------------------------------------------------------------------
+# Does a soft readout recover what hard top-down decoding buys?
+# --------------------------------------------------------------------------
+# The grids above compare inference cells inside one decoder, and the decoder
+# figure compares the two decoders inside one readout.  Neither asks the
+# question the two of them together raise: `subspace_norm` aggregates ancestor
+# evidence into every node's score, which is what top-down decoding does by
+# construction, so a checkpoint read with the soft cell under *independent*
+# decoding may already land where the *hard* top-down decoder lands.  If it
+# does, hierarchical consistency is available at readout time and does not
+# need the hard constraint.  This pair of functions asks that directly.
+
+def soft_cell_for(native_cell):
+    """The subspace-norm cell that matches a checkpoint's own transform.
+
+    An HCC-trained checkpoint's native cell is HCC-prefixed, so its soft
+    counterpart has to keep the projection: comparing a plain `subspace_norm`
+    against an HCC top-down decoder would change the transform and the readout
+    at once, and the difference would no longer isolate the readout.
+    """
+    return 'hcc_subspace_norm' if str(native_cell).startswith('hcc_') else 'subspace_norm'
+
+
+def topdown_recovery_gains(frame, soft_cell=None, datasets=None, series=None):
+    """Per-seed FPA difference between a soft independent readout and top-down.
+
+    For every (dataset, series, seed) the paired quantity is
+
+        delta = FPA(independent, soft cell) - FPA(top-down, native cell)   [pp]
+
+    a percentage-point difference rather than a ratio, because both sides are
+    accuracies of the same checkpoint family and a ratio against a collapsed
+    run would say more about the baseline than about the readout.  Each side is
+    read from its own validation-selected checkpoint, following the repo rule,
+    so the pairing is by dataset, series and seed.  The soft cell defaults to
+    the subspace-norm cell that matches each checkpoint's own transform; pass
+    ``soft_cell`` to force one.
+
+    The returned frame also carries the soft cell's residual TICE under
+    independent decoding, which is the other half of the claim: top-down
+    decoding has TICE identically zero by construction, so a soft readout that
+    matches it on FPA is only interesting while its own TICE stays near zero.
+    """
+    required = {'dataset', 'series', 'seed', 'checkpoint_mode', 'decoder',
+                'inference', 'is_native', 'metric_family', 'value'}
+    if frame.empty or not required.issubset(frame.columns):
+        print('No compatible rows for the top-down recovery comparison.')
+        return pd.DataFrame()
+
+    matched = frame[frame['decoder'].eq(frame['checkpoint_mode'])]
+    datasets = [d for d in DATASET_ORDER if d in set(matched['dataset'])] \
+        if datasets is None else [d for d in datasets if d in set(matched['dataset'])]
+    series_list = order_series(set(matched['series'])) if series is None \
+        else [s for s in series if s in set(matched['series'])]
+    matched = matched[matched['dataset'].isin(datasets) & matched['series'].isin(series_list)]
+    if matched.empty:
+        print('Nothing to compare for the current selection.')
+        return pd.DataFrame()
+
+    fpa = matched[matched['metric_family'].eq('fpa')]
+    tice = matched[matched['metric_family'].eq('tice')
+                   & matched['decoder'].eq('independent')]
+    hard = fpa[fpa['decoder'].eq('topdown') & fpa['is_native']]
+    if hard.empty:
+        print('Need top-down FPA rows from the top-down-selected checkpoint.')
+        return pd.DataFrame()
+
+    # the native cell is a property of the checkpoint, so it is read once per
+    # (dataset, series) rather than per seed
+    native_of = hard.groupby(['dataset', 'series'])['inference'].first().to_dict()
+    available = set(fpa['inference'])
+
+    rows = []
+    for (dataset, sr), hard_group in hard.groupby(['dataset', 'series']):
+        native_cell = native_of[(dataset, sr)]
+        cell = soft_cell or soft_cell_for(native_cell)
+        if cell not in available:
+            print(f'{series_label(sr, short=True)} on {DATASET_SHORT.get(dataset, dataset)}: '
+                  f'no {cell} rows, skipped.')
+            continue
+        soft_group = fpa[fpa['dataset'].eq(dataset) & fpa['series'].eq(sr)
+                         & fpa['decoder'].eq('independent') & fpa['inference'].eq(cell)]
+        paired = (soft_group.set_index('seed')['value'].mul(100).rename('soft')
+                  .to_frame().join(hard_group.set_index('seed')['value'].mul(100)
+                                   .rename('hard'), how='inner').dropna())
+        if paired.empty:
+            continue
+        paired['delta'] = paired['soft'] - paired['hard']
+        soft_mean, soft_std, _ = sample_stats(paired['soft'].tolist())
+        hard_mean, hard_std, _ = sample_stats(paired['hard'].tolist())
+        delta_mean, delta_std, seeds = sample_stats(paired['delta'].tolist())
+        effects = paired['delta'].to_numpy()
+        effects = effects[np.abs(effects) > 1e-9]
+        residual = tice[tice['dataset'].eq(dataset) & tice['series'].eq(sr)
+                        & tice['inference'].eq(cell)]['value']
+        native_tice = tice[tice['dataset'].eq(dataset) & tice['series'].eq(sr)
+                           & tice['inference'].eq(native_cell)]['value']
+        rows.append({
+            'dataset': dataset, 'series': sr, 'soft_cell': cell, 'native_cell': native_cell,
+            'soft_fpa': soft_mean, 'soft_std': soft_std,
+            'topdown_fpa': hard_mean, 'topdown_std': hard_std,
+            'delta_pp': delta_mean, 'delta_std': delta_std, 'seeds': seeds,
+            # same convention as the effect grid: an effect whose sign is not
+            # the same for every seed is flagged rather than averaged away
+            'sign_agrees': len(effects) < 2 or bool(np.all(effects > 0) or np.all(effects < 0)),
+            'soft_tice': 100.0 * residual.mean() if not residual.empty else np.nan,
+            'native_tice': 100.0 * native_tice.mean() if not native_tice.empty else np.nan,
+        })
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        print('No paired seeds for the top-down recovery comparison.')
+        return summary
+    summary['_dataset_rank'] = summary['dataset'].map({v: i for i, v in enumerate(datasets)})
+    summary['_series_rank'] = summary['series'].map({v: i for i, v in enumerate(series_list)})
+    return (summary.sort_values(['_dataset_rank', '_series_rank'])
+            .drop(columns=['_dataset_rank', '_series_rank']).reset_index(drop=True))
+
+
+def recovery_limits(table, pad=0.26):
+    """An x range that holds every bar and its error bar, with label headroom."""
+    if table is None or table.empty:
+        return (-1.0, 1.0)
+    lo, hi = 0.0, 0.0
+    for _, row in table.iterrows():
+        delta = float(row['delta_pp'])
+        if not np.isfinite(delta):
+            continue
+        std = float(row['delta_std']) if np.isfinite(row['delta_std']) else 0.0
+        lo, hi = min(lo, delta - std), max(hi, delta + std)
+    span = max(hi - lo, 1.0)
+    minor = 0.10 * max(abs(lo), abs(hi))
+    return (lo - (pad if lo < -minor else 0.04) * span,
+            hi + (pad if hi > minor else 0.04) * span)
+
+
+def topdown_recovery_figure(summary, datasets=None, series=None, save_path=None,
+                            width_in=None, xlim=None, show_footer=True, caption_note=''):
+    """How much of top-down decoding a soft independent readout recovers.
+
+    Deliberately the same geometry as ``decoder_gain_figure``: one panel per
+    dataset, one row per series, a bar from the zero line, so the two figures
+    are read as a pair.  A bar right of zero means the soft cell under
+    independent decoding is at least as accurate as the hard top-down decoder,
+    i.e. the hard constraint bought nothing that the readout did not.  The unit
+    is percentage points, not the relative change of the decoder figure.
+    """
+    width_in = TEXT_WIDTH_IN if width_in is None else width_in
+    if summary is None or summary.empty:
+        print('Nothing to plot for the top-down recovery comparison.')
+        return
+    datasets = [d for d in DATASET_ORDER if d in set(summary['dataset'])] \
+        if datasets is None else [d for d in datasets if d in set(summary['dataset'])]
+    series_list = order_series(set(summary['series'])) if series is None \
+        else [s for s in series if s in set(summary['series'])]
+    if not (datasets and series_list):
+        print('Nothing to plot for the top-down recovery comparison.')
+        return
+
+    x_min, x_max = recovery_limits(summary) if xlim is None else xlim
+
+    left = max(0.78, _row_geometry(series_list)[0] - 0.20)
+    right, top, gap = 0.10, 0.50, 0.14
+    bottom = 0.62 if show_footer else 0.18
+    panel_w = (width_in - left - right - gap * (len(datasets) - 1)) / len(datasets)
+    panel_h = max(1.08, 0.36 * len(series_list))
+    foot_h = 0.24 if show_footer and not THESIS_STYLE else 0.0
+    height = top + panel_h + bottom + foot_h
+    fig = plt.figure(figsize=(width_in, height), layout='none')
+
+    bar_h = 0.42
+    lookup = summary.set_index(['dataset', 'series']).to_dict('index')
+    # A row whose native cell already *is* the soft cell holds the readout fixed:
+    # its bar is then the decoder effect alone, not the readout-against-decoder
+    # comparison every other row makes, so it is marked rather than left to be
+    # read as one more result.
+    degenerate = {sr for sr in series_list
+                  if any(row['soft_cell'] == row['native_cell']
+                         for (_, other), row in lookup.items() if other == sr)}
+    for panel, dataset in enumerate(datasets):
+        ax = fig.add_axes([(left + panel * (panel_w + gap)) / width_in,
+                           1 - (top + panel_h) / height,
+                           panel_w / width_in, panel_h / height])
+        for y, sr in enumerate(series_list):
+            row = lookup.get((dataset, sr))
+            if row is None or not np.isfinite(row['delta_pp']):
+                continue
+            delta = float(row['delta_pp'])
+            std = float(row['delta_std']) if np.isfinite(row['delta_std']) else 0.0
+            colour = POS_HUE if delta >= 0 else NEG_HUE
+            clipped = not (x_min <= delta <= x_max)
+            drawn = float(np.clip(delta, x_min, x_max))
+            ax.barh(y, drawn, height=bar_h, color=colour, alpha=0.88,
+                    edgecolor='white', linewidth=0.6, zorder=2)
+            if clipped:
+                ax.plot(drawn, y, marker='>' if delta > 0 else '<', markersize=4.2,
+                        color=colour, markeredgecolor='white', markeredgewidth=0.5,
+                        clip_on=False, zorder=5)
+            show_error = std > 0 and not clipped
+            if show_error:
+                ax.errorbar(delta, y, xerr=std, fmt='none', ecolor=INK_2,
+                            elinewidth=0.8, capsize=1.8, zorder=4)
+            label = f'{delta:+.1f}'
+            if not bool(row['sign_agrees']):
+                label += '†'
+            tip = delta + (std if delta >= 0 else -std) if show_error else drawn
+            label_w = len(label) * FS_TILE * 0.62 * (x_max - x_min) / (panel_w * 72)
+            forward, back = ('left', 'right') if delta >= 0 else ('right', 'left')
+            if (tip + label_w <= x_max) if delta >= 0 else (tip - label_w >= x_min):
+                anchor, side, colour_txt = tip, forward, INK_2      # outside the bar
+            elif abs(drawn) >= label_w:
+                anchor, side, colour_txt = drawn, back, _text_on(colour)   # inside it
+            else:
+                anchor, side, colour_txt = 0.0, back, INK_2   # across the zero line
+            # a clipped bar ends in an arrow head, so its label starts further in
+            offset = 8 if clipped else 3
+            ax.annotate(label, xy=(anchor, y),
+                        xytext=(offset if side == 'left' else -offset, 0),
+                        textcoords='offset points', va='center', ha=side,
+                        fontsize=FS_TILE, color=colour_txt, zorder=6, clip_on=False)
+        ax.axvline(0, color=INK_3, linewidth=0.9, zorder=3)
+        ax.grid(axis='x', color=GRID_LINE, linewidth=0.6)
+        ax.set_axisbelow(True)
+        ax.set_xlim(x_min, x_max); ax.set_ylim(len(series_list) - 0.5, -0.5)
+        ax.xaxis.set_major_locator(mpl.ticker.MaxNLocator(nbins=4))
+        ax.xaxis.set_major_formatter(mpl.ticker.FuncFormatter(
+            lambda value, _pos: f'{value:g}'))
+        ax.set_yticks(range(len(series_list)))
+        ax.set_yticklabels([series_label(s, short=True) + ('*' if s in degenerate else '')
+                            for s in series_list] if panel == 0 else [])
+        ax.set_title(DATASET_LABELS[dataset], fontsize=FS_GROUP + 0.4,
+                     fontweight='bold', color=INK, pad=4)
+        ax.tick_params(axis='x', labelsize=FS_TICK, colors=INK_2, length=2.5, pad=1.5)
+        ax.tick_params(axis='y', labelsize=FS_TICK, colors=INK_2,
+                       length=2.5 if panel == 0 else 0, pad=1.5)
+        for spine in ('top', 'right', 'left'):
+            ax.spines[spine].set_visible(False)
+        ax.spines['bottom'].set_color(AXIS_LINE)
+
+    cells = sorted(set(summary['soft_cell']))
+    cell_txt = ' / '.join(CELL_LABELS.get(c, c).replace('\n', ' ') for c in cells)
+    if THESIS_STYLE:
+        # the two sides differ in readout *and* decoder, which nothing else on the
+        # canvas can say, so the comparison itself is named here
+        fig.text(left / width_in, 1 - 0.16 / height,
+                 f'{cell_txt.capitalize()} + independent  vs  native readout + top-down',
+                 ha='left', va='top', fontsize=FS_TITLE, fontweight='bold', color=INK)
+    if show_footer:
+        base = foot_h + 0.09
+        x_mid = (left + (width_in - left - right) / 2) / width_in
+        fig.text(x_mid, (base + 0.17) / height,
+                 'Soft readout under independent decoding minus top-down decoding, '
+                 'test FPA (pp)', ha='center', va='bottom', fontsize=FS_GROUP, color=INK_2)
+        fig.text(x_mid, base / height,
+                 f'paired per seed over {seeds_phrase(summary)} · right of zero: no hard '
+                 'decoder needed · error bars: sample SD'
+                 + (' · *: native readout is already the soft one, so the row '
+                    'measures the decoder alone' if degenerate else ''),
+                 ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+    _caption('How much of top-down decoding the soft readout recovers',
+             _scope_note(datasets, series_list,
+                         extra='FPA difference in pp, paired per seed'))
+    if not THESIS_STYLE:
+        fig.suptitle('How much of top-down decoding the soft readout recovers',
+                     fontsize=11, fontweight='bold', color=INK, y=1 - 0.05 / height)
+        if show_footer:
             fig.text(0.5, 0.01,
-                     'Rows are training mechanisms, not checkpoints of one model: a comparison '
-                     'across rows mixes the mechanism with the readout.',
+                     'Both sides come from the same checkpoint family but from different '
+                     'validation-selected checkpoints, following the repo rule.',
                      ha='center', va='bottom', fontsize=FS_NOTE, color=INK_2)
     save_figure(fig, save_path)
     plt.show(); plt.close(fig)
     if save_path:
         latex_block(save_path,
-                    'Every inference cell of '
-                    + ('every training mechanism' if multi_family else 'every model')
-                    + f', {short} under {DECODER_SHORT[decoder]} decoding, mean over '
-                    f'{seeds_phrase(table)}. Each row is one '
-                    + ('(model, mechanism) pair' if multi_family else 'model')
-                    + ' and carries all four readout$\\times$transform cells; the hollow '
-                    'marker is the cell that reproduces that checkpoint\'s own inference and '
-                    'the dashed rule marks the best value in the panel. Each dataset panel has '
-                    'its own horizontal range, because absolute levels are not comparable '
-                    'across datasets.'
-                    + (' Rows come from different training runs, so a difference between rows '
-                       'mixes the training mechanism with the inference rule and is matched by '
-                       'seed only, unlike the within-checkpoint gains.' if multi_family else '')
-                    + caption_note,
-                    f'posthoc-best-inference-{metric.replace("_", "-")}')
+                    'How much of top-down decoding a post-hoc soft readout recovers. Each bar '
+                    'is $\\mathrm{FPA}_{\\text{independent}}(\\text{' + cell_txt + '}) - '
+                    '\\mathrm{FPA}_{\\text{top-down}}(\\text{native cell})$ in percentage '
+                    f'points, formed per seed and then averaged over {seeds_phrase(summary)}; '
+                    'error bars are the sample standard deviation of that paired per-seed '
+                    'effect and $\\dagger$ marks an effect whose sign is not the same for '
+                    'every seed. A bar right of zero means the subspace readout alone, with '
+                    'no hierarchical constraint imposed at decoding time, is at least as '
+                    'accurate as the hard top-down decoder. The comparison isolates the '
+                    'readout only up to checkpoint selection: each side is read from its own '
+                    'validation-selected checkpoint, as everywhere else in this analysis. '
+                    'Accuracy is only half of the claim, because top-down decoding has TICE '
+                    'identically zero by construction; the residual TICE the soft readout '
+                    'leaves is reported in the accompanying table. Unlike the decoder '
+                    'figure, which holds the readout fixed and varies only the decoder, the '
+                    'two sides here differ in readout and decoder at once: they are two '
+                    'complete pipelines. A row marked $*$ is the degenerate case in which '
+                    'the native readout already is the soft one, so both sides share a '
+                    'readout and the bar measures the decoder alone.' + caption_note,
+                    'posthoc-topdown-recovery')
+
+
+# --------------------------------------------------------------------------
+# What does the post-hoc HCC transform do on its own?
+# --------------------------------------------------------------------------
+# HCC can be applied to a checkpoint that was never trained under it, at no
+# training cost.  That control separates a pure inference-time correction from
+# the extra effect of training under the constraint, so it is the zero point any
+# trained-HCC result has to beat.  What it can show depends on the readout: for
+# a signed value readout the projection shifts every sibling group by one
+# constant, which cannot reorder a sibling set and therefore cannot move a
+# top-down metric at all -- the last column below is that algebraic check, not a
+# result.  The invariance does not hold for Hier-COS, which ranks coordinate
+# magnitudes, nor for either subspace norm.
+
+HCC_CELL_OF = {'node_score': 'hcc_node_score', 'subspace_norm': 'hcc_subspace_norm'}
+
+
+def transform_effects(frame, metrics=('fpa', 'tice'), datasets=None, series=None,
+                      decoder='independent'):
+    """Paired effect of the post-hoc HCC transform, at each readout.
+
+    For every (dataset, series, readout, metric, seed) the quantity is
+
+        delta = value(hcc + readout) - value(readout),
+
+    both cells read from one checkpoint under one decoder, so this is a
+    within-checkpoint paired comparison and the transform is the only thing that
+    differs.  The sign is **not** adjusted: a positive TICE delta is
+    unfavourable, exactly as the thesis table reports it.
+    """
+    required = {'dataset', 'series', 'seed', 'checkpoint_mode', 'decoder',
+                'inference', 'metric_family', 'value'}
+    if frame.empty or not required.issubset(frame.columns):
+        print('No compatible rows for the post-hoc transform comparison.')
+        return pd.DataFrame()
+
+    cells = tuple(HCC_CELL_OF) + tuple(HCC_CELL_OF.values())
+    selected = frame[
+        frame['inference'].isin(cells)
+        & frame['metric_family'].isin(tuple(metrics))
+        & frame['decoder'].eq(decoder)
+        & frame['decoder'].eq(frame['checkpoint_mode'])
+    ].copy()
+    if selected.empty:
+        print(f'No {decoder} rows carrying both an HCC and a plain cell.')
+        return pd.DataFrame()
+    datasets = [d for d in DATASET_ORDER if d in set(selected['dataset'])] \
+        if datasets is None else [d for d in datasets if d in set(selected['dataset'])]
+    series_list = order_series(set(selected['series'])) if series is None \
+        else [s for s in series if s in set(selected['series'])]
+    selected = selected[selected['dataset'].isin(datasets)
+                        & selected['series'].isin(series_list)]
+    selected['value_display'] = display_value(selected)
+
+    per_seed = (selected.pivot_table(
+        index=['dataset', 'series', 'metric_family', 'seed'], columns='inference',
+        values='value_display', aggfunc='first').reset_index())
+
+    rows = []
+    for readout, hcc_cell in HCC_CELL_OF.items():
+        if not {readout, hcc_cell}.issubset(per_seed.columns):
+            continue
+        pair = per_seed.dropna(subset=[readout, hcc_cell]).copy()
+        pair['delta'] = pair[hcc_cell] - pair[readout]
+        for keys, group in pair.groupby(['dataset', 'series', 'metric_family']):
+            dataset, sr, metric = keys
+            plain_mean, _, _ = sample_stats(group[readout].tolist())
+            hcc_mean, _, _ = sample_stats(group[hcc_cell].tolist())
+            delta_mean, delta_std, seeds = sample_stats(group['delta'].tolist())
+            # same convention as every other paired figure here: flag an effect
+            # whose sign is not the same for every seed, an exact zero counting
+            # as no effect
+            effects = group['delta'].to_numpy()
+            effects = effects[np.abs(effects) > EPS]
+            rows.append({
+                'dataset': dataset, 'series': sr, 'readout': readout,
+                'metric_family': metric, 'decoder': decoder,
+                'plain': plain_mean, 'hcc': hcc_mean,
+                'delta': delta_mean, 'delta_std': delta_std, 'seeds': seeds,
+                'sign_agrees': len(effects) < 2 or bool(np.all(effects > 0)
+                                                        or np.all(effects < 0)),
+            })
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        print('No paired seeds for the post-hoc transform comparison.')
+        return summary
+    summary['_dataset_rank'] = summary['dataset'].map({v: i for i, v in enumerate(datasets)})
+    summary['_series_rank'] = summary['series'].map({v: i for i, v in enumerate(series_list)})
+    summary['_readout_rank'] = summary['readout'].map(
+        {v: i for i, v in enumerate(HCC_CELL_OF)})
+    summary['_metric_rank'] = summary['metric_family'].map(
+        {v: i for i, v in enumerate(metrics)})
+    return (summary.sort_values(['_series_rank', '_dataset_rank',
+                                 '_readout_rank', '_metric_rank'])
+            .drop(columns=['_dataset_rank', '_series_rank',
+                           '_readout_rank', '_metric_rank'])
+            .reset_index(drop=True))
+
+
+def transform_effect_table(frame, datasets=None, series=None):
+    """The post-hoc HCC effect in the shape the thesis table reports it.
+
+    One row per (family, dataset): the FPA and TICE change the transform makes
+    at each readout under independent decoding, plus the node-score FPA change
+    under top-down decoding.  That last column is the value-readout invariance
+    check: it must be zero for every family that ranks signed coordinates, and
+    is expected to be non-zero for Hier-COS, which ranks magnitudes.
+    """
+    effects = transform_effects(frame, metrics=('fpa', 'tice'), datasets=datasets,
+                                series=series, decoder='independent')
+    if effects.empty:
+        return effects
+    check = transform_effects(frame, metrics=('fpa',), datasets=datasets,
+                              series=series, decoder='topdown')
+
+    wide = effects.pivot_table(index=['dataset', 'series'],
+                               columns=['readout', 'metric_family'],
+                               values='delta', aggfunc='first')
+    wide.columns = [f'{"node" if r == "node_score" else "subspace"} '
+                    f'Δ{m.upper()}' for r, m in wide.columns]
+    out = wide.reset_index()
+    if not check.empty:
+        node_check = (check[check['readout'].eq('node_score')]
+                      .set_index(['dataset', 'series'])['delta'])
+        out['top-down node ΔFPA'] = [
+            node_check.get((d, s), np.nan) for d, s in zip(out['dataset'], out['series'])]
+    order_d = {v: i for i, v in enumerate(DATASET_ORDER)}
+    order_s = {v: i for i, v in enumerate(order_series(set(out['series'])))}
+    out = (out.assign(_s=out['series'].map(order_s), _d=out['dataset'].map(order_d))
+           .sort_values(['_s', '_d']).drop(columns=['_s', '_d']))
+    out.insert(0, 'model', [series_label(s, short=True) for s in out['series']])
+    out = out.drop(columns='series')
+    numeric = [c for c in out.columns if c not in ('model', 'dataset')]
+    return out[['model', 'dataset'] + numeric].round(2).reset_index(drop=True)
+
+
+def _symlog_ticks(lo, hi, linthresh):
+    """Readable ticks for a symmetric-log axis: zero, the linear edge, decades."""
+    candidates = [0.0]
+    for sign in (-1.0, 1.0):
+        step = linthresh
+        while step <= max(abs(lo), abs(hi)) * 10:
+            candidates.append(sign * step)
+            step *= 10
+    keep = sorted({t for t in candidates if lo <= t <= hi})
+    # decades alone leave the outermost points with no reference above them, so
+    # the top decade on each side also gets its 3x mark when that still fits
+    for edge in (min(keep, default=0.0), max(keep, default=0.0)):
+        if abs(edge) >= linthresh and lo <= 3 * edge <= hi:
+            keep.append(3 * edge)
+    keep = sorted(set(keep))
+    # a tick sitting almost on the axis end duplicates it visually
+    return [t for t in keep if abs(t) < 1e-9 or lo + 0.02 * (hi - lo) <= t <= hi - 0.02 * (hi - lo)]
+
+
+def transform_effect_figure(effects, datasets=None, series=None, save_path=None,
+                            width_in=None, show_footer=True, caption_note=''):
+    """The post-hoc HCC effect as a joint FPA/TICE move, one panel per readout x dataset.
+
+    The claim this figure exists for is a *joint* one --- post-hoc HCC is not a
+    generic consistency repair, because it usually costs accuracy **and** adds
+    inconsistency --- and a table makes the reader verify that by scanning two
+    columns and remembering that a positive TICE delta is unfavourable.  Plotting
+    the pair puts each (model, dataset, readout) in one of four quadrants, so the
+    joint statement is read off the position.  Deltas are raw, not sign-adjusted,
+    exactly as the thesis table reports them: right is better on FPA, down is
+    better on TICE, and the shaded corners are the two agreeing quadrants.
+
+    The axes are symmetric-log because the effects span two orders of magnitude,
+    from Hier-COS losing $32$~pp of FPA to H-CAST moving by $0.06$~pp; on a
+    linear axis every small effect would collapse onto the origin.
+    """
+    width_in = TEXT_WIDTH_IN if width_in is None else width_in
+    data = effects if effects is not None else pd.DataFrame()
+    if data.empty:
+        print('Nothing to plot for the post-hoc transform comparison.')
+        return
+    datasets = [d for d in DATASET_ORDER if d in set(data['dataset'])] \
+        if datasets is None else [d for d in datasets if d in set(data['dataset'])]
+    series_list = order_series(set(data['series'])) if series is None \
+        else [s for s in series if s in set(data['series'])]
+    readouts = [r for r in HCC_CELL_OF if r in set(data['readout'])]
+    if not (datasets and series_list and readouts):
+        print('Nothing to plot for the post-hoc transform comparison.')
+        return
+
+    wide = data.pivot_table(index=['dataset', 'series', 'readout'],
+                            columns='metric_family', values='delta')
+    spread = data.pivot_table(index=['dataset', 'series', 'readout'],
+                              columns='metric_family', values='delta_std')
+    if not {'fpa', 'tice'}.issubset(wide.columns):
+        print('Need both an FPA and a TICE delta for every cell.')
+        return
+    points = wide.join(spread, rsuffix='_std').reset_index()
+
+    linthresh = 1.0
+    def limits(column):
+        lo = min(0.0, float(points[column].min()))
+        hi = max(0.0, float(points[column].max()))
+        # symlog compresses the outer decades, so the headroom has to be a
+        # generous multiple or the largest effect sits on the frame
+        pad = 0.8
+        return (lo * (1 + pad) - 0.4, hi * (1 + pad) + 0.4)
+    x_min, x_max = limits('fpa')
+    y_min, y_max = limits('tice')
+
+    # ---- layout, in inches -------------------------------------------------
+    left, right, gap = 0.62, 0.10, 0.16
+    top_pad = 0.20            # the model legend and the shading key
+    label_h = 0.24            # the readout name, above each row of panels
+    title_h = 0.24            # the dataset names, above the first row only
+    row_gap = 0.58            # the upper row's tick labels, plus visual separation
+    axis_h = 0.40             # x tick labels + axis name, under the last row
+    bottom = (0.44 if show_footer else 0.06)
+    panel_w = (width_in - left - right - gap * (len(datasets) - 1)) / len(datasets)
+    panel_h = min(1.45, max(1.10, panel_w * 0.82))
+    foot_h = 0.24 if show_footer and not THESIS_STYLE else 0.0
+    stack_h = (len(readouts) * (label_h + panel_h) + title_h
+               + row_gap * (len(readouts) - 1))
+    height = top_pad + stack_h + axis_h + bottom + foot_h
+    fig = plt.figure(figsize=(width_in, height), layout='none')
+
+    lookup = points.set_index(['dataset', 'series', 'readout']).to_dict('index')
+    cursor = top_pad
+    for block, readout in enumerate(readouts):
+        fig.text(left / width_in, 1 - (cursor + 0.02) / height,
+                 f'HCC transform at {READOUT_LABELS[readout]}', ha='left', va='top',
+                 fontsize=FS_TITLE, fontweight='bold', color=INK)
+        cursor += label_h + (title_h if block == 0 else 0.0)
+        last = block == len(readouts) - 1
+        for panel, dataset in enumerate(datasets):
+            ax = fig.add_axes([(left + panel * (panel_w + gap)) / width_in,
+                               1 - (cursor + panel_h) / height,
+                               panel_w / width_in, panel_h / height])
+            # each row keeps its own tick labels, so a plot reads on its own
+            ax.set_xscale('symlog', linthresh=linthresh, linscale=0.8)
+            ax.set_yscale('symlog', linthresh=linthresh, linscale=0.8)
+            ax.set_xlim(x_min, x_max); ax.set_ylim(y_min, y_max)
+            # the two quadrants in which both metrics agree: worse up-left,
+            # better down-right, which is what makes the joint claim readable
+            ax.add_patch(Rectangle((x_min, 0), -x_min, y_max, facecolor=NEG_HUE,
+                                   alpha=0.07, linewidth=0, zorder=0))
+            ax.add_patch(Rectangle((0, y_min), x_max, -y_min, facecolor=POS_HUE,
+                                   alpha=0.07, linewidth=0, zorder=0))
+            ax.axhline(0, color=INK_3, linewidth=0.8, zorder=2)
+            ax.axvline(0, color=INK_3, linewidth=0.8, zorder=2)
+            for sr in series_list:
+                row = lookup.get((dataset, sr, readout))
+                if row is None or not (np.isfinite(row['fpa']) and np.isfinite(row['tice'])):
+                    continue
+                colour = series_color(sr)
+                xerr = float(row.get('fpa_std', 0.0) or 0.0)
+                yerr = float(row.get('tice_std', 0.0) or 0.0)
+                if np.isfinite(xerr) and np.isfinite(yerr) and (xerr or yerr):
+                    ax.errorbar(row['fpa'], row['tice'], xerr=xerr, yerr=yerr, fmt='none',
+                                ecolor=INK_3, elinewidth=0.6, alpha=0.7, zorder=3)
+                ax.scatter(row['fpa'], row['tice'], s=22, color=colour, alpha=0.95,
+                           edgecolor='white', linewidth=0.6, zorder=4)
+            # The quadrants are deliberately not labelled inside the panels: the
+            # corners they would be written in are exactly where the extreme
+            # points sit, so any label there covers data. The axis names carry
+            # the direction instead, and the key below names the shading.
+            ax.xaxis.set_major_locator(mpl.ticker.FixedLocator(
+                _symlog_ticks(x_min, x_max, linthresh)))
+            ax.yaxis.set_major_locator(mpl.ticker.FixedLocator(
+                _symlog_ticks(y_min, y_max, linthresh)))
+            for axis in (ax.xaxis, ax.yaxis):
+                axis.set_minor_locator(mpl.ticker.NullLocator())
+                axis.set_major_formatter(mpl.ticker.FuncFormatter(
+                    lambda value, _pos: f'{value:g}'))
+            ax.grid(color=GRID_LINE, linewidth=0.6)
+            ax.set_axisbelow(True)
+            if block == 0:
+                ax.set_title(DATASET_LABELS[dataset], fontsize=FS_GROUP + 0.4,
+                             fontweight='bold', color=INK, pad=4)
+            if panel:
+                ax.tick_params(axis='y', labelleft=False)
+            else:
+                ax.set_ylabel('$\\Delta$TICE (pp), down is better',
+                              fontsize=FS_NOTE, color=INK_2, labelpad=2)
+            ax.tick_params(labelsize=FS_TICK, colors=INK_2, length=2.5, pad=1.5)
+            for spine in ('top', 'right'):
+                ax.spines[spine].set_visible(False)
+            for spine in ('bottom', 'left'):
+                ax.spines[spine].set_color(AXIS_LINE)
+            if last and panel == len(datasets) // 2:
+                ax.set_xlabel('$\\Delta$FPA (pp), right is better',
+                              fontsize=FS_NOTE, color=INK_2, labelpad=2)
+        cursor += panel_h + row_gap
+
+    handles = [Line2D([], [], marker='o', linestyle='none', markersize=4,
+                      markerfacecolor=series_color(s), markeredgecolor='white',
+                      markeredgewidth=0.5) for s in series_list]
+    fig.legend(handles, [series_label(s, short=True) for s in series_list],
+               loc='upper right', bbox_to_anchor=(1 - right / width_in,
+                                                  1 - 0.02 / height),
+               ncol=len(series_list), frameon=False, fontsize=FS_NOTE,
+               handlelength=1.0, columnspacing=0.9, handletextpad=0.3,
+               labelcolor=INK_2)
+    shade = [Rectangle((0, 0), 1, 1, facecolor=NEG_HUE, alpha=0.16, linewidth=0),
+             Rectangle((0, 0), 1, 1, facecolor=POS_HUE, alpha=0.16, linewidth=0)]
+    fig.legend(shade, ['worse on both metrics', 'better on both'],
+               loc='upper right', bbox_to_anchor=(1 - right / width_in,
+                                                  1 - 0.17 / height),
+               ncol=2, frameon=False, fontsize=FS_NOTE, handlelength=1.1,
+               handleheight=0.9, columnspacing=0.9, handletextpad=0.3,
+               labelcolor=INK_3)
+
+    if show_footer:
+        agree = ((points['fpa'] < 0) & (points['tice'] > 0)).sum()
+        better = ((points['fpa'] > 0) & (points['tice'] < 0)).sum()
+        x_mid = (left + (width_in - left - right) / 2) / width_in
+        fig.text(x_mid, 0.16 / height,
+                 f'{agree} of {len(points)} cells lose FPA and add TICE at once; '
+                 f'{better} improve both · deltas are raw, not sign-adjusted · '
+                 f'axes are symmetric-log with a linear region of ±{linthresh:g} pp',
+                 ha='center', va='bottom', fontsize=FS_NOTE, color=INK_3)
+    _caption('What the HCC transform does on its own, on both metrics at once',
+             _scope_note(datasets, series_list, decoders=['independent'],
+                         extra='HCC minus no transform, paired per seed'))
+    if not THESIS_STYLE:
+        fig.suptitle('What the HCC transform does on its own',
+                     fontsize=11, fontweight='bold', color=INK, y=1 - 0.01 / height)
+    save_figure(fig, save_path)
+    plt.show(); plt.close(fig)
+    if save_path:
+        latex_block(save_path,
+                    'Effect of applying HCC post hoc to each frozen checkpoint under '
+                    'independent decoding, on both metrics at once. Each point is one '
+                    '(family, dataset) cell: its horizontal position is the FPA change and '
+                    'its vertical position the TICE change that the transform makes on the '
+                    'same checkpoint and readout, in percentage points, formed per seed and '
+                    f'then averaged over {seeds_phrase(data)}; the bars are the sample '
+                    'standard deviation of those paired effects. Deltas are raw and not '
+                    'sign-adjusted, as in the accompanying table, so right is better on FPA '
+                    'and down is better on TICE, and the two shaded corners are the '
+                    'quadrants in which the two metrics agree. Both axes are symmetric-log '
+                    'with a linear region of $\\pm1$~pp, because the effects span two orders '
+                    'of magnitude; read the table for exact values and for the top-down '
+                    'invariance check, which is not plottable because it is identically '
+                    'zero for every value-readout family.' + caption_note,
+                    'posthoc-hcc-effect')

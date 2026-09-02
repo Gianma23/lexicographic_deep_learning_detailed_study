@@ -84,11 +84,24 @@ post-update diagnostics use `post_`:
 - `post_grad_norm_pA_<level>`;
 - `post_cos_pA_<target>_<reference>`.
 
-On a three-gradient block the final target is projected against the resultant
-of the already processed higher-priority gradients, denoted by `higher`; for
-example `post_cos_p123_fine_higher` in coarse-first mode. On `p23`,
+On a three-gradient block the final target is projected against each
+already-processed higher-priority gradient in turn (Gram-Schmidt), so
+coarse-first mode on `p123` emits `post_projection_applied_p123_fine_coarse`
+and `post_projection_applied_p123_fine_mid`. Because those higher-priority
+gradients are themselves mutually orthogonal on the block, the target ends up
+orthogonal to their span, and `<total, g_h>` equals `||g_h||^2` for every
+higher-priority level `h`. An aggregate `higher` record against their resultant
+is still emitted (`post_projection_applied_p123_fine_higher`,
+`post_cos_p123_fine_higher`) for readers of older logs. On `p23`,
 coarse-first mode produces `post_projection_applied_p23_fine_mid` and
 `post_cos_p23_fine_mid`.
+
+Runs before 2026-09-02 projected the final target against the resultant only.
+That enforces orthogonality to the sum but not to each summand, so
+`post_cos_p123_fine_coarse` is nonzero in those logs and the step can ascend the
+priority objective. Read `1 + post_cos_t1_fine_proj_coarse *
+post_grad_norm_p123_fine / grad_norm_p123_coarse` on such a run to recover the
+coarse-descent rate it actually achieved.
 
 ## A) Deprecated compatibility metrics (non-lex and lex)
 
@@ -186,9 +199,12 @@ Semantics:
   is applied.
 - `post_cos_t1_fine_proj_higher` is expected to move near 0 where projection is
   applied.
-- `post_cos_t1_fine_proj_coarse` and `post_cos_t1_fine_proj_mid_proj` are component-wise
-  diagnostics only. They are not expected to be near 0 under the current
-  single-vector fine projection.
+- `post_cos_t1_fine_proj_coarse` and `post_cos_t1_fine_proj_mid_proj` are the
+  component-wise diagnostics. Under the Gram-Schmidt projection they are also
+  expected near 0; a nonzero value means the lexicographic guarantee is not
+  holding on that block. In runs before 2026-09-02 the fine gradient was
+  projected against the resultant alone, so these two are nonzero and equal and
+  opposite in magnitude-weighted terms.
 
 ## C) AMP Semantics
 

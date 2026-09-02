@@ -239,7 +239,9 @@ Table~\ref{tab:datasets_info} reports the datasets as they are distributed. The 
 
 \begin{table}[ht]
 \centering
-\caption{Partition actually used by the unified protocol, derived from the published splits of Table~\ref{tab:datasets_info}. ``Images per leaf class'' is the observed range across the classes of that split. The validation splits of CIFAR-100 and CUB-200-2011 are deterministic, leaf-stratified subsets of the published training pools; FGVC-Aircraft uses its official partition unchanged.}
+\caption{Train, validation and test partitions used by the unified protocol.
+CIFAR-100 and CUB use deterministic leaf-stratified validation subsets;
+FGVC-Aircraft retains its official split.}
 \label{tab:protocol_splits}
 \fontsize{8}{11}\selectfont
 \begin{tabular}{lccc}
@@ -268,7 +270,9 @@ Figure~\ref{fig:taxonomy_icicle} shows the three taxonomies drawn to scale: the 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/datasets/taxonomy_icicle.pdf}
-\caption{Structure of the three taxonomies. Each band is one hierarchy level and each rectangle one class, with width proportional to the number of leaf classes in its subtree; subtrees are ordered by size, so the horizontal axis is a ranking and not a class identifier. A rectangle whose width is unchanged from one band to the next is a single-child chain. Widths are shares of leaf classes, not of images.}
+\caption{Structure of the three taxonomies. Bands are hierarchy levels and
+rectangle widths are the shares of leaf classes in each subtree; the horizontal
+order ranks subtrees by size.}
 \label{fig:taxonomy_icicle}
 \end{figure}
 
@@ -304,7 +308,9 @@ Branching statistics can be summarized in a single quantity per transition: the 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/datasets/hierarchy_conditional_entropy.pdf}
-\caption{Uncertainty about the child class of each transition, in bits. The full bar is the uncertainty without the hierarchy, $H(\text{child})$; the colored part is what remains once the parent is known, $H(\text{child}\mid\text{parent})$; the grey part above it, annotated with its percentage, is what the hierarchy removes. Values are structural, that is, computed from the taxonomy with a uniform distribution over classes.}
+\caption{Structural child-class uncertainty at each transition. Coloured bars
+show $H(\text{child}\mid\text{parent})$; grey segments show the reduction from
+$H(\text{child})$, under a uniform distribution over classes.}
 \label{fig:conditional_entropy}
 \end{figure}
 
@@ -319,7 +325,9 @@ Figure~\ref{fig:image_geometry} shows the native resolution of the training imag
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/datasets/native_image_geometry.pdf}
-\caption{Native resolution of the sampled training images, on logarithmic axes. Each point is one image; the dashed diagonal marks square images, so points below it are landscape. The small open square marks the $224\times224$ input used by most model presets. All CIFAR-100 images coincide in the single marker at $32\times32$; the right-angled edge of the CUB cloud is the 500-pixel cap observed on the long side of every sampled CUB image, not a property of the photographs.}
+\caption{Native resolution of the sampled training images on logarithmic axes.
+The diagonal marks square images; the open marker indicates the
+$224\times224$ input used by most presets.}
 \label{fig:image_geometry}
 \end{figure}
 

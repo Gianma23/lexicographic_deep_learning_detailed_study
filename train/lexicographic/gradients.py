@@ -618,20 +618,51 @@ def _build_lexicographic_grads(
         for target_index in range(1, len(ordered_active)):
             target_name = ordered_active[target_index]
             higher_names = ordered_active[:target_index]
-            reference_grads = _sum_grad_sequences(
-                [projected_by_level[name] for name in higher_names]
-            )
-            projected_target, _coefficient, applied = _project_onto_reference(
-                target_grads=projected_by_level[target_name],
-                reference_grads=reference_grads,
-                include_mask=mask,
-                eps=eps,
-            )
-            projected_by_level[target_name] = projected_target
-            reference_name = higher_names[0] if len(higher_names) == 1 else "higher"
-            projection_records.append(
-                (block, target_name, reference_name, mask, reference_grads, applied)
-            )
+            # Gram-Schmidt: remove the target's component along each
+            # higher-priority gradient in turn. Earlier iterations already made
+            # those gradients mutually orthogonal on this mask, so the target
+            # lands in the orthogonal complement of their span and
+            # `<total, g_h> == ||g_h||^2` holds for every higher-priority level
+            # `h`, which is the lexicographic guarantee.
+            #
+            # Projecting off their resultant instead only enforces orthogonality
+            # to the sum. That leaves `<target_proj, g_coarse>` equal to
+            # `-<target_proj, g_mid_proj>`, free to be negative, so the step can
+            # ascend the priority objective -- observed on HRN CIFAR-100, where
+            # `|g_fine| / |g_coarse| ~ 5` made the leak large enough to invert
+            # coarse-first training for its first ~45 epochs.
+            step_applied: List[torch.Tensor] = []
+            for reference_name in higher_names:
+                reference_grads = projected_by_level[reference_name]
+                projected_target, _coefficient, applied = _project_onto_reference(
+                    target_grads=projected_by_level[target_name],
+                    reference_grads=reference_grads,
+                    include_mask=mask,
+                    eps=eps,
+                )
+                projected_by_level[target_name] = projected_target
+                step_applied.append(applied)
+                projection_records.append(
+                    (block, target_name, reference_name, mask, reference_grads, applied)
+                )
+            if include_metrics and len(higher_names) > 1:
+                # Aggregate `higher` record kept so readers of the pre-Gram-Schmidt
+                # logs keep a flag and a resultant cosine for the last target.
+                combined_applied = step_applied[0]
+                for applied in step_applied[1:]:
+                    combined_applied = combined_applied & applied
+                projection_records.append(
+                    (
+                        block,
+                        target_name,
+                        "higher",
+                        mask,
+                        _sum_grad_sequences(
+                            [projected_by_level[name] for name in higher_names]
+                        ),
+                        combined_applied,
+                    )
+                )
 
     coarse_projected = projected_by_level["coarse"]
     mid_projected = projected_by_level["mid"]

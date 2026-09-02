@@ -34,7 +34,14 @@ dedicated per-mechanism notebook.
 `all_mechanics.ipynb` compares training runs against each other, which is a weaker comparison: the
 two rows share only the seed, the dataset and the test split, so a difference mixes the training
 mechanism with the readout, and each mechanism's checkpoint was selected using its own native
-validation inference. The notebook states this next to every table that crosses mechanisms.
+validation inference. The notebook states this next to every table that crosses mechanisms. Its
+soft-readout-against-top-down section is the exception: both sides of every bar there come from the
+same training run, so that comparison is within-checkpoint like the per-mechanism notebooks.
+
+Every notebook asks, in a section of its own, whether the soft `subspace_norm` readout under
+independent decoding already does what hard top-down decoding does. Both readouts come from one
+training run, so the comparison isolates the readout against the decoder; only checkpoint selection
+differs, since each side is read from its own validation-selected checkpoint.
 
 ## Running them
 

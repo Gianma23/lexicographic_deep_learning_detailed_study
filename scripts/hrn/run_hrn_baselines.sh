@@ -21,7 +21,7 @@ OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environmen
 
 install_job_traps
 
-parse_choice_list DATASETS "cub200 aircraft" DATASETS \
+parse_choice_list DATASETS "cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {

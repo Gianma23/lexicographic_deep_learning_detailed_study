@@ -917,7 +917,6 @@ _GRADIENT_Y_LABELS = {
     "gradient_norms": "Norm",
     "gradient_alignment": "Cosine",
     "parameter_movement": "Norm",
-    "projection_alignment": "Cosine",
     "projection_applied": "",
 }
 
@@ -2806,7 +2805,6 @@ class HCastAnalysis:
         norms: List[Tuple[str, Tuple[str, ...], str]] = []
         alignment: List[Tuple[str, Tuple[str, ...], str]] = []
         parameters: List[Tuple[str, Tuple[str, ...], str]] = []
-        projection_alignment: List[Tuple[str, Tuple[str, ...], str]] = []
         projection_applied: List[Tuple[str, Tuple[str, ...], str]] = []
         notes: List[str] = []
         steps_per_run: Dict[str, List[str]] = {}
@@ -2821,21 +2819,26 @@ class HCastAnalysis:
                     )
                 )
 
-            for target, reference in CANONICAL_COSINE_PAIRS:
-                if target not in levels or reference not in levels:
+            cosine_pairs = list(CANONICAL_COSINE_PAIRS)
+            if "fine" in levels and len(levels) >= 3:
+                cosine_pairs.append(("fine", HIGHER_REFERENCE))
+
+            for target, reference in cosine_pairs:
+                if target not in levels:
                     continue
-                keys = block_metric_keys(cosine_key(block, target, reference))
-                if is_present(keys):
-                    alignment.append(
-                        (gradient_panel_title("cos", block, target, reference), keys, "cosine")
-                    )
-            higher_keys = block_metric_keys(cosine_key(block, "fine", HIGHER_REFERENCE))
-            if "fine" in levels and len(levels) >= 3 and is_present(higher_keys):
+                if reference != HIGHER_REFERENCE and reference not in levels:
+                    continue
+                pre_keys = block_metric_keys(cosine_key(block, target, reference))
+                post_keys = post_cosine_keys(block, target, reference)
+                has_pre = is_present(pre_keys)
+                has_post = is_present(post_keys)
+                if not has_pre and not has_post:
+                    continue
                 alignment.append(
                     (
-                        gradient_panel_title("cos", block, "fine", HIGHER_REFERENCE),
-                        higher_keys,
-                        "cosine",
+                        gradient_panel_title("cos", block, target, reference),
+                        post_keys if has_post else pre_keys,
+                        "cosine_combined" if has_post else "cosine",
                     )
                 )
 
@@ -2855,26 +2858,6 @@ class HCastAnalysis:
                     "norm",
                 )
             )
-
-            # Lex arms only: the projected cosine against its pre-projection
-            # value, plus whether the projection step ran at all.
-            for target, reference in (*CANONICAL_COSINE_PAIRS, ("fine", HIGHER_REFERENCE)):
-                if target not in levels:
-                    continue
-                if reference != HIGHER_REFERENCE and reference not in levels:
-                    continue
-                post_keys = post_cosine_keys(block, target, reference)
-                if not is_present(post_keys):
-                    continue
-                # No ", after projection" suffix here: the panel carries both
-                # curves and the legend is what separates before from after.
-                projection_alignment.append(
-                    (
-                        gradient_panel_title("cos", block, target, reference),
-                        post_keys,
-                        "cosine_prepost",
-                    )
-                )
 
             # Only a flag that changes over epochs gets a panel. Which steps a
             # priority order performs is constant within a run, so it is
@@ -2917,7 +2900,6 @@ class HCastAnalysis:
                 "gradient_norms": norms,
                 "gradient_alignment": alignment,
                 "parameter_movement": parameters,
-                "projection_alignment": projection_alignment,
                 "projection_applied": projection_applied,
             },
             notes,
@@ -2932,13 +2914,13 @@ class HCastAnalysis:
         log_scale_for_norms: bool = False,
         groups: Optional[Sequence[str]] = None,
     ) -> None:
-        """Up to five figures per dataset, all indexed by exact gradient-support block.
+        """Up to four figures per dataset, all indexed by exact gradient-support block.
 
         - ``gradient_norms``: how hard each level pushes on each shared block.
-        - ``gradient_alignment``: pairwise cosines, so conflict is signed.
+        - ``gradient_alignment``: pairwise cosines, so conflict is signed. Runs
+          with projection diagnostics show the post-projection curve solid and
+          its pre-projection counterpart dashed in the same panel.
         - ``parameter_movement``: block scale and per-epoch movement.
-        - ``projection_alignment``: lex arms only, each projected cosine against
-          its own pre-projection value.
         - ``projection_applied``: lex arms only, and only for the projection
           steps that were ever skipped for numerical safety.
         """
@@ -2946,10 +2928,13 @@ class HCastAnalysis:
             "gradient_norms": "level gradient norms on the shared blocks",
             "gradient_alignment": "pairwise gradient alignment",
             "parameter_movement": "parameter scale and per-epoch movement",
-            "projection_alignment": "gradient alignment before and after projection",
             "projection_applied": "projection steps skipped for numerical safety",
         }
-        wanted = tuple(groups) if groups else tuple(group_titles)
+        # Keep the old public group name as an alias, but never emit a separate
+        # pre/post figure: those curves now belong to gradient_alignment.
+        group_aliases = {"projection_alignment": "gradient_alignment"}
+        requested = tuple(groups) if groups else tuple(group_titles)
+        wanted = tuple(dict.fromkeys(group_aliases.get(group, group) for group in requested))
 
         for dataset_key in self.dataset_keys:
             dataset_runs = self.run_data_by_dataset.get(dataset_key, [])
@@ -2967,11 +2952,6 @@ class HCastAnalysis:
             for group in wanted:
                 panels = panels_by_group[group]
                 if not panels:
-                    if group == "projection_alignment":
-                        print(
-                            f"[{name}] no post-projection diagnostics: none of the selected runs "
-                            "were trained with train.lexicographic.enabled."
-                        )
                     continue
 
                 # Parameter panels pair (norm, movement) per block, so they
@@ -2979,11 +2959,13 @@ class HCastAnalysis:
                 ncols = 2 if group == "parameter_movement" else (
                     _panel_columns(len(panels)) if n_cols is None else max(1, int(n_cols))
                 )
-                is_prepost = group == "projection_alignment"
+                has_combined_cosines = any(kind == "cosine_combined" for _, _, kind in panels)
                 legend_labels = [
                     f"{run_data['label']}{suffix}"
                     for run_data in dataset_runs
-                    for suffix in ((" (after)", " (before)") if is_prepost else ("",))
+                    for suffix in (
+                        ("", " (after)", " (before)") if has_combined_cosines else ("",)
+                    )
                 ]
 
                 pages = list(_grid_pages(len(panels), ncols, legend_labels))
@@ -3041,14 +3023,17 @@ class HCastAnalysis:
         is_parameter_group: bool,
         ncols: int = 2,
     ) -> None:
-        is_prepost = kind == "cosine_prepost"
+        is_combined_cosine = kind == "cosine_combined"
         pre_keys: Tuple[str, ...] = ()
-        if is_prepost:
+        if is_combined_cosine:
             pre_keys = _pre_keys_for_post(metric_keys)
 
         drew_any = False
         for run_data in dataset_runs:
             epochs, values = get_train_metric_series_any(run_data["epoch_events"], metric_keys)
+            has_post = is_combined_cosine and np.any(np.isfinite(values))
+            if is_combined_cosine and not has_post:
+                epochs, values = get_train_metric_series_any(run_data["epoch_events"], pre_keys)
             if not np.any(np.isfinite(values)):
                 continue
             drew_any = True
@@ -3059,13 +3044,13 @@ class HCastAnalysis:
                 else {"linestyle": "-", "linewidth": CURVE_LINEWIDTH}
             )
             smoothed = moving_average_ignore_nan(values, smooth_window)
-            label = f"{run_data['label']} (after)" if is_prepost else run_data["label"]
+            label = f"{run_data['label']} (after)" if has_post else run_data["label"]
             ax.plot(epochs, smoothed, label=label, color=run_data["color"], **style)
 
             if show_raw_overlay and int(smooth_window) > 1:
                 ax.plot(epochs, values, color=run_data["color"], linewidth=RAW_OVERLAY_LINEWIDTH, alpha=raw_alpha)
 
-            if is_prepost and pre_keys:
+            if has_post and pre_keys:
                 pre_epochs, pre_values = get_train_metric_series_any(
                     run_data["epoch_events"], pre_keys
                 )
@@ -3082,7 +3067,7 @@ class HCastAnalysis:
         # The y label goes on the leftmost column only, once the page is built;
         # every panel of a group measures the same quantity.
         ax.set_title(_wrap_title(title, ncols))
-        if kind in {"cosine", "cosine_prepost"}:
+        if kind in {"cosine", "cosine_combined"}:
             ax.axhline(0.0, color="0.35", linestyle="--", linewidth=0.7, zorder=1)
             ax.set_ylim(-1.05, 1.05)
         elif kind == "flag":

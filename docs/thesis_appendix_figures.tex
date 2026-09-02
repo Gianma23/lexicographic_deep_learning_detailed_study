@@ -42,7 +42,8 @@ Figure~\ref{fig:app_split_composition} shows the same partition reported numeric
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/datasets/dataset_scale_and_taxonomy_width.pdf}
-\caption{Partition used by the unified protocol. Panel (a) gives absolute sizes: each bar is one dataset and its segments are the mutually exclusive train, validation, and test splits, so the bar height is the total number of images. Panel (b) repeats the same three splits as percentages of each dataset, which keeps the composition of the two smaller benchmarks readable next to CIFAR-100.}
+\caption{Unified-protocol split sizes. Panel (a) shows image counts and panel
+(b) the corresponding train, validation and test percentages.}
 \label{fig:app_split_composition}
 \end{figure}
 
@@ -53,7 +54,9 @@ Table~\ref{tab:branching} reports the median, maximum, and number of single-chil
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/datasets/hierarchy_branching_beeswarms.pdf}
-\caption{Number of immediate children per parent class, for both transitions of each taxonomy. Every circle is one parent class and its vertical position is the exact integer number of children; parents sharing a value are spread symmetrically around the transition centre, so horizontal width encodes how many parents share that fan-out. The black segment is the median and the white diamond the mean. The annotation reports the number of parents with a single child, for which the level pair carries no decision.}
+\caption{Distribution of children per parent at both taxonomy transitions.
+Circles are parent classes; the black segment is the median, the white diamond
+the mean, and annotations count single-child parents.}
 \label{fig:app_branching}
 \end{figure}
 
@@ -64,7 +67,9 @@ Figure~\ref{fig:app_descendants} quantifies per class what the top band of the i
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/datasets/leaf_descendants_per_root.pdf}
-\caption{Number of leaf classes reachable beneath each top-level class, following both transitions. Bars are sorted by size, so the horizontal position is a rank and not a class identifier, and positions must not be matched across datasets. The annotation names the largest top-level class and its share of the leaf classes.}
+\caption{Leaf classes beneath each top-level class. Bars are ranked by subtree
+size within each dataset; annotations identify the largest subtree and its
+share.}
 \label{fig:app_descendants}
 \end{figure}
 
@@ -75,6 +80,7 @@ Figure~\ref{fig:app_gallery} is qualitative and is included only to make the dif
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{images/datasets/representative_dataset_images.png}
-\caption{One training image from each of six leaf classes per dataset, drawn with a fixed seed. Each row is one dataset and each column an independently selected class, so column positions do not correspond to related concepts across rows. Titles give the leaf-class name. Images are shown at their native aspect ratio, not at the resolution seen by the models.}
+\caption{Fixed-seed sample of six leaf classes per dataset. Images retain their
+native aspect ratio; columns do not represent related classes across rows.}
 \label{fig:app_gallery}
 \end{figure}
