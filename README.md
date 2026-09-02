@@ -1,64 +1,55 @@
 # Lexicographic Deep Learning for Hierarchical Image Classification
 
-This repository is a unified PyTorch framework for a master-thesis study of
-hierarchical image classification. It compares H-CAST, LH-DNN, HT-CapsNet,
-HRN, and Hier-COS under one training and evaluation lifecycle, and adds
-controlled HCC, gradient-space lexicographic, and orthonormal-frame studies.
+A unified PyTorch framework for a master-thesis study of hierarchical image
+classification. It runs five published families — H-CAST, LH-DNN, HT-CapsNet,
+HRN and Hier-COS — through one training, evaluation and checkpoint-selection
+lifecycle, then adds four controlled interventions on top of that common
+substrate:
 
-The main entrypoint is:
+| Intervention | Where it acts | Config switch |
+|---|---|---|
+| HCC (Hierarchical Constraint Cascade) | output space, affine hierarchy projection | `hcc.enabled` |
+| Direct subspace supervision | the objective | `train.subspace_supervision.enabled` |
+| Lexicographic optimisation | parameter gradients | `train.lexicographic.enabled` |
+| LH-projection | the forward graph, backward-only effect | `model.projection.enabled` |
 
-```bash
-python -m train.train --config <config.yaml> [key=value ...]
+The four are distinct mechanisms and are not interchangeable. The thesis text
+lives in this repository as `docs/04-methodology.tex` (methods) and
+`docs/05-experiments.tex` (protocol, fidelity and results).
+
+All shipped presets are tagged `runtime.protocol: corrected_unified_v1`. The
+protocol fixes one canonical taxonomy per dataset, evaluates every validation
+and test sample, and selects checkpoints on validation data only — deliberately
+departing from reference codebases that drop evaluation batches or select on
+test data. Historical results are never silently relabelled with this tag.
+
+## Repository structure
+
+```text
+configs/        runnable presets (one per model x dataset) and commented templates
+datasets/       adapters, taxonomy construction, splits, transforms
+models/         hcast/ lhdnn/ ht_capsnet/ hrn/ hiercos/ and shared components
+train/          training CLI, engine, config validation, metrics, diagnostics
+evaluation/     checkpoint-only inference grid (no training, no optimiser)
+scripts/        experiment launchers, one per model family and mechanism
+notebooks/      analysis notebooks that turn run outputs into tables and figures
+tests/          unittest suite
+docs/           thesis chapters (.tex) and implementation reference (.md)
+gridsearch/     Optuna studies (exploratory, not part of the reported results)
 ```
 
-## Corrected unified protocol
+Model families are selected by `model.name`: `hcast`, `lhdnn`, `ht_capsnet`,
+`hrn`, `hiercos`. Every family supports CIFAR-100, CUB-200-2011 and
+FGVC-Aircraft, but "supported" means a runnable preset exists — not that the
+original paper reported that pair. The unsupported family–dataset extrapolations
+are listed in `docs/05-experiments.tex`, section *Baseline comparability*.
 
-All shipped runnable presets are tagged:
+## Setup
 
-```yaml
-runtime:
-  protocol: corrected_unified_v1
-```
-
-The protocol fixes the comparison rules that are shared across model families:
-
-- one canonical label mapping and taxonomy is built from training/authoritative
-  metadata and reused for validation and test;
-- CIFAR-100 uses the 8 → 20 → 100 B-CNN hierarchy;
-- CUB uses 13 orders → 38 families → 200 species;
-- FGVC-Aircraft uses the official 30 manufacturers → 70 families → 100
-  variants annotations;
-- validation and test never drop incomplete batches;
-- checkpoints are selected on validation data, separately for top-down and
-  independent decoding;
-- selection is exactly lexicographic: higher FPA, then lower TICE, then higher
-  weighted AP;
-- final top-down and independent test rows come from their corresponding best
-  checkpoints.
-
-These choices intentionally differ from original repositories that drop
-evaluation batches, choose checkpoints on test data, or use a different
-hierarchy depth. Existing historical results are not silently relabeled as
-`corrected_unified_v1`.
-
-## Supported matrix
-
-| Model id | CIFAR-100 | CUB-200 | Aircraft | Main qualification |
-|---|---:|---:|---:|---|
-| `hcast` | yes | yes | yes | upstream core plus local HCC/lex extensions |
-| `lhdnn` | yes | yes | yes | paper-derived; CUB/Aircraft are extrapolations |
-| `ht_capsnet` | yes | yes | yes | TensorFlow-to-PyTorch port; Aircraft extrapolation |
-| `hrn` | yes | yes | yes | exactly three levels; CIFAR extrapolation |
-| `hiercos` | yes | yes | yes | fixed-frame core; local three-level protocol |
-
-“Supported” means that a runnable preset exists. It does not mean that the
-dataset/model pair was reported by the original paper.
-
-## Installation
-
-Use Python 3.10 or newer and PyTorch 2.0 or newer (HT-CapsNet uses native
-scaled-dot-product attention). Install a PyTorch/torchvision build appropriate for
-the machine first, then install the repository dependencies:
+Python 3.10+ and PyTorch 2.0+ (HT-CapsNet uses native scaled-dot-product
+attention). Install a PyTorch build matching the machine's CUDA first; PyTorch
+is intentionally unpinned in `requirements.txt` because those builds are
+machine-specific.
 
 ```bash
 python -m venv .venv
@@ -68,620 +59,385 @@ python -m pip install torch torchvision
 python -m pip install -r requirements.txt
 ```
 
-PyTorch is intentionally not pinned in `requirements.txt` because CUDA builds
-are machine-specific.
-
-Copy the environment template and edit the paths:
+Then point the framework at the datasets and the output root:
 
 ```bash
 cp .env.example .env
 ```
 
-The relevant variables are:
-
 ```text
+# Local machine paths
 CIFAR100_ROOT=/path/to/cifar100
 CUB200_ROOT=/path/to/CUB_200_2011
 AIRCRAFT_ROOT=/path/to/fgvc-aircraft-2013b
 OUTPUTS_ROOT=/path/to/outputs
+
+# Shared launcher defaults; individual commands can still override these
+PYTHON_BIN=.venv/bin/python
 TRAIN_DEVICE=cuda
+MAX_PARALLEL=1
+MAX_RESUME_RETRIES=1
+NUM_RUNS=1
+BASE_SEED=0
+SPLIT_SEED=0
 ```
 
-Existing process environment variables take precedence over `.env`.
+Existing process environment variables take precedence over `.env`, so the
+reproduction commands below override these defaults rather than requiring the
+file to be edited.
+
+Datasets are read from their native metadata: CIFAR-100 from the Python archive
+plus the published B-CNN 8→20 edge, CUB from `images.txt` /
+`image_class_labels.txt` / `train_test_split.txt`, and Aircraft only from a
+complete official download. Only `OUTPUTS_ROOT` is written to.
 
 ## Quick start
-
-Run H-CAST on CIFAR-100:
 
 ```bash
 python -m train.train --config configs/hcast/hcast_cifar100.yaml
 ```
 
-Run HRN on CUB:
+Any config key can be overridden on the command line as a dotlist, which is how
+every mechanism is switched on:
 
 ```bash
-python -m train.train --config configs/hrn/hrn_cub200.yaml
+python -m train.train --config configs/hcast/hcast_cifar100.yaml \
+  train.epochs=1 dataloader.batch_size=4 \
+  train.output_dir=$OUTPUTS_ROOT/smoke/hcast_cifar100
 ```
 
-Run one stopped training stage without changing the scheduler horizon:
+Configuration is fail-fast: unknown keys, mismatched level counts and
+model/mechanism incompatibilities are rejected before training starts. Resume is
+strict — only `train.resume`, `train.output_dir` and `train.stop_epoch` may
+differ from the checkpoint's own resolved config:
 
 ```bash
-python -m train.train \
-  --config configs/hcast/hcast_cifar100.yaml \
-  train.stop_epoch=1 \
-  train.output_dir=/scratch/$USER/outputs/smoke/hcast_cifar100
+python -m train.train --config configs/hcast/hcast_cifar100.yaml \
+  train.resume=$OUTPUTS_ROOT/hcast_cifar100/seed_0/latest.pt
 ```
 
-Resume only from a configuration-compatible checkpoint:
+See [docs/PRESETS.md](docs/PRESETS.md) for what each preset sets and why.
 
-```bash
-python -m train.train \
-  --config configs/hcast/hcast_cifar100.yaml \
-  train.resume=/path/to/latest.pt
-```
+## Reproducing the thesis results
 
-Strict resume validation permits only `train.resume`, `train.output_dir`, and
-`train.stop_epoch` to differ. Use the checkpoint’s saved
-`config_resolved.yaml` when resuming a historical protocol.
+Results come from the launchers under `scripts/`, at three seeds and a fixed
+dataset split. Launcher defaults are deliberately narrow so that invoking a
+script cannot accidentally start the full grid, **so the reproduction commands
+below always pass the matrix explicitly.** Prefix any command with `DRY_RUN=1` to
+print the exact `python -m train.train` invocations without running them.
 
-## Configuration rules
-
-Runnable configs use these required top-level sections:
+Shared run-control variables, at the values the reported campaign used:
 
 ```text
-model, dataset, dataloader, train, optim, scheduler, runtime
+DATASETS="cifar100 cub200 aircraft"   whitespace-separated, validated
+NUM_RUNS=3                            seeds per arm
+BASE_SEED=0                           first training seed (0,1,2)
+SPLIT_SEED=0                          fixed dataset split seed, never varied
+MAX_PARALLEL=1                        concurrent training processes
+MAX_RESUME_RETRIES=3                  resume-from-latest.pt attempts on failure
+DRY_RUN=1                             print commands only
+RUN_PREFLIGHT=strict                  skip completed seeds, resume interrupted ones
 ```
 
-The optional top-level section is `hcc`. OmegaConf
-environment interpolation and command-line dotlist overrides are resolved
-before validation.
-
-Configuration is fail-fast:
-
-- unknown keys are rejected;
-- level-name count must equal `dataset.hierarchy_depth`;
-- model/dataset/HCC/lexicographic incompatibilities are rejected;
-- `dataloader.drop_last_eval: true` is rejected by the corrected protocol;
-- explicit annotation paths are mandatory and missing files fail at dataset
-  construction;
-- HT-CapsNet, LH-DNN, and Hier-COS require a complete taxonomy.
-
-The commented fragments under `configs/templates/` document the accepted
-fields. They are not standalone runnable experiments.
-
-## Presets
-
-### H-CAST
-
-`configs/hcast/` holds only the three base presets:
-
-- `configs/hcast/hcast_cifar100.yaml`
-- `configs/hcast/hcast_cub200.yaml`
-- `configs/hcast/hcast_aircraft.yaml`
-
-The HCC and lexicographic variants are not separate configs. Their launchers
-start from these base presets and add the whole variant block as CLI overrides:
-
-- HCC: `scripts/hcast/run_hcast_hcc.sh` adds the `hcc.*` block
-  (`enabled`, `eps`). HCC is a binary switch: when `hcc.enabled: true` the
-  projection is fully applied from the first batch onwards, with no onset,
-  alpha-schedule, or temperature knobs.
-- Lexicographic: `scripts/hcast/run_hcast_lex.sh` adds the
-  `train.lexicographic.*` block and the required `model.loss.globalkl=false`.
-
-HCC is an output-space affine hierarchy constraint. It changes the objective’s
-logits but does not explicitly project parameter gradients. Explicit
-lexicographic training is enabled by `train.lexicographic.enabled` and projects
-lower-priority gradients. Native lexicographic training is supported for
-H-CAST, HT-CapsNet, HRN, and decomposed-loss Hier-COS. LH-DNN is excluded.
-`train.gradient_blocks` selects the exact gradient-support blocks used by
-both diagnostics and projection. Blocks use compact support names (`p123`,
-`p12`, `p23`, `p1`, and so on); omitting the field preserves the historical
-`[p123, p12, p1]` behavior. Baseline configs list every nonempty block so their
-diagnostics cover the complete support partition; lex launchers override that
-list with only the multi-objective blocks on which projection is defined. Thus
-H-CAST uses `[p123,p12,p1,p2,p3]` versus `[p123,p12]`, HT-CapsNet and HRN use
-`[p123,p23,p3]` versus `[p123,p23]`, and Hier-COS uses `[p123]` in both cases.
-LH-DNN's baseline-only partition is `[p123,p1,p2,p3]`.
-
-### LH-DNN
-
-- `configs/lhdnn/lhdnn_cifar100.yaml`
-- `configs/lhdnn/lhdnn_cub200.yaml`
-- `configs/lhdnn/lhdnn_aircraft.yaml`
-
-The CIFAR-100 preset uses the paper’s large topology and 15-epoch schedule.
-CUB and Aircraft retain that topology but reduce the 14×14 final feature map
-to 2×2 with deterministic 7×7 average pooling. For this divisible geometry it
-is equivalent to 2×2 adaptive average pooling, while supporting strict
-deterministic CUDA backward. It preserves the paper’s pre-head geometry without
-creating an unintended ~51-million-parameter dense layer at 224 px. Those two
-presets remain local extrapolations.
-
-### HT-CapsNet
-
-- `configs/capsnet/capsnet_cifar100.yaml`
-- `configs/capsnet/capsnet_cub200.yaml`
-- `configs/capsnet/capsnet_aircraft.yaml`
-
-The presets port the released TensorFlow architecture and callback behavior:
-one squashed primary-capsule tensor is reshaped at later levels, parent capsule
-lengths are softmaxed before taxonomy masking, and dynamic loss weights use the
-released callback's parentheses. Experimental hyperparameters follow the paper except for
-the training budget, taxonomy temperature `0.5`, 16×32
-Keras-shaped attention with rank-three Keras Glorot initialization, per-example
-MixUp, Keras 2.8 Adam update, deterministic
-execution, capsule margin loss, and next-batch dynamic level weights. The
-presets run 100 epochs rather than the paper's 200, under the repository-wide
-budget shared by every family except LH-DNN; the learning-rate decay rate is
-unchanged, so the schedule is truncated rather than rescaled.
-Checkpointing deliberately departs from the released finest-output monitor and
-uses the repository-wide `(FPA, -TICE, weighted_AP)` ranking, so every family is
-selected by the same rule. The last partial training batch is retained. The EfficientNet preset pins
-the Keras-compatible
-`tf_efficientnet_b7.aa_in1k` conversion and restores Keras BatchNorm/drop-connect
-training semantics. CIFAR uses native 32 px inputs and split-wide scalar
-standardization; CUB uses the source path-loader sequence (resize to 512 px,
-then to the paper's 64 px input) and batch-wide scalar standardization. Aircraft
-uses the same path preprocessing as an explicit local extrapolation.
-The CUB preset deliberately retains this repository's 13/38/200 taxonomy, so
-it is not an exact reproduction of the paper's 39/123/200 run. Aircraft is a
-64 px extrapolation from the paper datasets. `train.resume` is empty by
-default; runs never silently reuse an old checkpoint.
-Older local HT-CapsNet checkpoints predate the source-aligned primary-capsule,
-routing-mask, and dynamic-weight behavior as well as corrected attention
-initialization, backbone semantics, optimizer, and loss-weight buffering. They
-must not be resumed for these fidelity runs. The paper and released TensorFlow
-file contain material contradictions; the exact source-reproduction
-alternatives and preprocessing/LayerNorm diagnostics are recorded in
-`docs/model_repo_differences.md`.
-Native lexicographic HT-CapsNet uses the same three capsule margin losses. The
-lex launcher selects `model.loss.weight_mode: none`, which is the existing
-unit-weight mode; the paper-baseline configs retain their dynamic weighting.
-
-### HRN
-
-- `configs/hrn/hrn_cifar100.yaml`
-- `configs/hrn/hrn_cub200.yaml`
-- `configs/hrn/hrn_aircraft.yaml`
-
-HRN supports exactly three levels. CUB and Aircraft preserve the upstream
-ResNet-50/RFM architecture, 448 px preprocessing, tree loss, leaf CE, and
-trunk LR scaling. The unified protocol deliberately evaluates every sample and
-selects checkpoints on validation data. CIFAR-100 is an explicit HRN-WRN-28-8
-adaptation: it trains from scratch on native 32 px inputs and uses the same
-CIFAR-style backbone geometry as Hier-COS, preserving an 8 x 8 feature map for
-HRN's RFM branches. It is not an HRN paper setting. All HRN presets are
-full-label only, and requested ResNet-50 ImageNet initialization never falls
-back to random weights.
-When omitted, `model.loss` defaults to the paper-aligned `native` objective
-(leaf-observed joint tree marginal plus leaf CE). The local
-`model.loss: level_conditional` mode splits that same objective into three
-conditional negative log-likelihoods - the coarse subtree, the middle subtree
-given the coarse one, and the leaf given the middle one - with the unit-weight
-leaf CE added to the fine term. The three terms sum to the `native` total and
-carry the same gradient, so without lexicographic projection the two modes train
-identically; the split exists so lexicographic mode has three level objectives
-to project. HRN lexicographic training requires this mode.
-
-The optional `model.projection.enabled: true` path applies the LH-DNN
-projection to a shared vector derived from HRN's trunk feature map. The native
-map from that spatial tensor to a level's logits is not of the LH form, so
-enabling the projection also replaces the output branches, with no separate
-switches:
-
-- HRN's existing global average pool is relocated from the three individual
-  branches to one position immediately after the trunk. It changes
-  `[B,D,H,W]` into `[B,D]`: pooling removes the spatial dimensions and does not
-  reduce `D` to a class count. Pooling is a tractable implementation choice, not
-  a requirement of the projection algebra; flattening the spatial map would
-  instead require heads and projector systems of width `D*H*W`.
-- A shared `shared_linear` + `shared_relu` pair is inserted at the branching
-  point, named and shaped after LH-DNN's own. This is the layer the guarantee
-  bites on: without it every shared parameter is convolutional trunk, and
-  orthogonality of the fine gradient at the branching point does not survive the
-  trunk's Gram factor. Stepping the convolutional trunk therefore remains
-  outside the branch-point guarantee. LH-DNN's `shared_linear` and Hier-COS's
-  `f_theta` play the corresponding role, and their convolutional stacks are
-  likewise uncovered. `rho' = 1[pre_activation > 0]` is read at the ReLU's
-  pre-activation, so it is idempotent in the projector construction.
-- Each complete RFM--FC--classifier branch is replaced by one direct
-  `Linear(D, C_l)` head. The code does not retain a chain of linear stand-ins:
-  without intervening nonlinearities that chain would be exactly one affine map
-  but would introduce redundant parameters and different deep-linear
-  optimisation. This substitution removes the native branch convolutions,
-  BatchNorm, ReLU, ELU, dropout, and the `embedding_dim` bottleneck from the
-  projected arm; those capacity changes remain confounded with the projection
-  and must not be attributed to it alone.
-- The coarse-to-fine residual moves from the embedding to the score and becomes
-  LH-DNN's advantage: every level adds its detached parent's advantage score,
-  gathered through the taxonomy. Enabling the projection therefore requires a
-  taxonomy with parent mappings.
-
-`A = [W_1; ...; W_(l-1)] * rho'` is then built directly from the preceding
-heads' weights. The detached advantage remains present in the forward score but
-has zero derivative through the current level, so each branch-local gradient
-returns through its own `W_l`. The backward-only `z - c + sg(c)` construction
-leaves forward values untouched, the shared width must exceed
-`sum(num_classes_per_level[:-1])`, `model.dropout` must be 0, and the path is
-rejected together with `hcc.enabled: true`.
-
-The fine level retains two direct `Linear(D, C_3)` heads, one for the tree term
-and one for leaf CE/reporting. Nothing follows the fine level, so neither enters
-a later projector. Both read the same projected input and receive the same
-parent advantage.
-
-Replacing every native branch by a direct head is a deliberate departure from
-paper-HRN. The result is HRN's trunk with LH-DNN's minimal head structure; it is
-a study of the projection adaptation package, not an HRN reproduction.
-Checkpoints produced by the former factorised-linear projected branch are not
-state-dict compatible with this direct-head implementation and must be retrained.
-
-### Hier-COS
-
-- `configs/hiercos/hiercos_cifar100.yaml`
-- `configs/hiercos/hiercos_cub200.yaml`
-- `configs/hiercos/hiercos_aircraft.yaml`
-
-Baseline presets default to the upstream-aligned `model.loss: kl_reg` and
-`model.weight_mode: kl_leaf`. The local
-`global_softmax_ce_reg` and `level_softmax_ce_reg` modes expose three
-differentiable level objectives and are selected explicitly by lexicographic
-runner overrides. CUB is an extrapolation; CIFAR uses this repository’s
-three-level hierarchy instead of the upstream full-depth protocol.
-
-Native Hier-COS additionally supports two taxonomy-size-derived modes. With
-`model.weight_mode: cumulative_branching`, level weights are
-`C_l^beta / sum_k C_k^beta`, where `beta` is configured by
-`model.weight_beta` and defaults to `0.5`. With
-`model.weight_mode: marginal_branching`, the unnormalised scores are
-`[1, C_1/C_0, ..., C_l/C_(l-1)]` and are normalised to sum to one. These two
-mode weights the path/CE component while level regularisation remains
-unweighted.
-
-The optional `model.projection.enabled: true` path gives each level an
-LH-DNN-style projected learnable FC head. It concatenates the three head
-outputs and applies an identity or per-level block-diagonal frozen Hier-COS
-frame to the combined vector; a dense global frame is rejected because it
-would mix the independent LH-DNN branches.
-The projection retains the complete transformation, including its PReLU
-activations and both residual skips in `full` mode. It then inserts a shared
-channel-wise PReLU before the level heads and builds the projection matrix in
-the LH-DNN form `A[b] = W_previous * rho_prime(k[b])`, so the protected
-subspace is sample-dependent. The PReLU derivative is part of the LH method and
-is always applied; there is no config switch for it, and the earlier
-batch-shared `A` variant has been removed. The launcher names these runs
-`projection`.
-Set `model.projection.advantage_enabled: true` to build a local Hier-COS
-score-space advantage. After the per-level fixed frame, the model takes the
-absolute node coordinates used by the level loss and recursively adds the
-detached parent score to every child. Cross-entropy and both evaluation
-decoders consume these advantage scores; the Hier-COS regularizer remains on
-the native absolute coordinates. The scores are not fed back through the
-taxonomy-subspace norms, which would count parent evidence again. This path
-requires `model.loss: level_softmax_ce_reg`.
-
-Direct subspace-norm supervision is enabled with
-`train.subspace_supervision.enabled: true`. It replaces the model's native loss
-with the mean of the per-level soft cross-entropies over the taxonomy-subspace
-norms. Training consumes `subspace_scores_per_level` directly and evaluation
-ranks the same scores, so the objective is aligned with the deployed
-subspace-norm argmax.
-
-Ground truth is **not** a one-hot label. A subspace spans a node's ancestors,
-itself and its descendants, so two classes sharing an ancestor share those
-coordinates: the score of a sibling of the correct class is bounded below by the
-energy on the shared ancestors and a one-hot target is unreachable. Pushing
-toward it is minimized by putting all energy on the leaf coordinate, which
-collapses the coarse node coordinates the readout is supposed to accumulate.
-The target used instead is the profile that the intended geometry induces --
-unit energy spread evenly over the ground-truth path, pushed through the same
-subspace masks -- so class `c` is targeted at the square root of the fraction of
-that path its subspace contains. It depends on the taxonomy alone and is read
-off by the leaf label.
-
-`model.weight_mode` is spent where the native Hier-COS softmax losses spend it:
-on the **scalarisation**. Its level weights, normalized to sum to one, are the
-per-level coefficients of the total, and the target geometry carries no
-weighting at all. Separating the two roles leaves `tau` as the only control over
-the target's margins and keeps `model.weight_mode` meaning the same thing here
-as in the baseline the arm is measured against; under `equal` the scalarisation
-is the uniform mean, so the loss stays on the scale of the Hier-COS baselines'
-convex combination and learning rates transfer. `loss_weight_level_*` logs the
-coefficients in use and `loss_level_*` each level's contribution to the total;
-the `subspace_*_level_*` diagnostics stay unweighted, so the geometry is
-comparable across weight modes.
-
-Score and target are compared through `softmax(./tau)` on each side after the
-scores are divided by the norm of the node coordinate vector -- **one scale
-shared by every level**, not one per level. Under the intended geometry the
-correct class scores `||u||` at every level and the target is already 1 there,
-so the shared scale puts both sides in the same units while giving up only the
-single global degree of freedom the score map is homogeneous in. Normalizing per
-level instead frees one scale per level and leaves the node energies
-unidentified: the recovered geometry then drifts off the ground-truth path
-whenever the target is not sharply peaked. `tau -> 0` recovers the unreachable
-one-hot target; larger values flatten it.
-
-The loss dispatch is capability-based rather than tied to `model.name`. A model
-opting in must return `subspace_scores_per_level` (`[B, C_l]`),
-`subspace_path_overlap_by_level` (`[num_leaf, C_l]` integer counts of how many
-levels of a leaf's path each class subspace contains), `node_logits` (`[B, N]`)
-for the shared scale, and the fields the level-weight resolution needs. The
-mechanism rejects soft targets, mixup/cutmix, HCC, lexicographic training, and the
-Hier-COS LH projection. Its loss log includes the per-level soft
-cross-entropies, the level coefficients, unnormalized score norms,
-and `subspace_target_kl*` -- the residual above the target entropy, which is
-zero at the intended geometry and is the part the optimizer can remove. The
-accepted config block is:
-
-```yaml
-train:
-  subspace_supervision:
-    enabled: true
-    tau: 0.25                 # > 0; target/prediction temperature
-    eps: 1.0e-12              # numerical epsilon for the shared scale
-```
-
-There is no loss selector and no level-weight setting in this block. Enabling
-the mechanism always selects the tempered soft cross-entropy against the induced
-profile, and the level weights come from **`model.weight_mode`**, which the arm
-spends on the target geometry alone. The target is rebuilt from those weights
-each step rather than tabulated, so any `model.weight_mode` gives a target the
-uniformly averaged level losses are consistent with.
-
-## Dataset behavior
-
-Native metadata is used unless a config explicitly supplies annotations:
-
-- CIFAR-100 reads official fine/coarse labels from the Python archive and adds
-  the published B-CNN 8-to-20 edge.
-- CUB reads common train/test folders or official `images.txt`,
-  `image_class_labels.txt`, and `train_test_split.txt`; order/family parents
-  come from the retained H-CAST mapping.
-- Aircraft accepts only a complete official download and joins the parallel
-  variant/family/manufacturer files for every official split.
-
-Every row must provide an existing image and exactly the configured number of
-non-negative integer labels. A child may have only one parent. Validation/test
-labels that are absent from the canonical training label space are rejected
-instead of being remapped independently.
-
-## Metrics and decoding
-
-Metrics are reported as ratios in `[0, 1]`:
-
-- per-level top-1 accuracy: higher is better;
-- weighted AP (`weighted_ap_*`): H-CAST’s class-count-weighted mean of
-  per-level top-1 accuracies; higher is better;
-- FPA: exact full-path accuracy; higher is better;
-- AHD: average prefix/LCA-equivalent hierarchy distance; lower is better;
-- TICE: taxonomy inconsistency rate; lower is better.
-
-Independent decoding takes an argmax at every level. Top-down decoding first
-chooses the coarse class and restricts each later argmax to children of the
-selected parent. Do not mix decoding modes in comparisons.
-
-### Checkpoint-only inference comparison
-
-Existing checkpoints can be tested without retraining using the tools in the
-top-level `evaluation/` package:
-
-```bash
-INFERENCE_MODE=all  # node_score | subspace_norm | hcc_node_score | hcc_subspace_norm | both | all
-python -m evaluation.evaluate_checkpoints \
-  --run-dir /scratch/$USER/outputs/<run>/seed_0 \
-  --inference-mode "$INFERENCE_MODE"
-```
-
-An inference rule is a readout — `node_score` (rank each taxonomy node by its
-own coordinate) or `subspace_norm` (rank it by the L2 norm over its
-ancestors+self+descendants subspace) — optionally preceded by the HCC affine
-hierarchy projection, giving a 2x2 grid. Both readouts consume the same node
-coordinates: the fixed-layer `node_logits` for native Hier-COS, the native
-per-level scores for classifier-head models, which `subspace_norm` treats as
-coordinates in an identity taxonomy frame. `all` evaluates the four cells from
-one shared forward pass; `both` evaluates the two untransformed readouts.
-
-Every cell is defined for every model, and each checkpoint's own inference is one
-of them: `node_score` for H-CAST/HRN/LH-DNN/HT-CapsNet, `subspace_norm` for
-native Hier-COS, and the `hcc_`-prefixed cell of the same readout for a run
-trained with `hcc.enabled: true`. That cell is recorded as
-`native_inference_mode` and used as the paired reference for the others. Nothing
-here changes the loss or updates parameters.
-
-Two properties shape the deltas: `hcc_node_score` shifts each sibling group by
-one constant, so it cannot change any top-down metric for a signed readout (it
-can for Hier-COS, whose readout takes the magnitude), and `subspace_norm`
-squares its inputs, so it discards the sign of a signed logit. The previous mode
-names — `normal`, `hiercos`, `node_softmax`, `hcc` — still work and map onto the
-grid, which also lets results computed before the rename be read without
-recomputation. See `evaluation/README.md` for the full contract.
-
-By default the command evaluates both `best_topdown.pt` and
-`best_independent.pt` on the test split. Use
-`--checkpoint-mode topdown` or `--checkpoint-mode independent` to select only
-one. Results are saved to `posthoc_inference_test_metrics.yaml` inside the run
-directory; an existing file is preserved unless `--overwrite` is passed.
-
-The paired multi-model analysis notebook is
-`notebooks/posthoc_hiercos_inference_comparison.ipynb`. It runs matched H-CAST,
-HRN, and Hier-COS baselines across CIFAR-100, CUB, and Aircraft; preserves
-top-down/independent checkpoint selection; and reports the mean, sample
-standard deviation, and seed count for absolute metrics and direction-aware
-paired gains. Its execution cell invokes
-`python -m evaluation.evaluate_checkpoints` directly for every completed seed.
-Each seed's result remains in its own run directory beside its checkpoints.
-
-Checkpoint ranking uses the exact tuple:
-
-```text
-(FPA, -TICE, weighted_AP)
-```
-
-If hierarchy metrics are unavailable, deepest-level accuracy is the sole
-primary value. No decimal packing or tolerance can allow TICE to override a
-real FPA improvement.
-
-## Outputs
-
-Each seed directory contains:
-
-```text
-latest.pt
-best_topdown.pt
-best_independent.pt
-config_resolved.yaml
-run_log.jsonl
-test_metrics.yaml
-```
-
-Version-2 checkpoints store `best_metrics` for compatibility and
-`best_selection_keys` for exact resume behavior. `test_metrics.yaml` records
-the checkpoint, epoch, primary metric, full selection key, and final metrics
-for each decoding mode.
-
-Run logs also contain model-specific loss and diagnostic fields. See:
-
-- [HCC diagnostic keys](docs/HCC_DIAGNOSTIC_LOGS.md)
-- [gradient, parameter, and lexicographic diagnostic keys](docs/GRADIENT_PARAM_DIAGNOSTIC_LOGS.md)
-- [lexicographic mode per-model adaptation, constraints, and quirks](docs/LEX_MODEL_ADAPTATION.md)
-
-## Experiment launchers
-
-Launchers are under `scripts/hcast/`, `scripts/lhdnn/`, `scripts/capsnet/`,
-`scripts/hrn/`, and `scripts/hiercos/`. They support:
-
-```text
-DRY_RUN=1
-NUM_RUNS=<positive integer>
-BASE_SEED=<first training seed>
-SPLIT_SEED=<fixed dataset split seed>
-MAX_PARALLEL=<parallel processes>
-MAX_RESUME_RETRIES=<retry count>
-```
-
-Matrix variables are whitespace-separated and validated:
-
-```bash
-DATASETS="cifar100 aircraft" \
-LEX_PROJECTION_MODE=fine_first \
-DRY_RUN=1 \
-scripts/hcast/run_hcast_lex.sh
-```
-
-The always-on HCC launchers are:
-
-```bash
-scripts/hcast/run_hcast_hcc.sh
-scripts/capsnet/run_ht_capsnet_hcc.sh
-scripts/hrn/run_hrn_hcc.sh
-scripts/hiercos/run_hiercos_hcc.sh
-```
-
-Each defaults to all three datasets. HCC output directories use
-`<model>_<dataset>[_<special-setting>]_hcc`; for example,
-`hcast_cifar100_hcc`, `capsnet_cub200_hcc`,
-`hrn_aircraft_level_conditional_hcc`, and
-`hiercos_cifar100_global_softmax_ce_reg_hcc`.
-
-The Hier-COS lex launcher accepts `LEX_PROJECTION_MODES`. Each launcher prints
-the selected matrix. Narrow defaults remain narrow so invoking a script cannot
-unexpectedly start the full expensive grid.
-
-Run Hier-COS with direct subspace supervision using:
-
-```bash
-DATASETS=cifar100 BASE_SEED=0 NUM_RUNS=1 \
-scripts/hiercos/run_hiercos_subspace.sh
-```
-
-The launcher sets `alpha=0`, enables the tempered soft cross-entropy against the
-induced path-energy profile, and forces the Hier-COS LH projection, HCC,
-mixup/cutmix, label smoothing, and lexicographic training off. Override
-`SUBSPACE_TAU` (default `0.25`) to sweep the temperature; level weights follow
-`model.weight_mode`. Run directories are named
-`hiercos_<dataset>_subspace`; earlier runs under that name used the hard-label
-or normalized-profile objectives and are not comparable.
-
-Run native HT-CapsNet baselines on the three dataset configurations with:
-
-```bash
-NUM_RUNS=3 scripts/capsnet/run_ht_capsnet_baselines.sh
-```
-
-The runner preserves each config's dynamic margin-loss weighting. The model
-follows the released TensorFlow behavior and the experiment values follow the
-paper; CUB uses this repository's unified taxonomy, and Aircraft is a local
-extrapolation. Use `DATASETS`, `NUM_RUNS`, `BASE_SEED`, or `SPLIT_SEED` to select
-a reproducible subset.
-
-Run native HT-CapsNet and HRN lexicographic training on the three baseline
-dataset configurations with:
-
-```bash
-scripts/capsnet/run_ht_capsnet_lex.sh
-scripts/hrn/run_hrn_lex.sh
-```
-
-Both default to coarse-first. Lexicographic projection is always active for the
-whole run. Override `DATASETS` or `LEX_PROJECTION_MODE` to select another
-validated run without adding a dataset config. The HT-CapsNet and HRN lex
-launchers pass an explicit `train.epochs=100`, which now agrees with their
-baseline presets, so baseline-versus-lex comparisons in these two families are
-training-budget matched (they remain not compute-matched, since a lexicographic
-step is more expensive than a baseline step).
-The HRN launcher also enforces hard targets.
-
-Run the paper-aligned LH-DNN CIFAR-100 preset and the two explicitly
-extrapolated large-image presets with:
-
-```bash
-scripts/lhdnn/run_lhdnn_baselines.sh
-```
-
-Run the Hier-COS model with projected learnable level heads and the optional
-shared PReLU/rho derivative with:
-
-```bash
-scripts/hiercos/run_hiercos_lhdnn_projection.sh
-```
-
-Projected Hier-COS uses `model.projection.feature_dim` for the shared backbone
-and transform width (model and projection-launcher default `0`, which selects
-the dataset taxonomy width).
-It applies only when `model.projection.enabled: true`; with the projection off
-the width stays at `sum(num_classes_per_level)`. Each level head reduces that feature
-vector to its class count before the outputs enter the taxonomy-width fixed
-frame. Keep it at `0` to use the taxonomy width,
-`sum(num_classes_per_level)`. The launcher exposes the setting as
-`FEATURE_DIM`, so `FEATURE_DIM=0` works across datasets with different
-hierarchy widths.
-
-## Verification
-
-The repository uses the standard library test runner:
+Each launcher prints the matrix it selected before starting. `DATASETS` is
+ignored by the two single-dataset launchers (the CIFAR-100 backbone ladder and
+the Aircraft pretraining ablation); the rest honour it. `NUM_RUNS`,
+`BASE_SEED`, `SPLIT_SEED`, `MAX_PARALLEL` and `MAX_RESUME_RETRIES` are also read
+from `.env`, so the values there apply to anything the commands below leave
+unset.
+
+Re-running a launcher is safe and idempotent. Every launcher shares one resume
+policy: a seed whose `test_metrics.yaml` already exists is skipped, one with a
+`latest.pt` resumes from it, and a directory holding other artifacts but no
+resumable checkpoint stops the campaign rather than being overwritten. Re-running
+a partly finished campaign therefore fills in only what is missing. To retrain
+something deliberately, remove its run directory first, or pass
+`RUN_PREFLIGHT=none` to launch regardless of what is already there.
+
+`SPLIT_SEED=0` must stay fixed: the CIFAR-100 and CUB validation splits are built
+once with it and reused by every arm, which is what makes seed-matched
+differences meaningful.
+
+### Step 0 — verify the installation
 
 ```bash
 python -m unittest discover -s tests -v
+DRY_RUN=1 scripts/hcast/run_hcast_baselines.sh
+python -m train.train --config configs/hcast/hcast_cifar100.yaml \
+  train.epochs=1 dataloader.batch_size=4 \
+  train.output_dir=$OUTPUTS_ROOT/smoke/hcast_cifar100
 ```
 
-Useful fast checks:
+The smoke run should produce a complete seed directory (below). If it does, the
+dataset paths, taxonomy and device assumptions are all correct.
+
+### Step 1 — unified baselines
+
+These populate the *Unified baselines* section and are the matched reference for
+every later comparison. Run all of them before anything else.
 
 ```bash
+export DATASETS="cifar100 cub200 aircraft" NUM_RUNS=3 BASE_SEED=0 SPLIT_SEED=0
+
+scripts/hcast/run_hcast_baselines.sh              # -> hcast_<ds>
+scripts/lhdnn/run_lhdnn_baselines.sh              # -> lhdnn_<ds>
+scripts/capsnet/run_ht_capsnet_baselines.sh       # -> capsnet_<ds>
+scripts/hrn/run_hrn_baselines.sh                  # -> hrn_<ds>_level_conditional
+
+LOSS_MODE=global_softmax_ce_reg WEIGHT_MODE=kl_leaf \
+FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=false \
+  scripts/hiercos/run_hiercos_baselines.sh
+  # -> hiercos_<ds>_global_softmax_ce_reg_baseline_kl_leaf
+```
+
+Two baselines are not the family's own default and must be set as shown. HRN
+reports `level_conditional`, which splits the native tree objective into three
+conditional terms that sum back to it — same gradient, but three level
+objectives for the mechanism experiments to project. Hier-COS reports the
+matched global-softmax CE reference on the published **dense** frame
+(`FIXED_FRAME_PER_LEVEL=false`), not the launcher's default block frame.
+
+### Step 2 — trained mechanisms
+
+Each arm is compared against its Step 1 baseline at matched seeds, backbone and
+schedule.
+
+```bash
+export DATASETS="cifar100 cub200 aircraft" NUM_RUNS=3 BASE_SEED=0 SPLIT_SEED=0
+
+# HCC — output-space constraint, active from the first batch
+scripts/hcast/run_hcast_hcc.sh                    # -> hcast_<ds>_hcc
+scripts/capsnet/run_ht_capsnet_hcc.sh             # -> capsnet_<ds>_hcc
+scripts/hrn/run_hrn_hcc.sh                        # -> hrn_<ds>_level_conditional_hcc
+scripts/hiercos/run_hiercos_hcc.sh                # -> hiercos_<ds>_<loss>_hcc
+
+# Gradient-space lexicographic optimisation
+LEX_PROJECTION_MODE=coarse_first scripts/hcast/run_hcast_lex.sh
+LEX_PROJECTION_MODE=fine_first   scripts/hcast/run_hcast_lex.sh
+scripts/capsnet/run_ht_capsnet_lex.sh             # coarse_first by default
+scripts/hrn/run_hrn_lex.sh                        # coarse_first by default
+
+LOSS_MODE=global_softmax_ce_reg WEIGHT_MODE=kl_leaf \
+FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=false \
+LEX_PROJECTION_MODES="coarse_first fine_first" \
+  scripts/hiercos/run_hiercos_lex.sh
+  # -> hiercos_<ds>_global_softmax_ce_reg_lex_<mode>_kl_leaf
+
+# Direct supervision of taxonomy-subspace scores (Hier-COS only)
+SUBSPACE_TAU=0.1 scripts/hiercos/run_hiercos_subspace.sh
+  # -> hiercos_<ds>_subspace
+```
+
+The Hier-COS lex launcher defaults to `global_softmax_ce_reg` and `kl_leaf`, so
+its objective and level weights already match the Step 1 baseline: enabling the
+mechanism does not silently change the loss mode or the weighting alongside it,
+which on the weights alone would be worth roughly 1–2 pp of fine accuracy. Its
+frame default is still the block frame, so `FIXED_FRAME_PER_LEVEL=false` is
+passed above to put both sides of the comparison on the published dense,
+globally normalised configuration. Everything up to Step 3 stays there.
+
+Priority order is an axis, not a default: H-CAST's launcher defaults to
+`fine_first` while HT-CapsNet's and HRN's default to `coarse_first`, so pass
+`LEX_PROJECTION_MODE` explicitly for both arms of that comparison. Lex arms are
+named `<model>_<ds>_lex_<mode>`; HCC arms append `_hcc`. Lexicographic
+projection has no onset control — when enabled it is active for the whole run,
+so a directory name alone never establishes when a mechanism became active.
+Confirm activation from `config_resolved.yaml`, and for HCC from
+`proj_constraint_alpha` in `run_log.jsonl`.
+
+`SUBSPACE_TAU=0.1` is the campaign value; the launcher's own default temperature
+is also `0.1`, and earlier runs under the same directory name used superseded
+objectives.
+
+### Step 3 — Hier-COS substrate and LH-projection
+
+This step changes the Hier-COS substrate once, in two stages, and then runs the
+LH-projection on the result. Both stages hold `kl_leaf` weights and no mechanism
+fixed, varying only the named axis.
+
+```bash
+export NUM_RUNS=3 BASE_SEED=0 SPLIT_SEED=0
+
+# (a) Frame ladder at global softmax. The dense row is already Step 1.
+DATASETS="cifar100 cub200 aircraft" LOSS_MODE=global_softmax_ce_reg \
+FIXED_FRAME_MODE=identity FIXED_FRAME_PER_LEVEL=false \
+  scripts/hiercos/run_hiercos_baselines.sh
+  # -> hiercos_<ds>_global_softmax_ce_reg_baseline_kl_leaf_identity
+DATASETS="cifar100 cub200 aircraft" LOSS_MODE=global_softmax_ce_reg \
+FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=true \
+  scripts/hiercos/run_hiercos_baselines.sh
+  # -> hiercos_<ds>_global_softmax_ce_reg_baseline_kl_leaf_block
+
+# (b) Softmax scope, at each dataset's selected frame from (a)
+DATASETS=cifar100 LOSS_MODE=level_softmax_ce_reg \
+FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=true \
+  scripts/hiercos/run_hiercos_baselines.sh
+  # -> hiercos_cifar100_level_softmax_ce_reg_baseline_kl_leaf_block
+DATASETS="cub200 aircraft" LOSS_MODE=level_softmax_ce_reg \
+FIXED_FRAME_MODE=identity FIXED_FRAME_PER_LEVEL=false \
+  scripts/hiercos/run_hiercos_baselines.sh
+  # -> hiercos_<ds>_level_softmax_ce_reg_baseline_kl_leaf_identity
+
+# (c) LH-projection on that substrate
+DATASETS=cifar100 FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=true \
+  scripts/hiercos/run_hiercos_lhdnn_projection.sh
+DATASETS="cub200 aircraft" FIXED_FRAME_MODE=identity FIXED_FRAME_PER_LEVEL=false \
+  scripts/hiercos/run_hiercos_lhdnn_projection.sh
+  # -> hiercos_<ds>_level_softmax_ce_reg_projection_d512_kl_leaf_<frame>
+
+# (d) CIFAR-100 backbone-capacity ladder (2 seeds, sensitivity only)
+NUM_RUNS=2 WRN_SIZES="16-8 28-4" MECHANISMS="baseline lex_coarse_first" \
+  scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh
+```
+
+The frame is dataset-dependent and is a *result* of stage (a), not a convention:
+block for CIFAR-100, identity for CUB-200 and Aircraft. It matters downstream
+because a dense frame is rejected under `projection.enabled=true`, so the LH arms
+in (c) must sit on the LH-compatible frame their dataset selected. Hold the frame
+fixed within a dataset and carry the substrate column on every mechanism table.
+
+`FEATURE_DIM` selects the shared representation width (`0` = the dataset's
+taxonomy width; the projection launcher defaults to `512`) and appends `_d<dim>`
+to the run name. `WEIGHT_MODE` appends its own suffix for anything other than
+`equal`. Set both explicitly when reproducing a specific row.
+
+The LH-projection on HRN has no launcher — it is driven by CLI overrides on the
+HRN preset, and it requires zero dropout and is mutually exclusive with HCC:
+
+```bash
+python -m train.train --config configs/hrn/hrn_cifar100.yaml \
+  model.projection.enabled=true model.dropout=0 \
+  train.output_dir=$OUTPUTS_ROOT/hrn_cifar100_projection/seed_0 \
+  dataset.split_seed=0 train.seed=0
+```
+
+### Step 4 — post-hoc inference grid
+
+Inference-only. It re-reads frozen checkpoints through a readout × transform
+grid and changes no weights.
+
+```bash
+python -m evaluation.evaluate_checkpoints \
+  --run-dir $OUTPUTS_ROOT/<run>/seed_0 \
+  --inference-mode all \
+  --checkpoint-mode both
+```
+
+|  | `node_score` | `subspace_norm` |
+|---|---|---|
+| **no transform** | rank each node by its own coordinate | rank it by the L2 norm over its ancestors+self+descendants subspace |
+| **HCC projection** | `hcc_node_score` | `hcc_subspace_norm` |
+
+Each checkpoint's own inference is one cell — `node_score` for
+H-CAST/HRN/LH-DNN/HT-CapsNet, `subspace_norm` for native Hier-COS, and the
+`hcc_`-prefixed cell of the same readout for an HCC-trained run. That cell is
+recorded as `native_inference_mode` and is the paired reference for the others.
+Results are written to `posthoc_inference_test_metrics.yaml` inside the run
+directory and preserved unless `--overwrite` is passed, so the notebooks in Step
+5 reuse the work. Full contract: [evaluation/README.md](evaluation/README.md).
+
+### Step 5 — tables and figures
+
+The notebooks read the run directories and emit the reported tables and figures.
+They do not train.
+
+| Notebook | Produces |
+|---|---|
+| `notebooks/model_comparison_all_datasets.ipynb` | cross-family baseline tables |
+| `notebooks/model_analysis/*.ipynb` | per-family training dynamics and diagnostics |
+| `notebooks/inference_analysis/*.ipynb` | the inference-grid study (see its [README](notebooks/inference_analysis/README.md)) |
+| `notebooks/tradeoff_analysis/*.ipynb` | accuracy–consistency trade-off figures |
+| `notebooks/lex_gradient_conflict.ipynb` | lexicographic gradient-conflict analysis |
+| `notebooks/datasets_analysis.ipynb` | dataset and taxonomy statistics |
+
+Each notebook exposes its run selection in the setup cell; re-run the discovery
+cell and everything below it after changing that selection. Figures are written
+under `$OUTPUTS_ROOT/analysis/`, never into the repository.
+
+Two rules govern reading the results. Compare top-down rows only against the
+top-down-selected checkpoint and independent rows only against the
+independent-selected checkpoint — the two best epochs differ. And use
+`test_metrics.yaml` for final numbers, `run_log.jsonl` only for epoch dynamics.
+
+## Outputs
+
+Each seed directory under `$OUTPUTS_ROOT/<experiment>/seed_<n>/` contains:
+
+```text
+latest.pt              rolling checkpoint, used for resume
+best_topdown.pt        best under top-down decoding
+best_independent.pt    best under independent decoding
+config_resolved.yaml   the fully resolved config actually used
+run_log.jsonl          per-epoch losses, metrics and diagnostics
+test_metrics.yaml      final test metrics, per decoding mode
+```
+
+`test_metrics.yaml` records the checkpoint, epoch, primary metric and full
+selection key for each mode. Version-2 checkpoints store `best_metrics` for
+compatibility and `best_selection_keys` for exact resume.
+
+Run logs also carry model-specific diagnostics, documented key by key in
+[HCC](docs/HCC_DIAGNOSTIC_LOGS.md) and
+[gradient/parameter/lexicographic](docs/GRADIENT_PARAM_DIAGNOSTIC_LOGS.md)
+glossaries.
+
+## Metrics, decoding and checkpoint selection
+
+All metrics are ratios in `[0, 1]`:
+
+| Metric | Meaning | Direction |
+|---|---|---|
+| per-level top-1 accuracy | accuracy at one hierarchy level | higher is better |
+| weighted AP (`weighted_ap_*`) | class-count-weighted mean of per-level accuracies | higher is better |
+| FPA | exact full-path accuracy | higher is better |
+| AHD | average prefix/LCA-equivalent hierarchy distance | lower is better |
+| TICE | taxonomy inconsistency rate | lower is better |
+
+**Independent** decoding takes an argmax at every level. **Top-down** decoding
+picks the coarse class first, then restricts each later argmax to children of
+the selected parent. Never mix the two in one comparison.
+
+Checkpoints are ranked by the exact tuple `(FPA, -TICE, weighted_AP)`, compared
+lexicographically rather than packed into a single float, so no TICE change can
+override a real FPA improvement. If hierarchy metrics are unavailable,
+deepest-level accuracy is the sole primary value.
+
+## Verification
+
+```bash
+python -m unittest discover -s tests -v
 python -m compileall -q datasets models train gridsearch notebooks scripts docs
 for f in scripts/*.sh scripts/*/*.sh; do bash -n "$f"; done
 git diff --check
 ```
 
-The test suite covers official hierarchies, cross-split label stability,
-strict config parsing, metric/selection oracles, source-equation contracts,
-checkpoint compatibility, launcher matrices, and documentation paths.
+The suite covers the ported capsule equations and attention shapes, the taxonomy
+mask, the HRN objective and schedule, lexicographic projection, the Hier-COS
+advantage and the model presets. It checks equations, shapes and required
+properties — it does not show that a trained model is numerically identical to a
+published checkpoint.
 
 ## Documentation
 
+Thesis text (LaTeX, in `docs/`):
+
+- `03-nonstandard.tex`, `04-methodology.tex` — theory and methods
+- `05-experiments.tex` — protocol, baseline comparability and all results
+- `appendiceA.tex`, `thesis_datasets_section.tex`, `thesis_appendix_figures.tex`
+
+Implementation reference (Markdown, in `docs/`):
+
+- [Presets and mechanism configuration](docs/PRESETS.md)
 - [Repository map](docs/FILE_DOCUMENTATION.md)
-- [Pinned upstream fidelity and divergence log](docs/model_repo_differences.md)
-- [Dated correctness audit](docs/REPOSITORY_AUDIT.md)
-- [HCC/H-CAST research synthesis](docs/hcc_hcast_research_report.md)
-- [Detailed HRN and Hier-COS alignment notes](docs/hrn_hiercos_alignment.md)
+- [Lexicographic mode: per-model adaptation and constraints](docs/LEX_MODEL_ADAPTATION.md)
+- [HCC diagnostic keys](docs/HCC_DIAGNOSTIC_LOGS.md)
+- [Gradient, parameter and lexicographic diagnostic keys](docs/GRADIENT_PARAM_DIAGNOSTIC_LOGS.md)
+
+Planning (working documents, not a description of finished work):
+
+- [Experiment matrix](docs/experiment_matrix.md) — the trial space by research question
+- [Hier-COS run checklist](docs/HIERCOS_RUN_CHECKLIST.md) — outstanding run queue
+
+Model fidelity against the published sources is discussed in
+`docs/05-experiments.tex`, section *Baseline comparability*, which supersedes the
+earlier standalone fidelity notes.

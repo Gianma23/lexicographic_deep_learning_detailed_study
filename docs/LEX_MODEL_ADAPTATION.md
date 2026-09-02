@@ -137,8 +137,8 @@ objective, not a regrouping.
 `model.loss: kl_reg` with `model.weight_mode: kl_leaf`. A lex run is neither, so
 a lex-vs-baseline table built from default presets confounds the lexicographic
 effect with both a loss-mode change and a weight change. See
-`docs/hiercos_level_weights.md` Section 10b for the measured decomposition; the
-weight effect alone is worth roughly 1-2 pp of fine accuracy.
+`docs/05-experiments.tex`, *Level weights and gradient scale*, for the level-weight
+analysis; the weight effect alone is worth roughly 1-2 pp of fine accuracy.
 
 ### 3.3 HT-CapsNet (`model.name: ht_capsnet`)
 

@@ -61,8 +61,6 @@ source "$ROOT_DIR/scripts/run_job_utils.sh"
 NUM_RUNS="${NUM_RUNS:-2}"
 init_seed_runs
 
-RUN_PREFLIGHT=resume
-RUN_RETRY_REQUIRES_CHECKPOINT=0
 init_job_control
 LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"

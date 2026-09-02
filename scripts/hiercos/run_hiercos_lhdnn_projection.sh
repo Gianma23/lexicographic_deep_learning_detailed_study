@@ -38,8 +38,6 @@ source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 source "$ROOT_DIR/scripts/run_job_utils.sh"
 init_seed_runs
 
-RUN_PREFLIGHT=none
-RUN_RETRY_REQUIRES_CHECKPOINT=0
 init_job_control
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 WEIGHT_BETA="${WEIGHT_BETA:-0.5}"

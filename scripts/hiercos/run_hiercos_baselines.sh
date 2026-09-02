@@ -8,7 +8,7 @@ set -euo pipefail
 # - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
 # - model.projection.feature_dim=${FEATURE_DIM}
 # - train.lexicographic.enabled=false
-# Default dataset: aircraft. Override DATASETS to select any supported subset.
+# Default dataset: cifar100. Override DATASETS to select any supported subset.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -19,8 +19,6 @@ source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 source "$ROOT_DIR/scripts/run_job_utils.sh"
 init_seed_runs
 
-RUN_PREFLIGHT=none
-RUN_RETRY_REQUIRES_CHECKPOINT=0
 init_job_control
 LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
 WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
@@ -89,7 +87,8 @@ install_job_traps
 # Each invocation selects one frame: identity, dense random, or block random.
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-DATASETS=(cifar100)
+parse_choice_list DATASETS "cifar100" DATASETS \
+  cifar100 cub200 aircraft
 
 config_for_dataset() {
   case "$1" in

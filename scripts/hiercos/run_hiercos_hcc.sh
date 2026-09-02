@@ -27,8 +27,6 @@ source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 source "$ROOT_DIR/scripts/run_job_utils.sh"
 init_seed_runs
 
-RUN_PREFLIGHT=strict
-RUN_RETRY_REQUIRES_CHECKPOINT=1
 init_job_control
 LOSS_MODE="global_softmax_ce_reg"
 WEIGHT_MODE="kl_leaf"

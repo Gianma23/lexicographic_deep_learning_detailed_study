@@ -8,8 +8,11 @@ set -euo pipefail
 # - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
 # - train.lexicographic.enabled=true
 # - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
-# Defaults: aircraft/cub200/cifar100 with coarse_first. Environment matrices
-# can opt into the other supported projection modes.
+# Defaults: cifar100 with coarse_first, at the matched Hier-COS baseline
+# objective and weighting (global_softmax_ce_reg + kl_leaf), so a lex-versus-
+# baseline comparison does not silently change the loss mode or the level
+# weights alongside the mechanism. Environment matrices can opt into the other
+# supported projection modes.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -20,11 +23,9 @@ source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 source "$ROOT_DIR/scripts/run_job_utils.sh"
 init_seed_runs
 
-RUN_PREFLIGHT=none
-RUN_RETRY_REQUIRES_CHECKPOINT=0
 init_job_control
-LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
-WEIGHT_MODE="${WEIGHT_MODE:-equal}"
+LOSS_MODE="${LOSS_MODE:-global_softmax_ce_reg}"
+WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
 FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-true}"
 

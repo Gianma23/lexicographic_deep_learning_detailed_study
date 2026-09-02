@@ -36,7 +36,7 @@ model:
   # level separating 100 classes by 1.3e-06, fine accuracy 0.00 after 60 steps
   # on a 16-image memorisation test). `squash` restores the [0,1) length-as-
   # probability semantics of Eq. (6)/(16) that the margin loss is designed for.
-  # See docs/htcapsnet_vs_keras_differences.md section 4.3.
+  # See docs/05-experiments.tex, section "Baseline comparability".
   attn_postprocess: squash
   attn_initializer: keras_glorot
   loss:

@@ -235,8 +235,9 @@ the optimizer with the normalizer.
 
 `equal`, `kl_leaf` (leaf-heavy), `kl_coarse` (the flipped vector,
 [losses.py](models/hiercos/losses.py)). This is the axis the supervisor
-objected to (`docs/hiercos_level_weights.md`), on the grounds that the weights are
-empirical rather than derived.
+objected to, on the grounds that the weights are empirical rather than derived;
+the taxonomy-derived alternatives and the ablation are written up in
+`docs/05-experiments.tex`, *Level weights and gradient scale*.
 
 Two separate questions live here, and conflating them is what makes the objection stick:
 
@@ -395,10 +396,8 @@ mechanism arm. Everything else below is scoped to the other four models.
 
 Lex support: [config.py:132-139](train/lexicographic/config.py#L132-L139).
 HCC support: `hcc_supported_models = {"hcast", "hrn", "ht_capsnet", "hiercos"}`
-([config_validation.py:756-759](train/config_validation.py#L756-L759)), with a dedicated
-regression test `test_hcc_is_rejected_for_lhdnn`
-([tests/test_hcc_model_support.py:74-77](tests/test_hcc_model_support.py#L74-L77)).
-LH-DNN also has no HCC code path at all.
+([config_validation.py:875-878](train/config_validation.py#L875-L878)), which rejects
+`lhdnn` outright. LH-DNN also has no HCC code path at all.
 
 ### Why LH-DNN is baseline-only, as an argument rather than a limitation
 

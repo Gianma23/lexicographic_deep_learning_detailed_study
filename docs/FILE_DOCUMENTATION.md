@@ -458,24 +458,33 @@ Notebook files are not rewritten by repository audits.
 
 ## Documentation
 
+Thesis chapters live beside this file as LaTeX: `03-nonstandard.tex`,
+`04-methodology.tex`, `05-experiments.tex`, `appendiceA.tex`,
+`thesis_datasets_section.tex` and `thesis_appendix_figures.tex`. Model fidelity
+against the published sources is covered in `05-experiments.tex`, section
+*Baseline comparability*.
+
+Implementation reference:
+
 - [This repository map](FILE_DOCUMENTATION.md)
-- [Dated correctness/fidelity audit](REPOSITORY_AUDIT.md)
-- [Pinned upstream comparison by model](model_repo_differences.md)
+- [Presets and mechanism configuration](PRESETS.md)
+- [Lexicographic per-model adaptation and constraints](LEX_MODEL_ADAPTATION.md)
 - [HCC diagnostic glossary](HCC_DIAGNOSTIC_LOGS.md)
 - [Gradient, parameter, and lexicographic diagnostic glossary](GRADIENT_PARAM_DIAGNOSTIC_LOGS.md)
-- [HCC/H-CAST research synthesis](hcc_hcast_research_report.md)
-- [Detailed HRN/Hier-COS alignment notes](hrn_hiercos_alignment.md)
-- `docs/generate_hcc_internal_insights_figures.py` — generates documentation
-  figures from existing run logs; outputs belong under the external output
-  root.
+
+Planning documents, describing intended rather than completed work:
+
+- [Experiment matrix](experiment_matrix.md)
+- [Hier-COS run checklist](HIERCOS_RUN_CHECKLIST.md)
+
+`docs/generate_hcc_internal_insights_figures.py` generates documentation figures
+from existing run logs; its outputs belong under the external output root.
 
 ## Tests
 
-Tests use `python -m unittest discover -s tests -v`. They cover official
-hierarchies, fixed-frame loss equivalence, multiseed helpers, shared label
-spaces, strict configs, exact checkpoint selection/resume, metrics, model
-contracts, direct subspace targets/losses/gradients, launchers, and
-documentation paths.
+Tests use `python -m unittest discover -s tests -v`. They cover the current-run
+readouts, the Hier-COS advantage, the HRN LH-projection, and lexicographic
+projection.
 
 ## Runtime artifacts
 

@@ -27,8 +27,6 @@ elif [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
 else
   PYTHON_BIN="${PYTHON_BIN:-python}"
 fi
-RUN_PREFLIGHT=none
-RUN_RETRY_REQUIRES_CHECKPOINT=1
 init_job_control
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 

@@ -6,32 +6,36 @@
 # environment knobs and validates them) and install_job_traps, then launches
 # work through run_train / run_seeded_train and closes with drain_jobs.
 #
-# Two policy knobs let a launcher keep its own resume semantics. They are read
-# by init_job_control and default to the plain "always start fresh" behaviour:
+# Every launcher shares one resume policy. The two knobs below are read by
+# init_job_control from the environment; no launcher sets them, so re-entering a
+# partly finished campaign behaves the same way whichever script is invoked.
 #
-#   RUN_PREFLIGHT
-#     none    Launch whatever it is asked to launch. No inspection of run_dir.
-#     resume  If run_dir/latest.pt exists, attach train.resume to the first
-#             attempt. Silent.
+#   RUN_PREFLIGHT           (default: strict)
 #     strict  Skip a run_dir that already holds test_metrics.yaml, announce and
 #             attach a resume when latest.pt exists, and refuse to start a
 #             run_dir that holds other artifacts but no resumable latest.pt.
+#     resume  If run_dir/latest.pt exists, attach train.resume to the first
+#             attempt. Silent.
+#     none    Launch whatever it is asked to launch. No inspection of run_dir.
 #
-#   RUN_RETRY_REQUIRES_CHECKPOINT
-#     0       Retry a failed run unconditionally.
+#   RUN_RETRY_REQUIRES_CHECKPOINT   (default: 1)
 #     1       Only retry when latest.pt exists, so a run that died before its
 #             first checkpoint keeps its original failure.
+#     0       Retry a failed run unconditionally.
 #
-# Both affect which commands get launched, so they are set per launcher and
-# must not be changed casually: they are part of an experiment's behaviour.
+# The defaults make a re-run idempotent: completed seeds are skipped, interrupted
+# ones resume, and a directory that cannot be resumed safely stops the campaign
+# instead of being overwritten. Override RUN_PREFLIGHT=none for a deliberate
+# retrain, having removed the old run_dir first. Both knobs change which commands
+# get launched, so set them consciously.
 
 init_job_control() {
   PYTHON_BIN="${PYTHON_BIN:-python}"
   DRY_RUN="${DRY_RUN:-0}"
   MAX_PARALLEL="${MAX_PARALLEL:-1}"
   MAX_RESUME_RETRIES="${MAX_RESUME_RETRIES:-3}"
-  RUN_PREFLIGHT="${RUN_PREFLIGHT:-none}"
-  RUN_RETRY_REQUIRES_CHECKPOINT="${RUN_RETRY_REQUIRES_CHECKPOINT:-0}"
+  RUN_PREFLIGHT="${RUN_PREFLIGHT:-strict}"
+  RUN_RETRY_REQUIRES_CHECKPOINT="${RUN_RETRY_REQUIRES_CHECKPOINT:-1}"
 
   if [[ ! "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
     echo "MAX_PARALLEL must be a positive integer, got: $MAX_PARALLEL" >&2
@@ -206,4 +210,6 @@ print_job_control_settings() {
   printf 'Dry run: %s\n' "$DRY_RUN"
   printf 'Max parallel: %s\n' "$MAX_PARALLEL"
   printf 'Max resume retries on failure: %s\n' "$MAX_RESUME_RETRIES"
+  printf 'Preflight: %s (retry requires checkpoint: %s)\n' \
+    "$RUN_PREFLIGHT" "$RUN_RETRY_REQUIRES_CHECKPOINT"
 }

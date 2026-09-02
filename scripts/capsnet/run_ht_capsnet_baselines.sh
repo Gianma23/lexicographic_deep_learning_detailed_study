@@ -17,8 +17,6 @@ source "$ROOT_DIR/scripts/run_matrix_utils.sh"
 source "$ROOT_DIR/scripts/run_job_utils.sh"
 init_seed_runs
 
-RUN_PREFLIGHT=none
-RUN_RETRY_REQUIRES_CHECKPOINT=1
 init_job_control
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
