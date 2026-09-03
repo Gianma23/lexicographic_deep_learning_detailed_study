@@ -1,22 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the Hier-COS + HCC arm (HCC generalized from H-CAST, see
-# models/common/hcc.py) with the standard Hier-COS baseline settings:
-# - model.loss=global_softmax_ce_reg
-# - model.weight_mode=kl_leaf
-# - model.fixed_frame_mode=orthonormal_random
-# - hiercos_<dataset>_global_softmax_ce_reg_hcc
-# for: cifar100, cub200, aircraft.
-#
-# HCC is a binary on/off switch and is fully active throughout training.
-#
-# HCC is the only mechanism added to the matched baseline arm. It operates after
-# the fixed classifier; the baseline CE+regularization loss consumes the
-# modified node logits, and inference recomputes taxonomy-subspace scores from
-# the same modified tensor. Hier-COS's optional LH-DNN-style `model.projection`
-# remains disabled because combining both projection mechanisms would confound
-# them.
+# Hier-COS + HCC arm at the matched baseline settings (global_softmax_ce_reg,
+# kl_leaf, orthonormal_random) on cifar100, cub200, aircraft. HCC operates after
+# the fixed classifier and is active at train and test time. The optional
+# LH-DNN-style model.projection stays disabled so the two are not confounded.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

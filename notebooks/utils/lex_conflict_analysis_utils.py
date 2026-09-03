@@ -136,120 +136,208 @@ SUBSTRATE_ORDER = (
     "HT-CapsNet",
 )
 
-SUBSTRATE_STYLES = {
+# substrate -> (family, cell-id prefix). `family` is not cosmetic: the p12
+# cosine stage is emitted for the H-CAST family alone, because on every other
+# substrate that parameter block is empty.
+SUBSTRATE_FAMILIES = {
+    "H-CAST": ("H-CAST", "HC"),
+    "Hier-COS global": ("Hier-COS", "HG"),
+    "Hier-COS level": ("Hier-COS", "HL"),
+    "HRN": ("HRN", "HR"),
+    "HT-CapsNet": ("HT-CapsNet", "HT"),
+}
+
+DATASETS = {
+    "cifar100": ("CIFAR-100", "CIF"),
+    "cub200": ("CUB-200", "CUB"),
+    "aircraft": ("Aircraft", "AIR"),
+}
+
+# Fallback styles for substrates added to RUN_ROOTS by hand.
+_EXTRA_STYLES = (
+    {"color": "#56B4E9", "marker": "P"},
+    {"color": "#8C564B", "marker": "X"},
+    {"color": "#7F7F7F", "marker": "*"},
+)
+
+
+class _StyleTable(dict):
+    """Named substrates keep a fixed style; anything else gets one on demand,
+    so a hand-edited RUN_ROOTS still plots instead of raising KeyError."""
+
+    def __missing__(self, substrate: str) -> dict:
+        style = _EXTRA_STYLES[len(self) % len(_EXTRA_STYLES)]
+        self[substrate] = style
+        return style
+
+
+SUBSTRATE_STYLES = _StyleTable({
     "H-CAST": {"color": "#009E73", "marker": "s"},
     "Hier-COS global": {"color": "#0072B2", "marker": "o"},
     "Hier-COS level": {"color": "#D55E00", "marker": "^"},
     "HRN": {"color": "#CC79A7", "marker": "D"},
     "HT-CapsNet": {"color": "#E69F00", "marker": "v"},
-}
+})
 
 
 def substrate_order(frame: pd.DataFrame | None = None) -> list[str]:
-    """Return the canonical substrate order, restricted to what a frame holds."""
+    """Return the canonical substrate order, restricted to what a frame holds.
+
+    Substrates that are not in the canonical list keep their first-seen order
+    after it, so an added selection is plotted rather than silently dropped.
+    """
 
     if frame is None or "substrate" not in frame:
         return list(SUBSTRATE_ORDER)
-    present = set(frame["substrate"].dropna().unique())
-    return [substrate for substrate in SUBSTRATE_ORDER if substrate in present]
+    present = list(dict.fromkeys(frame["substrate"].dropna()))
+    known = [substrate for substrate in SUBSTRATE_ORDER if substrate in present]
+    return known + [substrate for substrate in present if substrate not in SUBSTRATE_ORDER]
 
 
-def default_run_specs(prefer_matched_hcast: bool = True) -> list[dict]:
-    """Return the current coarse-first comparison matrix over all substrates."""
-
-    datasets = {
-        "cifar100": "CIFAR-100",
-        "cub200": "CUB-200",
-        "aircraft": "Aircraft",
-    }
-    dataset_codes = {"cifar100": "CIF", "cub200": "CUB", "aircraft": "AIR"}
-    specs: list[dict] = []
-
-    for dataset_key, dataset_label in datasets.items():
-        hcast_candidates = [f"hcast_{dataset_key}_nokl", f"hcast_{dataset_key}"]
-        if not prefer_matched_hcast:
-            hcast_candidates.reverse()
-        specs.append(
-            {
-                "cell_id": f"HC-{dataset_key}",
-                "short_label": dataset_codes[dataset_key],
-                "family": "H-CAST",
-                "substrate": "H-CAST",
-                "dataset_key": dataset_key,
-                "dataset": dataset_label,
-                "baseline_candidates": hcast_candidates,
-                "lex_run": f"hcast_{dataset_key}_lex_coarse_first",
-            }
-        )
-
-        specs.append(
-            {
-                "cell_id": f"HG-{dataset_key}",
-                "short_label": dataset_codes[dataset_key],
-                "family": "Hier-COS",
-                "substrate": "Hier-COS global",
-                "dataset_key": dataset_key,
-                "dataset": dataset_label,
-                "baseline_candidates": [
-                    f"hiercos_{dataset_key}_global_softmax_ce_reg_baseline_kl_leaf"
-                ],
-                "lex_run": (
-                    f"hiercos_{dataset_key}_global_softmax_ce_reg_"
-                    "lex_coarse_first_kl_leaf"
-                ),
-            }
-        )
-
-        level_frame = "block" if dataset_key == "cifar100" else "identity"
-        specs.append(
-            {
-                "cell_id": f"HL-{dataset_key}",
-                "short_label": dataset_codes[dataset_key],
-                "family": "Hier-COS",
-                "substrate": "Hier-COS level",
-                "dataset_key": dataset_key,
-                "dataset": dataset_label,
-                "baseline_candidates": [
-                    f"hiercos_{dataset_key}_level_softmax_ce_reg_"
-                    f"baseline_kl_leaf_{level_frame}"
-                ],
-                "lex_run": (
-                    f"hiercos_{dataset_key}_level_softmax_ce_reg_"
-                    f"lex_coarse_first_kl_leaf_{level_frame}"
-                ),
-            }
-        )
-
+# The comparison matrix, in the same shape the inference-analysis notebooks use
+# for RUN_ROOTS: dataset -> substrate -> (baseline, lex). A baseline may also be
+# a list of candidates, in which case the first one with completed seeds wins.
+# Values are directory names under the outputs root, or absolute paths.
+DEFAULT_RUN_ROOTS = {
+    "cifar100": {
+        # Always the global-KL baseline, so every H-CAST cell is a package
+        # comparison: lex mode also disables global KL.
+        "H-CAST": (
+            "hcast_cifar100",
+            "hcast_cifar100_lex_coarse_first",
+        ),
+        "Hier-COS global": (
+            "hiercos_cifar100_global_softmax_ce_reg_baseline_kl_leaf",
+            "hiercos_cifar100_global_softmax_ce_reg_lex_coarse_first_kl_leaf",
+        ),
+        "Hier-COS level": (
+            "hiercos_cifar100_level_softmax_ce_reg_baseline_kl_leaf_block",
+            "hiercos_cifar100_level_softmax_ce_reg_lex_coarse_first_kl_leaf_block",
+        ),
         # HRN is paired against the level-conditional control, which is the
         # objective the lex arm actually projects. The plain HRN runs are a
-        # different objective and also differ in batch size, so they are not
-        # offered as a fallback control here.
-        specs.append(
-            {
-                "cell_id": f"HR-{dataset_key}",
-                "short_label": dataset_codes[dataset_key],
-                "family": "HRN",
-                "substrate": "HRN",
-                "dataset_key": dataset_key,
-                "dataset": dataset_label,
-                "baseline_candidates": [f"hrn_{dataset_key}_level_conditional"],
-                "lex_run": f"hrn_{dataset_key}_level_conditional_lex_coarse_first",
-            }
-        )
+        # different objective and also differ in batch size.
+        "HRN": (
+            "hrn_cifar100_level_conditional",
+            "hrn_cifar100_level_conditional_lex_coarse_first",
+        ),
+        "HT-CapsNet": (
+            "capsnet_cifar100",
+            "ht_capsnet_cifar100_lex_coarse_first",
+        ),
+    },
+    "cub200": {
+        # Always the global-KL baseline, so every H-CAST cell is a package
+        # comparison: lex mode also disables global KL.
+        "H-CAST": (
+            "hcast_cub200",
+            "hcast_cub200_lex_coarse_first",
+        ),
+        "Hier-COS global": (
+            "hiercos_cub200_global_softmax_ce_reg_baseline_kl_leaf",
+            "hiercos_cub200_global_softmax_ce_reg_lex_coarse_first_kl_leaf",
+        ),
+        "Hier-COS level": (
+            "hiercos_cub200_level_softmax_ce_reg_baseline_kl_leaf_identity",
+            "hiercos_cub200_level_softmax_ce_reg_lex_coarse_first_kl_leaf_identity",
+        ),
+        "HRN": (
+            "hrn_cub200_level_conditional",
+            "hrn_cub200_level_conditional_lex_coarse_first",
+        ),
+        "HT-CapsNet": (
+            "capsnet_cub200",
+            "ht_capsnet_cub200_lex_coarse_first",
+        ),
+    },
+    "aircraft": {
+        # Always the global-KL baseline, so every H-CAST cell is a package
+        # comparison: lex mode also disables global KL.
+        "H-CAST": (
+            "hcast_aircraft",
+            "hcast_aircraft_lex_coarse_first",
+        ),
+        "Hier-COS global": (
+            "hiercos_aircraft_global_softmax_ce_reg_baseline_kl_leaf",
+            "hiercos_aircraft_global_softmax_ce_reg_lex_coarse_first_kl_leaf",
+        ),
+        "Hier-COS level": (
+            "hiercos_aircraft_level_softmax_ce_reg_baseline_kl_leaf_identity",
+            "hiercos_aircraft_level_softmax_ce_reg_lex_coarse_first_kl_leaf_identity",
+        ),
+        "HRN": (
+            "hrn_aircraft_level_conditional",
+            "hrn_aircraft_level_conditional_lex_coarse_first",
+        ),
+        "HT-CapsNet": (
+            "capsnet_aircraft",
+            "ht_capsnet_aircraft_lex_coarse_first",
+        ),
+    },
+}
 
-        specs.append(
+
+def run_specs(roots: Mapping | None = None) -> list[dict]:
+    """Expand a RUN_ROOTS mapping into the spec list the loaders consume.
+
+    ``roots`` is ``dataset -> substrate -> (baseline, lex)``; the baseline may be
+    one name or a list of candidates tried in order. Every other spec field is
+    derived, so selecting runs means editing the mapping and nothing else.
+    """
+
+    roots = DEFAULT_RUN_ROOTS if roots is None else roots
+    specs: list[dict] = []
+    for dataset_key, substrates in roots.items():
+        if dataset_key not in DATASETS:
+            raise KeyError(
+                f"unknown dataset {dataset_key!r}; add it to DATASETS or use one of "
+                f"{tuple(DATASETS)}"
+            )
+        dataset_label, dataset_code = DATASETS[dataset_key]
+        for substrate, pair in substrates.items():
+            baseline, lex_run = pair
+            family, prefix = SUBSTRATE_FAMILIES.get(substrate, (substrate, substrate[:2].upper()))
+            candidates = [baseline] if isinstance(baseline, (str, Path)) else list(baseline)
+            specs.append(
+                {
+                    "cell_id": f"{prefix}-{dataset_key}",
+                    "short_label": dataset_code,
+                    "family": family,
+                    "substrate": substrate,
+                    "dataset_key": dataset_key,
+                    "dataset": dataset_label,
+                    "baseline_candidates": [str(name) for name in candidates],
+                    "lex_run": str(lex_run),
+                }
+            )
+    return specs
+
+
+def run_roots_table(outputs_root: Path, roots: Mapping | None = None) -> pd.DataFrame:
+    """Return every configured pair and whether its directories exist.
+
+    Shown before the analysis so a mistyped or not-yet-finished selection is
+    visible instead of quietly missing from the tables below.
+    """
+
+    outputs_root = Path(outputs_root)
+    rows = []
+    for spec in run_specs(roots):
+        baseline_run = _resolve_baseline(outputs_root, spec["baseline_candidates"])
+        rows.append(
             {
-                "cell_id": f"HT-{dataset_key}",
-                "short_label": dataset_codes[dataset_key],
-                "family": "HT-CapsNet",
-                "substrate": "HT-CapsNet",
-                "dataset_key": dataset_key,
-                "dataset": dataset_label,
-                "baseline_candidates": [f"capsnet_{dataset_key}"],
-                "lex_run": f"ht_capsnet_{dataset_key}_lex_coarse_first",
+                "substrate": spec["substrate"],
+                "dataset": spec["dataset"],
+                "baseline_run": baseline_run,
+                "baseline_seeds": len(_completed_seeds(outputs_root, baseline_run)),
+                "lex_run": spec["lex_run"],
+                "lex_seeds": len(_completed_seeds(outputs_root, spec["lex_run"])),
             }
         )
-    return specs
+    table = pd.DataFrame(rows)
+    table["paired_seeds"] = table[["baseline_seeds", "lex_seeds"]].min(axis=1)
+    return table
+
 
 
 def _completed_seeds(outputs_root: Path, run_name: str) -> list[int]:
@@ -368,6 +456,27 @@ def _global_kl_value(config: Mapping) -> object:
     return loss.get("globalkl") if isinstance(loss, dict) else None
 
 
+def _readout_available(
+    seed_dir: Path,
+    decoder: str,
+    readout: str,
+    subspace_score_space: str,
+) -> bool:
+    """Return whether one seed can be read under this decoder and readout.
+
+    ``native`` always resolves from ``test_metrics.yaml``. The two post-hoc
+    readouts need ``posthoc_inference_test_metrics.yaml``, which is written by
+    ``evaluation/evaluate_checkpoints.py`` and is absent for runs that have not
+    been swept yet.
+    """
+
+    try:
+        selected_readout(seed_dir, decoder, readout, subspace_score_space)
+    except (FileNotFoundError, KeyError, ValueError):
+        return False
+    return True
+
+
 def collect_analysis(
     outputs_root: Path,
     run_specs: Sequence[Mapping],
@@ -399,6 +508,26 @@ def collect_analysis(
         baseline_seeds = set(_completed_seeds(outputs_root, baseline_run))
         lex_seeds = set(_completed_seeds(outputs_root, lex_run))
         seeds = sorted(baseline_seeds & lex_seeds)
+        unavailable = "missing completed paired seeds"
+        if seeds:
+            # The two post-hoc readouts need an evaluated result file in both
+            # arms. A cell without one is reported and dropped like any other
+            # missing cell, rather than failing the whole notebook.
+            readable = [
+                seed
+                for seed in seeds
+                if _readout_available(
+                    outputs_root / baseline_run / f"seed_{seed}",
+                    decoder, readout, subspace_score_space,
+                )
+                and _readout_available(
+                    outputs_root / lex_run / f"seed_{seed}",
+                    decoder, readout, subspace_score_space,
+                )
+            ]
+            if not readable:
+                unavailable = f"no seed evaluated for the {readout!r} readout"
+            seeds = readable
         if not seeds:
             audit_rows.append(
                 {
@@ -407,7 +536,7 @@ def collect_analysis(
                     "lex_run": lex_run,
                     "n": 0,
                     "config_matched": False,
-                    "comparison_scope": "missing completed paired seeds",
+                    "comparison_scope": unavailable,
                     "decoder": decoder,
                     "readout": readout,
                     "baseline_global_kl": None,

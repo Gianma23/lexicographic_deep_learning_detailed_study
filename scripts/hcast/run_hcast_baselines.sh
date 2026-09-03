@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs plain H-CAST baselines:
-# - hcast_<dataset>
-# for: cifar100, cub200, aircraft.
+# Plain H-CAST baselines on cifar100, cub200, aircraft.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

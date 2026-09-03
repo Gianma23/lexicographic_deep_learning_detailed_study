@@ -1024,11 +1024,11 @@ def post_projection_flag_keys(block: str, target: str, reference: str) -> Tuple[
 
 
 def _pre_keys_for_post(post_keys: Sequence[str]) -> Tuple[str, ...]:
-    """The pre-projection counterpart of each projected-cosine key.
+    """The pre-projection counterpart of each post-projection diagnostic key.
 
-    Canonical keys only drop the `post_` prefix; the legacy spellings also carry
-    a `_proj` marker on whichever operand was projected, which the raw key does
-    not have.
+    Canonical gradient-norm and cosine keys only drop the `post_` prefix; the
+    legacy cosine spellings also carry a `_proj` marker on whichever operand was
+    projected, which the raw key does not have.
     """
     pre_keys = []
     for key in post_keys:
@@ -2811,11 +2811,14 @@ class HCastAnalysis:
 
         for block, levels in logged.items():
             for level in levels:
+                pre_keys = block_metric_keys(grad_norm_key(block, level))
+                post_keys = block_metric_keys(grad_norm_key(block, level, post=True))
+                has_post = is_present(post_keys)
                 norms.append(
                     (
                         gradient_panel_title("grad_norm", block, level),
-                        block_metric_keys(grad_norm_key(block, level)),
-                        "norm",
+                        post_keys if has_post else pre_keys,
+                        "norm_combined" if has_post else "norm",
                     )
                 )
 
@@ -2917,6 +2920,8 @@ class HCastAnalysis:
         """Up to four figures per dataset, all indexed by exact gradient-support block.
 
         - ``gradient_norms``: how hard each level pushes on each shared block.
+          Runs with projection diagnostics show the post-projection norm solid
+          and its pre-projection counterpart dashed in the same panel.
         - ``gradient_alignment``: pairwise cosines, so conflict is signed. Runs
           with projection diagnostics show the post-projection curve solid and
           its pre-projection counterpart dashed in the same panel.
@@ -2959,12 +2964,15 @@ class HCastAnalysis:
                 ncols = 2 if group == "parameter_movement" else (
                     _panel_columns(len(panels)) if n_cols is None else max(1, int(n_cols))
                 )
-                has_combined_cosines = any(kind == "cosine_combined" for _, _, kind in panels)
+                has_combined_stages = any(
+                    kind in {"norm_combined", "cosine_combined"}
+                    for _, _, kind in panels
+                )
                 legend_labels = [
                     f"{run_data['label']}{suffix}"
                     for run_data in dataset_runs
                     for suffix in (
-                        ("", " (after)", " (before)") if has_combined_cosines else ("",)
+                        ("", " (after)", " (before)") if has_combined_stages else ("",)
                     )
                 ]
 
@@ -3023,16 +3031,16 @@ class HCastAnalysis:
         is_parameter_group: bool,
         ncols: int = 2,
     ) -> None:
-        is_combined_cosine = kind == "cosine_combined"
+        is_combined_stage = kind in {"norm_combined", "cosine_combined"}
         pre_keys: Tuple[str, ...] = ()
-        if is_combined_cosine:
+        if is_combined_stage:
             pre_keys = _pre_keys_for_post(metric_keys)
 
         drew_any = False
         for run_data in dataset_runs:
             epochs, values = get_train_metric_series_any(run_data["epoch_events"], metric_keys)
-            has_post = is_combined_cosine and np.any(np.isfinite(values))
-            if is_combined_cosine and not has_post:
+            has_post = is_combined_stage and np.any(np.isfinite(values))
+            if is_combined_stage and not has_post:
                 epochs, values = get_train_metric_series_any(run_data["epoch_events"], pre_keys)
             if not np.any(np.isfinite(values)):
                 continue
@@ -3075,10 +3083,29 @@ class HCastAnalysis:
             ax.set_yticks([0.0, 1.0], ["skipped", "applied"])
         else:
             if drew_any and log_scale_for_norms:
-                cache = [
-                    (run_data, {metric_keys[0]: get_train_metric_series_any(run_data["epoch_events"], metric_keys)})
-                    for run_data in dataset_runs
-                ]
+                cache = []
+                for run_data in dataset_runs:
+                    cache.append(
+                        (
+                            run_data,
+                            {
+                                metric_keys[0]: get_train_metric_series_any(
+                                    run_data["epoch_events"], metric_keys
+                                )
+                            },
+                        )
+                    )
+                    if is_combined_stage and pre_keys:
+                        cache.append(
+                            (
+                                run_data,
+                                {
+                                    metric_keys[0]: get_train_metric_series_any(
+                                        run_data["epoch_events"], pre_keys
+                                    )
+                                },
+                            )
+                        )
                 robust_range = get_positive_robust_range(cache, metric_keys[0])
                 if robust_range is not None:
                     ax.set_yscale("log")

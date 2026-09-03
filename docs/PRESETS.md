@@ -208,6 +208,13 @@ a study of the projection adaptation package, not an HRN reproduction.
 Checkpoints produced by the former factorised-linear projected branch are not
 state-dict compatible with this direct-head implementation and must be retrained.
 
+The launcher is `scripts/hrn/run_hrn_lhdnn_projection.sh`, which names these
+runs `projection`. It keeps `model.loss: level_conditional` and
+`train.gradient_blocks: [p123, p23, p3]`, matching the baseline and HCC arms:
+the conditional terms stay triangular under the projection, so the three
+gradient-support blocks are unchanged and the diagnostics remain comparable
+across arms.
+
 ## Hier-COS
 
 - `configs/hiercos/hiercos_cifar100.yaml`
@@ -230,11 +237,39 @@ Native Hier-COS additionally supports two taxonomy-size-derived modes. With
 mode weights the path/CE component while level regularisation remains
 unweighted.
 
+`model.softmax_detach` is a boolean that changes how `global_softmax_ce_reg`
+backpropagates and defaults to `false`. When it is off, the three level losses
+read one shared `log_softmax` over every node, so each level's loss gradient is
+dense over the other levels' nodes: that shared normaliser is what makes the
+cross-level gradient cosine negative, and it is also what lets a lower level
+write straight into a higher level's head. When it is on, each lower-priority
+level's normaliser detaches the higher-priority levels' logits, so level `l`
+keeps levels `>= l` live and is blind to the levels it must yield to. Loss
+*values* are identical either way — detach changes only the Jacobian — so this is
+a backward-only intervention in the same category as the LH projection's own
+`z - c + sg(c)`, and the objective it descends is only fixed within a step. The
+order is always coarse-first, because that is the order the LH projection's
+guarantee is stated for; gradient-space lexicographic mode does not need this
+flag at all, since it operates on parameter gradients and does not depend on head
+independence.
+The mode is rejected for `level_softmax_ce_reg`, whose per-level normalisers are
+already disjoint. Measured on the three `global_softmax_ce_reg` baselines,
+enabling it drives the share of the fine loss's node-space gradient landing
+on coarse/mid nodes from 0.44-0.55 to exactly 0 while keeping `sigma` negative
+(CIFAR-100 -1.05 -> -0.84, CUB -0.94 -> -0.37, Aircraft -0.85 -> -0.37);
+detaching every level symmetrically instead flips `sigma` positive. The launcher
+names these runs `global_det_softmax_ce_reg`.
+
 The optional `model.projection.enabled: true` path gives each level an
 LH-DNN-style projected learnable FC head. It concatenates the three head
 outputs and applies an identity or per-level block-diagonal frozen Hier-COS
 frame to the combined vector; a dense global frame is rejected because it
-would mix the independent LH-DNN branches.
+would mix the independent LH-DNN branches. For the same independence reason the
+projection requires `model.loss: level_softmax_ce_reg`, or
+`global_softmax_ce_reg` together with `model.softmax_detach: true`;
+plain `global_softmax_ce_reg` is rejected because its shared normaliser lets a
+level update a higher level's head directly, a route the projection does not
+cover.
 The projection retains the complete transformation, including its PReLU
 activations and both residual skips in `full` mode. It then inserts a shared
 channel-wise PReLU before the level heads and builds the projection matrix in

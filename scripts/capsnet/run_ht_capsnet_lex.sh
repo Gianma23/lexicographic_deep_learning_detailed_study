@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs native HT-CapsNet lexicographic training from the paper-baseline configs.
-# Defaults: all datasets, 100 epochs, start@0, coarse-first, and unit
-# per-level margin-loss weights (`model.loss.weight_mode=none`). The baseline
-# configs now use the same 100-epoch budget, so the `train.epochs=100` override
-# below is redundant and is kept only as an explicit guard; baseline-versus-lex
-# is therefore epoch-matched, though still not level-weight matched.
+# Native HT-CapsNet lexicographic training from the baseline configs.
+# Defaults: all datasets, 100 epochs, start@0, coarse_first, and unit per-level
+# margin-loss weights. Epoch-matched to the baselines, not level-weight matched.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -32,7 +29,7 @@ esac
 
 install_job_traps
 
-parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
+parse_choice_list DATASETS "cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {

@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the large-topology LH-DNN baseline on:
-# - CIFAR-100 (paper-aligned protocol)
-# - CUB-200-2011 and FGVC-Aircraft (explicit protocol extrapolations)
-#
-# The dataset configs define the fixed training protocol. Select a subset with,
-# for example: DATASETS="cub200 aircraft" ./scripts/lhdnn/run_lhdnn_baselines.sh
+# Large-topology LH-DNN baselines: CIFAR-100 (paper-aligned protocol), plus
+# CUB-200-2011 and FGVC-Aircraft as explicit protocol extrapolations. The
+# dataset configs define the fixed protocol; select a subset with DATASETS.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs native HRN lexicographic training from the paper-baseline configs using
-# three taxonomy-state marginal objectives. Defaults: all datasets, 100 epochs,
-# start@0, and coarse-first. The baseline configs now use the same 100-epoch
-# budget, so the `train.epochs=100` override below is redundant and is kept only
-# as an explicit guard; baseline-versus-lex is therefore epoch-matched.
+# Native HRN lexicographic training from the baseline configs, using the three
+# taxonomy-state marginal objectives. Defaults: all datasets, 100 epochs,
+# start@0, coarse_first. Epoch-matched to the baselines.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

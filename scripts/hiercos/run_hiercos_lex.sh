@@ -1,18 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS lexicographic variants:
-# - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
-# - model.weight_mode=${WEIGHT_MODE}
-# - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
-# - train.lexicographic.enabled=true
-# - train.lexicographic.projection_mode selected by LEX_PROJECTION_MODES
-# Defaults: cifar100 with coarse_first, at the matched Hier-COS baseline
-# objective and weighting (global_softmax_ce_reg + kl_leaf), so a lex-versus-
-# baseline comparison does not silently change the loss mode or the level
-# weights alongside the mechanism. Environment matrices can opt into the other
-# supported projection modes.
+# Hier-COS lexicographic arm. Defaults: cifar100 with coarse_first at the
+# matched baseline objective and weighting (global_softmax_ce_reg + kl_leaf), so
+# lex-versus-baseline does not also change the loss mode or level weights.
+# Knobs: DATASETS, LOSS_MODE, WEIGHT_MODE, FIXED_FRAME_MODE,
+# FIXED_FRAME_PER_LEVEL, LEX_PROJECTION_MODES.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

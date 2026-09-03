@@ -92,14 +92,18 @@ native aspect ratio; columns do not represent related classes across rows.}
 \section{Supplementary baseline results}
 \label{app:figures_baselines}
 
-\subsection{Complete wAP and AHD inference grid}
+\subsection{Complete leaf-accuracy, wAP and AHD inference grid}
 \label{app:baseline_inference_metrics}
 
 \Cref{tab:app_results_inference_wap_ahd} completes the frozen-baseline
 inference grid of \cref{tab:results_inference_grid}. The main table retains FPA
 and independent TICE because they are the two axes analysed in
 \cref{sec:results_inference}; the table below reports the two omitted scalar
-summaries, wAP and AHD. Per-level accuracy changes remain in
+summaries, wAP and AHD, together with the independent-decoding leaf accuracy
+$\mathrm{Acc}_3$. The two $\mathrm{Acc}_3$ columns make the leaf-to-path gap
+$\mathrm{Acc}_3-\mathrm{FPA}$ of \cref{ssec:results_readout} readable per row:
+its second term is the independent FPA of the same family, dataset and readout
+in \cref{tab:results_inference_grid}. Per-level accuracy changes remain in
 \cref{fig:baseline_readout_level}, where their sign pattern is the quantity of
 interest. As in the main table, each decoder uses its own validation-selected
 checkpoint, while the two readouts within one decoder share the same parameter
@@ -110,54 +114,58 @@ state.
 \caption{Complementary metrics for the untransformed inference grid on the
 frozen baselines. The columns cross the node-score and probability-space
 subspace-norm readouts with independent (ind.) and top-down (t.d.) decoding.
-wAP is reported in percent and AHD in raw units; higher wAP and lower AHD are
-better. Node score is native for all families except Hier-COS, for which
-subspace norm is native. Entries are three-seed mean $\pm$ sample standard
-deviation, with each decoder evaluated from its corresponding
+$\mathrm{Acc}_3$ is leaf accuracy and is reported for independent decoding
+only: under top-down decoding a correct leaf implies a correct path, so
+$\mathrm{Acc}_3$ coincides with the FPA of
+\cref{tab:results_inference_grid} and is not repeated. $\mathrm{Acc}_3$ and
+wAP are reported in percent and AHD in raw units; higher $\mathrm{Acc}_3$ and
+wAP and lower AHD are better. Node score is native for all families except
+Hier-COS, for which subspace norm is native. Entries are three-seed mean $\pm$
+sample standard deviation, with each decoder evaluated from its corresponding
 validation-selected checkpoint.}
 \label{tab:app_results_inference_wap_ahd}
 \resulttablesetup
-\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{1.2cm}|CC|CC@{}}
+\begin{tabularx}{\linewidth}{@{}L{2.0cm}L{1.2cm}|CCC|CCC@{}}
 \toprule
-& & \multicolumn{2}{c}{\texttt{node\_score}} & \multicolumn{2}{c}{\texttt{subspace\_norm}} \\
-\cmidrule(lr){3-4}\cmidrule(l){5-6}
-\textbf{Family} & \textbf{Decoder} & wAP$\uparrow$ & AHD$\downarrow$ & wAP$\uparrow$ & AHD$\downarrow$ \\
+& & \multicolumn{3}{c}{\texttt{node\_score}} & \multicolumn{3}{c}{\texttt{subspace\_norm}} \\
+\cmidrule(lr){3-5}\cmidrule(l){6-8}
+\textbf{Family} & \textbf{Decoder} & $\mathrm{Acc}_3\uparrow$ & wAP$\uparrow$ & AHD$\downarrow$ & $\mathrm{Acc}_3\uparrow$ & wAP$\uparrow$ & AHD$\downarrow$ \\
 \midrule
-\multicolumn{6}{@{}l}{\textbf{CIFAR-100} ($8\to20\to100$)} \\
-H-CAST     & ind. & \baselinemeanstd{78.31}{0.14} & \baselinemeanstd{0.511}{0.008} & \baselinemeanstd{77.91}{0.10} & \baselinemeanstd{0.485}{0.006} \\
-           & t.d. & \baselinemeanstd{77.54}{0.17} & \baselinemeanstd{0.493}{0.006} & \baselinemeanstd{77.85}{0.11} & \baselinemeanstd{0.485}{0.006} \\
-Hier-COS   & ind. & \baselinemeanstd{80.05}{0.17} & \baselinemeanstd{0.449}{0.003} & \baselinemeanstd{80.07}{0.20} & \baselinemeanstd{0.444}{0.003} \\
-           & t.d. & \baselinemeanstd{80.00}{0.17} & \baselinemeanstd{0.441}{0.004} & \baselinemeanstd{80.00}{0.13} & \baselinemeanstd{0.441}{0.003} \\
-HRN        & ind. & \baselinemeanstd{72.33}{0.19} & \baselinemeanstd{0.804}{0.006} & \baselinemeanstd{72.02}{0.23} & \baselinemeanstd{0.641}{0.003} \\
-           & t.d. & \baselinemeanstd{68.20}{0.69} & \baselinemeanstd{0.740}{0.016} & \baselinemeanstd{72.02}{0.48} & \baselinemeanstd{0.636}{0.010} \\
-HT-CapsNet & ind. & \baselinemeanstd{65.24}{0.04} & \baselinemeanstd{0.809}{0.002} & \baselinemeanstd{64.70}{0.14} & \baselinemeanstd{0.799}{0.003} \\
-           & t.d. & \baselinemeanstd{64.51}{0.23} & \baselinemeanstd{0.795}{0.007} & \baselinemeanstd{64.49}{0.24} & \baselinemeanstd{0.795}{0.007} \\
-LH-DNN     & ind. & \baselinemeanstd{54.69}{0.58} & \baselinemeanstd{1.199}{0.015} & \baselinemeanstd{53.72}{0.62} & \baselinemeanstd{1.107}{0.016} \\
-           & t.d. & \baselinemeanstd{51.61}{0.48} & \baselinemeanstd{1.164}{0.013} & \baselinemeanstd{53.69}{0.60} & \baselinemeanstd{1.107}{0.014} \\
+\multicolumn{8}{@{}l}{\textbf{CIFAR-100} ($8\to20\to100$)} \\
+H-CAST     & ind. & \baselinemeanstd{75.94}{0.20} & \baselinemeanstd{78.31}{0.14} & \baselinemeanstd{0.511}{0.008} & \baselinemeanstd{75.40}{0.06} & \baselinemeanstd{77.91}{0.10} & \baselinemeanstd{0.485}{0.006} \\
+           & t.d. & --- & \baselinemeanstd{77.54}{0.17} & \baselinemeanstd{0.493}{0.006} & --- & \baselinemeanstd{77.85}{0.11} & \baselinemeanstd{0.485}{0.006} \\
+Hier-COS   & ind. & \baselinemeanstd{77.80}{0.19} & \baselinemeanstd{80.05}{0.17} & \baselinemeanstd{0.449}{0.003} & \baselinemeanstd{77.80}{0.21} & \baselinemeanstd{80.07}{0.20} & \baselinemeanstd{0.444}{0.003} \\
+           & t.d. & --- & \baselinemeanstd{80.00}{0.17} & \baselinemeanstd{0.441}{0.004} & --- & \baselinemeanstd{80.00}{0.13} & \baselinemeanstd{0.441}{0.003} \\
+HRN        & ind. & \baselinemeanstd{70.38}{0.24} & \baselinemeanstd{72.33}{0.19} & \baselinemeanstd{0.804}{0.006} & \baselinemeanstd{69.27}{0.29} & \baselinemeanstd{72.02}{0.23} & \baselinemeanstd{0.641}{0.003} \\
+           & t.d. & --- & \baselinemeanstd{68.20}{0.69} & \baselinemeanstd{0.740}{0.016} & --- & \baselinemeanstd{72.02}{0.48} & \baselinemeanstd{0.636}{0.010} \\
+HT-CapsNet & ind. & \baselinemeanstd{61.62}{0.03} & \baselinemeanstd{65.24}{0.04} & \baselinemeanstd{0.809}{0.002} & \baselinemeanstd{60.96}{0.17} & \baselinemeanstd{64.70}{0.14} & \baselinemeanstd{0.799}{0.003} \\
+           & t.d. & --- & \baselinemeanstd{64.51}{0.23} & \baselinemeanstd{0.795}{0.007} & --- & \baselinemeanstd{64.49}{0.24} & \baselinemeanstd{0.795}{0.007} \\
+LH-DNN     & ind. & \baselinemeanstd{51.40}{0.58} & \baselinemeanstd{54.69}{0.58} & \baselinemeanstd{1.199}{0.015} & \baselinemeanstd{49.93}{0.67} & \baselinemeanstd{53.72}{0.62} & \baselinemeanstd{1.107}{0.016} \\
+           & t.d. & --- & \baselinemeanstd{51.61}{0.48} & \baselinemeanstd{1.164}{0.013} & --- & \baselinemeanstd{53.69}{0.60} & \baselinemeanstd{1.107}{0.014} \\
 \midrule
-\multicolumn{6}{@{}l}{\textbf{CUB-200-2011} ($13\to38\to200$)} \\
-H-CAST     & ind. & \baselinemeanstd{85.59}{0.13} & \baselinemeanstd{0.262}{0.002} & \baselinemeanstd{85.59}{0.12} & \baselinemeanstd{0.238}{0.001} \\
-           & t.d. & \baselinemeanstd{85.26}{0.12} & \baselinemeanstd{0.245}{0.001} & \baselinemeanstd{85.58}{0.13} & \baselinemeanstd{0.238}{0.001} \\
-Hier-COS   & ind. & \baselinemeanstd{79.72}{0.35} & \baselinemeanstd{0.372}{0.006} & \baselinemeanstd{79.58}{0.34} & \baselinemeanstd{0.366}{0.006} \\
-           & t.d. & \baselinemeanstd{79.35}{0.44} & \baselinemeanstd{0.368}{0.007} & \baselinemeanstd{79.44}{0.40} & \baselinemeanstd{0.365}{0.007} \\
-HRN        & ind. & \baselinemeanstd{85.82}{0.10} & \baselinemeanstd{0.285}{0.009} & \baselinemeanstd{85.89}{0.17} & \baselinemeanstd{0.230}{0.003} \\
-           & t.d. & \baselinemeanstd{84.32}{0.33} & \baselinemeanstd{0.270}{0.006} & \baselinemeanstd{85.74}{0.32} & \baselinemeanstd{0.233}{0.005} \\
-HT-CapsNet & ind. & \baselinemeanstd{35.68}{0.79} & \baselinemeanstd{1.372}{0.010} & \baselinemeanstd{33.86}{0.76} & \baselinemeanstd{1.537}{0.027} \\
-           & t.d. & \baselinemeanstd{33.92}{0.69} & \baselinemeanstd{1.342}{0.013} & \baselinemeanstd{28.44}{0.98} & \baselinemeanstd{1.527}{0.026} \\
-LH-DNN     & ind. & \baselinemeanstd{12.64}{0.61} & \baselinemeanstd{1.996}{0.015} & \baselinemeanstd{11.22}{0.59} & \baselinemeanstd{1.954}{0.016} \\
-           & t.d. & \baselinemeanstd{10.99}{0.24} & \baselinemeanstd{1.960}{0.001} & \baselinemeanstd{11.41}{0.29} & \baselinemeanstd{1.946}{0.001} \\
+\multicolumn{8}{@{}l}{\textbf{CUB-200-2011} ($13\to38\to200$)} \\
+H-CAST     & ind. & \baselinemeanstd{83.09}{0.16} & \baselinemeanstd{85.59}{0.13} & \baselinemeanstd{0.262}{0.002} & \baselinemeanstd{83.03}{0.14} & \baselinemeanstd{85.59}{0.12} & \baselinemeanstd{0.238}{0.001} \\
+           & t.d. & --- & \baselinemeanstd{85.26}{0.12} & \baselinemeanstd{0.245}{0.001} & --- & \baselinemeanstd{85.58}{0.13} & \baselinemeanstd{0.238}{0.001} \\
+Hier-COS   & ind. & \baselinemeanstd{76.55}{0.43} & \baselinemeanstd{79.72}{0.35} & \baselinemeanstd{0.372}{0.006} & \baselinemeanstd{76.38}{0.41} & \baselinemeanstd{79.58}{0.34} & \baselinemeanstd{0.366}{0.006} \\
+           & t.d. & --- & \baselinemeanstd{79.35}{0.44} & \baselinemeanstd{0.368}{0.007} & --- & \baselinemeanstd{79.44}{0.40} & \baselinemeanstd{0.365}{0.007} \\
+HRN        & ind. & \baselinemeanstd{83.49}{0.10} & \baselinemeanstd{85.82}{0.10} & \baselinemeanstd{0.285}{0.009} & \baselinemeanstd{83.34}{0.22} & \baselinemeanstd{85.89}{0.17} & \baselinemeanstd{0.230}{0.003} \\
+           & t.d. & --- & \baselinemeanstd{84.32}{0.33} & \baselinemeanstd{0.270}{0.006} & --- & \baselinemeanstd{85.74}{0.32} & \baselinemeanstd{0.233}{0.005} \\
+HT-CapsNet & ind. & \baselinemeanstd{28.60}{0.93} & \baselinemeanstd{35.68}{0.79} & \baselinemeanstd{1.372}{0.010} & \baselinemeanstd{27.00}{0.84} & \baselinemeanstd{33.86}{0.76} & \baselinemeanstd{1.537}{0.027} \\
+           & t.d. & --- & \baselinemeanstd{33.92}{0.69} & \baselinemeanstd{1.342}{0.013} & --- & \baselinemeanstd{28.44}{0.98} & \baselinemeanstd{1.527}{0.026} \\
+LH-DNN     & ind. & \baselinemeanstd{5.41}{0.55} & \baselinemeanstd{12.64}{0.61} & \baselinemeanstd{1.996}{0.015} & \baselinemeanstd{3.88}{0.57} & \baselinemeanstd{11.22}{0.59} & \baselinemeanstd{1.954}{0.016} \\
+           & t.d. & --- & \baselinemeanstd{10.99}{0.24} & \baselinemeanstd{1.960}{0.001} & --- & \baselinemeanstd{11.41}{0.29} & \baselinemeanstd{1.946}{0.001} \\
 \midrule
-\multicolumn{6}{@{}l}{\textbf{FGVC-Aircraft} ($30\to70\to100$)} \\
-H-CAST     & ind. & \baselinemeanstd{81.09}{0.61} & \baselinemeanstd{0.492}{0.013} & \baselinemeanstd{81.52}{0.51} & \baselinemeanstd{0.453}{0.011} \\
-           & t.d. & \baselinemeanstd{81.30}{0.67} & \baselinemeanstd{0.459}{0.016} & \baselinemeanstd{81.44}{0.57} & \baselinemeanstd{0.454}{0.014} \\
-Hier-COS   & ind. & \baselinemeanstd{85.38}{0.41} & \baselinemeanstd{0.393}{0.012} & \baselinemeanstd{85.44}{0.37} & \baselinemeanstd{0.384}{0.008} \\
-           & t.d. & \baselinemeanstd{85.50}{0.34} & \baselinemeanstd{0.381}{0.009} & \baselinemeanstd{85.60}{0.28} & \baselinemeanstd{0.378}{0.007} \\
-HRN        & ind. & \baselinemeanstd{84.54}{0.24} & \baselinemeanstd{0.460}{0.009} & \baselinemeanstd{85.22}{0.38} & \baselinemeanstd{0.371}{0.011} \\
-           & t.d. & \baselinemeanstd{83.46}{0.57} & \baselinemeanstd{0.421}{0.015} & \baselinemeanstd{85.19}{0.37} & \baselinemeanstd{0.371}{0.010} \\
-HT-CapsNet & ind. & \baselinemeanstd{49.31}{2.07} & \baselinemeanstd{1.467}{0.069} & \baselinemeanstd{46.94}{1.97} & \baselinemeanstd{1.706}{0.070} \\
-           & t.d. & \baselinemeanstd{48.74}{2.25} & \baselinemeanstd{1.421}{0.071} & \baselinemeanstd{39.33}{2.05} & \baselinemeanstd{1.699}{0.064} \\
-LH-DNN     & ind. & \baselinemeanstd{12.26}{0.20} & \baselinemeanstd{2.615}{0.004} & \baselinemeanstd{11.12}{0.38} & \baselinemeanstd{2.554}{0.010} \\
-           & t.d. & \baselinemeanstd{10.02}{0.44} & \baselinemeanstd{2.576}{0.013} & \baselinemeanstd{11.31}{0.57} & \baselinemeanstd{2.539}{0.017} \\
+\multicolumn{8}{@{}l}{\textbf{FGVC-Aircraft} ($30\to70\to100$)} \\
+H-CAST     & ind. & \baselinemeanstd{72.90}{1.05} & \baselinemeanstd{81.09}{0.61} & \baselinemeanstd{0.492}{0.013} & \baselinemeanstd{73.70}{0.77} & \baselinemeanstd{81.52}{0.51} & \baselinemeanstd{0.453}{0.011} \\
+           & t.d. & --- & \baselinemeanstd{81.30}{0.67} & \baselinemeanstd{0.459}{0.016} & --- & \baselinemeanstd{81.44}{0.57} & \baselinemeanstd{0.454}{0.014} \\
+Hier-COS   & ind. & \baselinemeanstd{81.48}{0.59} & \baselinemeanstd{85.38}{0.41} & \baselinemeanstd{0.393}{0.012} & \baselinemeanstd{81.55}{0.52} & \baselinemeanstd{85.44}{0.37} & \baselinemeanstd{0.384}{0.008} \\
+           & t.d. & --- & \baselinemeanstd{85.50}{0.34} & \baselinemeanstd{0.381}{0.009} & --- & \baselinemeanstd{85.60}{0.28} & \baselinemeanstd{0.378}{0.007} \\
+HRN        & ind. & \baselinemeanstd{79.37}{0.24} & \baselinemeanstd{84.54}{0.24} & \baselinemeanstd{0.460}{0.009} & \baselinemeanstd{80.02}{0.45} & \baselinemeanstd{85.22}{0.38} & \baselinemeanstd{0.371}{0.011} \\
+           & t.d. & --- & \baselinemeanstd{83.46}{0.57} & \baselinemeanstd{0.421}{0.015} & --- & \baselinemeanstd{85.19}{0.37} & \baselinemeanstd{0.371}{0.010} \\
+HT-CapsNet & ind. & \baselinemeanstd{42.56}{1.92} & \baselinemeanstd{49.31}{2.07} & \baselinemeanstd{1.467}{0.069} & \baselinemeanstd{41.94}{1.66} & \baselinemeanstd{46.94}{1.97} & \baselinemeanstd{1.706}{0.070} \\
+           & t.d. & --- & \baselinemeanstd{48.74}{2.25} & \baselinemeanstd{1.421}{0.071} & --- & \baselinemeanstd{39.33}{2.05} & \baselinemeanstd{1.699}{0.064} \\
+LH-DNN     & ind. & \baselinemeanstd{7.13}{0.37} & \baselinemeanstd{12.26}{0.20} & \baselinemeanstd{2.615}{0.004} & \baselinemeanstd{5.19}{0.26} & \baselinemeanstd{11.12}{0.38} & \baselinemeanstd{2.554}{0.010} \\
+           & t.d. & --- & \baselinemeanstd{10.02}{0.44} & \baselinemeanstd{2.576}{0.013} & --- & \baselinemeanstd{11.31}{0.57} & \baselinemeanstd{2.539}{0.017} \\
 \bottomrule
 \end{tabularx}
 \end{table}

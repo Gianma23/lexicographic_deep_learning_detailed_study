@@ -565,7 +565,7 @@ check that the decoder behaves as specified.
 \label{sec:fidelity}
 
 The five baselines come from separate codebases, frameworks and evaluation
-protocols. The unified implementation gives them common data splits, metrics and
+protocols. A unified implementation was made to give them common data splits, metrics and
 checkpoint-selection rules. This section records the source of each baseline,
 the shared rules and any differences from the published settings.
 
@@ -601,39 +601,13 @@ from the equations, figures and experiment description in
 \cite{fiaschi2024informed}. Differences from the paper may therefore come from
 this reconstruction.
 
-\subsection{Common evaluation protocol}
-\label{ssec:fidelity_protocol}
-
-All families use the same coarse-to-fine label order, dataset splits
-and label indices. Validation and test include every sample, and checkpoints are
-selected on validation data only. A run retains the mode-specific candidates
-defined in \cref{ssec:design_checkpoints}, but every paired post-hoc inference
-comparison uses one fixed, independently selected checkpoint. Metrics, logging,
-mixed-precision checks and resume validation are also shared.
-
-Every configuration is trained three times with seeds $0$, $1$ and $2$. The
-seed changes network initialisation and other random parts of training, but not
-the data splits. The CIFAR-100 and CUB-200-2011 validation splits
-(\cref{sec:dataset_analysis}) are built once with seed $0$ and reused in every
-run. All arms and seeds therefore use the same data. The same three training
-seeds are also used for every arm. This is called \emph{matched seeds} in the
-rest of the chapter. When two arms share seeds, their difference is computed for
-each seed before the results are averaged. Three runs allow a sample standard
-deviation to be reported, but they are not enough for a significance test. No
-such test is applied
-(\cref{ssec:design_threats}).
-
-These choices correct two behaviours present in some reference codebases:
-dropping incomplete evaluation batches and selecting results on test data. They
-also mean that the experiments below are controlled comparisons inside this
-framework, not exact reproductions of the published runs.
-
 \subsection{Model adaptations}
 \label{ssec:fidelity_classes}
 \label{ssec:fidelity_families}
 
 Three types of difference matter when reading the results. A
-\emph{protocol adaptation} applies the common rules above without changing the
+\emph{protocol adaptation} applies the common rules of
+\cref{ssec:fidelity_protocol} without changing the
 main computation of the method. A \emph{local extension}, such as HCC or
 lexicographic mode, adds a contribution of this thesis to a baseline. An
 \emph{unsupported extrapolation} runs a family on a dataset or hierarchy not
@@ -853,6 +827,33 @@ questions about how well the implementations match their sources and help answer
 isolate a mechanism because the complete architectures and training recipes
 differ. \Cref{sec:fidelity} treats reproducibility and comparability as setup
 requirements, not as separate research questions.
+
+\subsection{Common evaluation protocol}
+\label{ssec:fidelity_protocol}
+
+All families use the same coarse-to-fine label order, dataset splits
+and label indices. Validation and test include every sample, and checkpoints are
+selected on validation data only. A run retains the mode-specific candidates
+defined in \cref{ssec:design_checkpoints}, but every paired post-hoc inference
+comparison uses one fixed, independently selected checkpoint. Metrics, logging,
+mixed-precision checks and resume validation are also shared.
+
+Every configuration is trained three times with seeds $0$, $1$ and $2$. The
+seed changes network initialisation and other random parts of training, but not
+the data splits. The CIFAR-100 and CUB-200-2011 validation splits
+(\cref{sec:dataset_analysis}) are built once with seed $0$ and reused in every
+run. All the runs therefore use the same data. The same three training
+seeds are also used for every arm. This is called \emph{matched seeds} in the
+rest of the chapter. When two arms share seeds, their difference is computed for
+each seed before the results are averaged. Three runs allow a sample standard
+deviation to be reported, but they are not enough for a significance test. Thus, no
+such test is applied
+(\cref{ssec:design_threats}).
+
+These choices correct two behaviours present in some reference codebases:
+dropping incomplete evaluation batches and selecting results on test data. They
+also mean that the experiments below are controlled comparisons inside this
+framework, not exact reproductions of the published runs.
 
 \subsection{Checkpoint selection}
 \label{ssec:design_checkpoints}
@@ -1318,60 +1319,35 @@ limit both comparisons are documented in \cref{ssec:fidelity_classes}.
 \section{Baseline inference study}
 \label{sec:results_inference}
 
-All results in this section use the frozen baseline checkpoints of
-\cref{sec:results_baselines}. No parameters are trained, no loss is constructed,
-and all cells of one checkpoint come from a shared forward pass
-(\cref{ssec:inference_grid}). Within a decoder, changing the readout or the
-post-hoc transform holds the parameter state fixed and isolates that inference
-choice. Comparisons between decoders instead use the checkpoint selected for
-the corresponding mode, as required by \cref{ssec:design_checkpoints}; they
-compare complete selection-and-decoding pipelines. A trained mechanism must
-improve beyond the corresponding post-hoc effect before the difference can be
-attributed to learning. Checkpoints trained with a mechanism are deliberately
-excluded here: the same analysis is resumed only after all mechanism results,
-in \cref{sec:results_inference_priority}, for the explicit lexicographic and
-LH-projection arms.
+This study isolates three inference choices: the readout, the decoder and the
+optional post-hoc HCC transform. It re-evaluates the frozen baseline checkpoints
+of \cref{sec:results_baselines}; no model is retrained.
+For a fixed decoder, alternative readouts and transforms share the same
+checkpoint and forward pass, so their differences are pure inference effects.
+Comparisons between independent and top-down decoding instead use the checkpoint
+selected for each mode (\cref{ssec:design_checkpoints}) and therefore compare
+complete selection-and-decoding pipelines.
 
-The section varies one factor of the inference grid at a time, in the order in
-which \cref{sec:methodology_inference} defines them: the readout first, then the
-decoder, then the post-hoc transform. \Cref{ssec:results_readout} transplants
-the taxonomy-subspace readout onto families that were never trained for it and
-\cref{ssec:results_levels} identifies, level by level, the mechanism behind what
-it buys. \Cref{ssec:results_decoder} then asks what top-down decoding still
-contributes once a readout has been chosen, and \cref{ssec:results_posthoc}
-closes the grid with the HCC transform.
+\Cref{tab:results_inference_grid} reports the untransformed grid: two readouts
+crossed with two decoders on all three datasets. The discussion first compares
+the readouts, then the decoders, and finally adds HCC. FPA and TICE capture the
+main accuracy--consistency trade-off; wAP, AHD and $\operatorname{Acc}_3$ are reported in
+\cref{tab:app_results_inference_wap_ahd}. TICE is omitted for top-down decoding
+because it is zero by construction (\cref{prop:topdown_consistency}). Per-level
+accuracies are introduced only when they are needed to explain the FPA changes.
 
-\Cref{tab:results_inference_grid} carries the untransformed half of the grid ---
-both readouts crossed with both decoders, on all three datasets --- so that the
-readout comparison of \cref{ssec:results_readout} and the decoder comparison of
-\cref{ssec:results_decoder} can both be read off the same fifteen rows. Only FPA
-and TICE are tabulated: they are the two axes of the trade the section is about,
-and FPA is the checkpoint selection metric (\cref{ssec:inference_metrics}). wAP
-and AHD are omitted as summaries of quantities already shown; the complete
-values for every untransformed cell are retained in
-\cref{tab:app_results_inference_wap_ahd}. Per-level accuracies enter through
-\cref{fig:baseline_readout_level}, where they answer a specific question. TICE
-is quoted only under independent decoding, because
-\cref{prop:topdown_consistency} makes it identically zero under top-down
-decoding.
-
-Every subspace-norm result below is computed in probability space. H-CAST,
-LH-DNN and HT-CapsNet coordinates are mapped through a level-wise softmax, HRN
-through sigmoid at its two tree levels and softmax at its leaf head, and
-Hier-COS coordinates are left unchanged (\cref{ssec:inference_readout}). This
-prevents the norm from treating a large negative rejection logit as positive
-evidence. All aggregates are means plus one sample standard deviation over the
-three seeds.
+Subspace norms are computed as explained in (\cref{ssec:inference_readout}). All reported
+aggregates are the mean and one sample standard deviation over three seeds.
 
 \begin{table}[htbp]
 \centering
-\caption{Untransformed inference grid on the frozen baselines: both readouts
-crossed with both decoders. Each decoder is read from its own
-validation-selected checkpoint; within a decoder the two readouts share one
-parameter state, so a left-to-right change is an inference effect. TICE is
-identically zero under top-down decoding and is not repeated. Node score is
-native for all families except Hier-COS, for which subspace norm is native.
-Entries are three-seed mean $\pm$ sample standard deviation.}
+\caption{Inference grid for the frozen baselines. Each decoder uses
+its validation-selected checkpoint, while the two readouts within a decoder
+share the same parameter state. TICE is zero under top-down decoding and is not
+repeated. Node score is native to every family except Hier-COS, whose native
+readout is the subspace norm. Within each dataset and column, the best mean is
+bold and the second-best is underlined. Entries are three-seed mean $\pm$ sample
+standard deviation.}
 \label{tab:results_inference_grid}
 \resulttablesetup
 \begin{tabularx}{\linewidth}{@{}L{2.0cm}|CCC|CCC@{}}
@@ -1383,23 +1359,23 @@ Entries are three-seed mean $\pm$ sample standard deviation.}
 \textbf{Family} & FPA$\uparrow$ & TICE$\downarrow$ & FPA$\uparrow$ & FPA$\uparrow$ & TICE$\downarrow$ & FPA$\uparrow$ \\
 \midrule
 \multicolumn{7}{@{}l}{\textbf{CIFAR-100} ($8\to20\to100$)} \\
-H-CAST     & \baselinemeanstd{73.48}{0.19} & \baselinemeanstd{7.61}{0.29} & \baselinemeanstd{75.01}{0.18} & \baselinemeanstd{75.34}{0.05} & \baselinemeanstd{0.21}{0.03} & \baselinemeanstd{75.32}{0.12} \\
-Hier-COS   & \baselinemeanstd{77.21}{0.13} & \baselinemeanstd{2.32}{0.05} & \baselinemeanstd{77.74}{0.18} & \baselinemeanstd{77.52}{0.16} & \baselinemeanstd{1.04}{0.04} & \baselinemeanstd{77.74}{0.14} \\
-HRN        & \baselinemeanstd{61.76}{0.34} & \baselinemeanstd{20.45}{0.17} & \baselinemeanstd{65.32}{0.76} & \baselinemeanstd{69.19}{0.29} & \baselinemeanstd{0.28}{0.03} & \baselinemeanstd{69.20}{0.55} \\
+H-CAST     & \baselinemeanstd{\underline{73.48}}{0.19} & \baselinemeanstd{\underline{7.61}}{0.29} & \baselinemeanstd{\underline{75.01}}{0.18} & \baselinemeanstd{\underline{75.34}}{0.05} & \baselinemeanstd{\mathbf{0.21}}{0.03} & \baselinemeanstd{\underline{75.32}}{0.12} \\
+Hier-COS   & \baselinemeanstd{\mathbf{77.21}}{0.13} & \baselinemeanstd{\mathbf{2.32}}{0.05} & \baselinemeanstd{\mathbf{77.74}}{0.18} & \baselinemeanstd{\mathbf{77.52}}{0.16} & \baselinemeanstd{1.04}{0.04} & \baselinemeanstd{\mathbf{77.74}}{0.14} \\
+HRN        & \baselinemeanstd{61.76}{0.34} & \baselinemeanstd{20.45}{0.17} & \baselinemeanstd{65.32}{0.76} & \baselinemeanstd{69.19}{0.29} & \baselinemeanstd{\underline{0.28}}{0.03} & \baselinemeanstd{69.20}{0.55} \\
 HT-CapsNet & \baselinemeanstd{59.87}{0.21} & \baselinemeanstd{7.63}{0.43} & \baselinemeanstd{60.76}{0.23} & \baselinemeanstd{60.60}{0.17} & \baselinemeanstd{1.95}{0.06} & \baselinemeanstd{60.73}{0.24} \\
 LH-DNN     & \baselinemeanstd{45.57}{0.48} & \baselinemeanstd{17.90}{0.44} & \baselinemeanstd{47.82}{0.51} & \baselinemeanstd{49.83}{0.69} & \baselinemeanstd{0.44}{0.04} & \baselinemeanstd{49.92}{0.66} \\
 \midrule
 \multicolumn{7}{@{}l}{\textbf{CUB-200-2011} ($13\to38\to200$)} \\
-H-CAST     & \baselinemeanstd{81.27}{0.33} & \baselinemeanstd{5.24}{0.41} & \baselinemeanstd{82.68}{0.15} & \baselinemeanstd{83.02}{0.15} & \baselinemeanstd{0.03}{0.02} & \baselinemeanstd{83.02}{0.15} \\
-Hier-COS   & \baselinemeanstd{75.79}{0.46} & \baselinemeanstd{2.36}{0.04} & \baselinemeanstd{76.13}{0.52} & \baselinemeanstd{76.15}{0.42} & \baselinemeanstd{0.60}{0.19} & \baselinemeanstd{76.21}{0.47} \\
-HRN        & \baselinemeanstd{80.56}{0.29} & \baselinemeanstd{6.21}{0.14} & \baselinemeanstd{81.73}{0.38} & \baselinemeanstd{83.31}{0.24} & \baselinemeanstd{0.10}{0.02} & \baselinemeanstd{83.20}{0.36} \\
+H-CAST     & \baselinemeanstd{\mathbf{81.27}}{0.33} & \baselinemeanstd{\underline{5.24}}{0.41} & \baselinemeanstd{\mathbf{82.68}}{0.15} & \baselinemeanstd{\underline{83.02}}{0.15} & \baselinemeanstd{\mathbf{0.03}}{0.02} & \baselinemeanstd{\underline{83.02}}{0.15} \\
+Hier-COS   & \baselinemeanstd{75.79}{0.46} & \baselinemeanstd{\mathbf{2.36}}{0.04} & \baselinemeanstd{76.13}{0.52} & \baselinemeanstd{76.15}{0.42} & \baselinemeanstd{0.60}{0.19} & \baselinemeanstd{76.21}{0.47} \\
+HRN        & \baselinemeanstd{\underline{80.56}}{0.29} & \baselinemeanstd{6.21}{0.14} & \baselinemeanstd{\underline{81.73}}{0.38} & \baselinemeanstd{\mathbf{83.31}}{0.24} & \baselinemeanstd{\underline{0.10}}{0.02} & \baselinemeanstd{\mathbf{83.20}}{0.36} \\
 HT-CapsNet & \baselinemeanstd{24.48}{0.74} & \baselinemeanstd{24.43}{1.09} & \baselinemeanstd{26.56}{0.79} & \baselinemeanstd{21.14}{1.18} & \baselinemeanstd{25.95}{1.44} & \baselinemeanstd{21.53}{1.02} \\
 LH-DNN     & \baselinemeanstd{2.33}{0.23} & \baselinemeanstd{63.05}{1.97} & \baselinemeanstd{3.66}{0.31} & \baselinemeanstd{3.85}{0.57} & \baselinemeanstd{1.05}{0.17} & \baselinemeanstd{4.00}{0.39} \\
 \midrule
 \multicolumn{7}{@{}l}{\textbf{FGVC-Aircraft} ($30\to70\to100$)} \\
-H-CAST     & \baselinemeanstd{70.73}{1.04} & \baselinemeanstd{9.09}{0.10} & \baselinemeanstd{73.47}{0.92} & \baselinemeanstd{73.67}{0.77} & \baselinemeanstd{0.14}{0.06} & \baselinemeanstd{73.60}{0.83} \\
-Hier-COS   & \baselinemeanstd{80.86}{0.61} & \baselinemeanstd{2.91}{0.29} & \baselinemeanstd{81.66}{0.46} & \baselinemeanstd{81.40}{0.52} & \baselinemeanstd{0.78}{0.13} & \baselinemeanstd{81.74}{0.43} \\
-HRN        & \baselinemeanstd{75.65}{0.24} & \baselinemeanstd{11.21}{0.18} & \baselinemeanstd{78.22}{0.72} & \baselinemeanstd{79.97}{0.41} & \baselinemeanstd{0.19}{0.12} & \baselinemeanstd{79.95}{0.48} \\
+H-CAST     & \baselinemeanstd{70.73}{1.04} & \baselinemeanstd{\underline{9.09}}{0.10} & \baselinemeanstd{73.47}{0.92} & \baselinemeanstd{73.67}{0.77} & \baselinemeanstd{\mathbf{0.14}}{0.06} & \baselinemeanstd{73.60}{0.83} \\
+Hier-COS   & \baselinemeanstd{\mathbf{80.86}}{0.61} & \baselinemeanstd{\mathbf{2.91}}{0.29} & \baselinemeanstd{\mathbf{81.66}}{0.46} & \baselinemeanstd{\mathbf{81.40}}{0.52} & \baselinemeanstd{0.78}{0.13} & \baselinemeanstd{\mathbf{81.74}}{0.43} \\
+HRN        & \baselinemeanstd{\underline{75.65}}{0.24} & \baselinemeanstd{11.21}{0.18} & \baselinemeanstd{\underline{78.22}}{0.72} & \baselinemeanstd{\underline{79.97}}{0.41} & \baselinemeanstd{\underline{0.19}}{0.12} & \baselinemeanstd{\underline{79.95}}{0.48} \\
 HT-CapsNet & \baselinemeanstd{39.03}{2.06} & \baselinemeanstd{20.28}{1.21} & \baselinemeanstd{41.81}{1.98} & \baselinemeanstd{31.85}{2.12} & \baselinemeanstd{41.17}{1.50} & \baselinemeanstd{32.44}{1.76} \\
 LH-DNN     & \baselinemeanstd{1.96}{0.23} & \baselinemeanstd{80.71}{1.31} & \baselinemeanstd{3.85}{0.38} & \baselinemeanstd{4.94}{0.11} & \baselinemeanstd{4.71}{0.77} & \baselinemeanstd{5.23}{0.56} \\
 \bottomrule
@@ -1409,385 +1385,310 @@ LH-DNN     & \baselinemeanstd{1.96}{0.23} & \baselinemeanstd{80.71}{1.31} & \bas
 \subsection{Node score vs. subspace norm}
 \label{ssec:results_readout}
 
-Hier-COS bundles a frozen orthonormal frame, a subspace-norm readout and a level
-regulariser, and the published narrative attaches the benefit to the frame
-(\cref{ssec:design_substrate}). Because the readout is definable on any family
-(\cref{ssec:inference_readout}), half of that bundle can be tested directly:
-the subspace-norm rule is applied here to checkpoints that were never trained
-with a frame at all. A gain that survives the transplant belongs to the readout;
-one that does not is evidence for the frame, which the ladder of
-\cref{ssec:results_frame} then localises further.
+The subspace norm was introduced as part of Hier-COS, together with an
+orthonormal frame and a level regulariser (\cref{ssec:design_substrate}). The
+readout itself, however, can be applied to any model. Applying it to checkpoints
+that were not trained with such a frame separates the effect of the readout from
+the effect of Hier-COS training.
 
-\begin{figure}[p]
+Under independent decoding, the subspace norm raises FPA and lowers TICE in
+thirteen of the fifteen family--dataset pairs. All three seeds agree on the
+direction of every FPA change. FPA gains range from $0.31$~pp for Hier-COS on
+CIFAR-100 to $7.43$~pp for HRN on the same dataset. The largest TICE reductions
+are $20.16$~pp for HRN on CIFAR-100 and $62.01$ and $76.00$~pp for LH-DNN on CUB
+and Aircraft.
+
+The leaf-to-path gap explains these gains. Here $\operatorname{Acc}_3$ is
+accuracy at the finest, or leaf, level. As shown in
+\cref{eq:fpa_tice_relation}, the difference
+$\operatorname{Acc}_3-\mathrm{FPA}$ measures the fraction of samples whose leaf
+is correct but whose complete predicted path is not. It therefore captures wrong ancestors paired with a correct
+leaf, but not inconsistent predictions whose leaf is already wrong. The gap is
+$0.59$--$8.62$~pp with node scores and falls to $0.01$--$0.36$~pp with the
+subspace norm in the thirteen successful pairs. For example, on Aircraft only
+$27.6\%$ of LH-DNN's correct leaves belong to a fully correct path under node
+scores, compared with $95.3\%$ under the subspace norm. FPA therefore rises from
+$1.96$ to $4.94\%$ even though leaf accuracy falls.
+
+The two exceptions are HT-CapsNet on CUB and Aircraft. Its FPA falls by $3.34$
+and $7.18$~pp, while TICE rises by $1.51$ and $20.89$~pp. The per-level analysis
+below shows that most of this damage occurs at the coarsest level.
+
+The most revealing cross-family result is TICE
+(\cref{fig:baseline_cross_model_tradeoff_subspace}). Although Hier-COS introduced
+the subspace norm as its native readout, both H-CAST and HRN achieve lower TICE
+with it on every dataset: $0.21\%$ and $0.28\%$ against $1.04\%$ on CIFAR-100,
+$0.03\%$ and $0.10\%$ against $0.60\%$ on CUB, and $0.14\%$ and $0.19\%$ against
+$0.78\%$ on Aircraft. The consistency benefit of the readout is therefore not
+specific to the Hier-COS frame or training objective.
+
+Lower TICE does not imply that H-CAST or HRN dominates Hier-COS, because FPA
+also matters. Hier-COS and H-CAST form the FPA--TICE frontier on CIFAR-100; HRN
+and H-CAST form it on CUB; and all three are on the frontier for Aircraft.
+Applying the same readout to HRN and Hier-COS also narrows their Aircraft FPA gap
+from $5.75$ to $1.43$~pp. No model is best on both metrics across all datasets.
+
+\begin{figure}[htbp]
 \centering
-\includegraphics[width=\linewidth]{images/experiments/inference/cross_model_fpa_tice_subspace_norm_independent.pdf}
-\caption[Cross-model trade-off under subspace-norm inference]{Cross-model
-FPA--TICE trade-off when the three leading frozen baselines --- H-CAST, HRN and
-Hier-COS --- are read by the probability-space subspace norm and decoded
-independently. LH-DNN and HT-CapsNet are omitted from this figure to resolve the
-competitive region but remain reported in \cref{tab:results_inference_grid}.
-Plotting conventions are those of
-\cref{fig:baseline_cross_model_tradeoff}. The same independently selected
-checkpoints are used in both figures, so movement between them is a readout
-effect within each run; comparisons between families remain comparisons of
-complete recipes.}
+\includegraphics[width=0.8\linewidth]{images/experiments/inference/cross_model_fpa_tice_subspace_norm_independent.pdf}
+\caption[Cross-model trade-off under subspace-norm inference]{FPA--TICE trade-off
+for H-CAST, HRN and Hier-COS with the probability-space subspace norm and
+independent decoding. LH-DNN and HT-CapsNet remain in
+\cref{tab:results_inference_grid} but are omitted here to show the competitive
+region more clearly. The same independently selected checkpoints are used as in
+\cref{fig:baseline_cross_model_tradeoff}, so movement between the two figures is
+a readout effect within each run.}
 \label{fig:baseline_cross_model_tradeoff_subspace}
 \end{figure}
 
-Read across the independent columns of \cref{tab:results_inference_grid},
-the subspace norm raises FPA and lowers TICE in thirteen of the fifteen rows,
-and all three seeds agree on the direction of every FPA change. The FPA gains
-run from $0.31$~pp for Hier-COS on CIFAR-100, whose native readout this already
-is, to $7.43$~pp for HRN on the same dataset; the TICE reductions run to
-$20.16$~pp for that HRN row and to $62.01$ and $76.00$~pp for LH-DNN on CUB and
-Aircraft.
+\FloatBarrier
 
-What the readout does is best stated as a single quantity. Under independent
-decoding a model can predict the correct leaf and still fail FPA, because the
-ancestors it predicts separately do not lie on that leaf's path; the size of
-that failure is $\mathrm{Acc}_3-\mathrm{FPA}$, which top-down decoding
-drives to exactly zero by construction. At the node-score readout this gap is
-$0.59$--$8.62$~pp across the fifteen rows. At the subspace norm it is
-$0.01$--$0.36$~pp in thirteen of them. The readout therefore reaches, without a
-decoder, the property that top-down decoding exists to guarantee. LH-DNN on
-Aircraft shows the mechanism at its clearest: only $27.6\%$ of its correct
-leaves sat on a correct path under node scores, against $95.3\%$ under the
-subspace norm, which is why its FPA rises from $1.96$ to $4.94\%$ even though
-its fine accuracy falls.
-
-The two rules are alternatives in a precise sense, and the terms are used that
-way throughout. Top-down decoding is the \emph{hard} rule: it makes an
-inconsistent path unreachable, by restricting each level's argmax to the
-children of the level above. The subspace norm is its \emph{soft} counterpart:
-it forbids nothing, and instead folds a node's ancestors into its own score, so
-that a path whose levels disagree is outranked rather than excluded.
-\Cref{ssec:results_decoder} measures what the hard rule still adds once the soft
-one is in place.
-
-The two exceptions are both HT-CapsNet fine-grained extrapolations. Its CUB FPA
-falls by $3.34$~pp and its Aircraft FPA by $7.18$~pp, while TICE rises by $1.51$
-and $20.89$~pp; the leaf-to-path gap moves the wrong way as well, to $5.87$ and
-$10.09$~pp. \Cref{fig:baseline_readout_level} locates the cause at the coarsest
-level. A coarse subspace contains all descendant coordinates, so its norm
-exposes the upper prediction to subtree size and to the calibration of both
-lower-level heads. The observation is therefore consistent with a poorly
-calibrated identity-frame transplant on the imbalanced fine-grained taxonomies;
-it does not establish whether taxonomy shape or HT-CapsNet's $64$-pixel
-extrapolation is the primary cause.
-
-\Cref{fig:baseline_cross_model_tradeoff_subspace} shows that the readout also
-changes the cross-family Pareto relation. On CIFAR-100, Hier-COS retains the
-largest FPA ($77.52\%$), but H-CAST now has lower TICE ($0.21\%$ against
-$1.04\%$), so both are Pareto-optimal. On CUB, HRN moves from being dominated by
-H-CAST to the largest FPA ($83.31\%$); H-CAST retains the lower TICE ($0.03\%$
-against $0.10\%$), and the two dominate Hier-COS. On Aircraft, Hier-COS, HRN and
-H-CAST all lie on the frontier: respectively $(81.40,0.78)$, $(79.97,0.19)$ and
-$(73.67,0.14)$ in $(\mathrm{FPA},\mathrm{TICE})$ percent. Put against
-native readouts, the rule narrows HRN's Aircraft FPA gap to Hier-COS from
-$5.75$~pp --- Hier-COS at its native subspace norm against HRN at its native
-node score --- to $1.43$~pp once both are read the same way. It does not
-produce a single winner on both axes.
-
-These transplants identify a readout effect, not a frame effect. In particular,
-the gains for H-CAST, HRN and LH-DNN show that a non-identity orthonormal frame
-is not necessary for subspace aggregation to help a frozen checkpoint. They do
-not show that Hier-COS's frame is unnecessary during training; that question
-requires the controlled frame ladder of \cref{ssec:results_frame}. Nor may the
-gain be read as better recognition: the next subsection splits the same paired
-change per level, and finds that it is bought at the coarse and middle levels
-and often paid for at the leaf.
-
-\subsection{Where the subspace readout acts}
+\subsection{Per-level effect of the subspace readout}
 \label{ssec:results_levels}
 
-FPA alone cannot say which of two mechanisms produces the gain of
-\cref{ssec:results_readout}. Better leaf recognition and cross-level
-reconciliation are both consistent with a higher FPA, and they differ in their
-signature across the levels: the first would raise $\mathrm{Acc}_3$, while
-the second would raise $\mathrm{Acc}_1$ and $\mathrm{Acc}_2$ and may
-spend part of the leaf to do it. \Cref{fig:baseline_readout_level} separates
-them by splitting the same paired change per level. Level accuracies are shown
-here rather than tabulated because the claim is about the sign pattern across
-three levels within a row, which is what the figure makes directly visible.
+To distinguish better recognition from better cross-level agreement,
+\cref{fig:baseline_readout_level} splits the same readout change by hierarchy
+level. Better recognition would increase leaf accuracy, whereas reconciliation
+should mainly improve the upper levels and may reduce leaf accuracy.
 
-\begin{figure}[p]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{images/experiments/inference/baseline_readout_level_gain.pdf}
-\caption[Per-level accuracy change from node score to subspace norm]{Per-level
-accuracy change when a frozen baseline is re-read with the probability-space
-subspace norm instead of its node score, under independent decoding. Each bar is
-$\mathrm{Acc}^{\text{sub}}_l-\mathrm{Acc}^{\text{node}}_l$ in
-percentage points, formed per seed and then averaged over the three seeds; error
-bars are the sample standard deviation of that paired per-seed effect and a
-dagger marks an effect whose sign is not shared by all three seeds. Both
-readouts are evaluated on the same parameter state, so every bar is an inference
-effect and not a training difference. Colour encodes the level; the sign is read
-from the side of the zero line.}
+\caption[Per-level accuracy change from node score to subspace norm]{Change in
+per-level accuracy when the probability-space subspace norm replaces the node
+score under independent decoding. Each bar shows
+$\mathrm{Acc}^{\text{sub}}_l-\mathrm{Acc}^{\text{node}}_l$ in percentage points,
+averaged over three paired seeds; error bars show one sample standard deviation.
+A dagger marks an effect whose sign differs across seeds. Both readouts use the
+same checkpoint.}
 \label{fig:baseline_readout_level}
 \end{figure}
 
-The reconciliation signature is the one that appears. Coarse accuracy rises in
-twelve of the fifteen rows and fine accuracy falls in eleven of them. HRN on
-CIFAR-100 is the clearest case: $+2.39$~pp at the coarse level and $+2.59$~pp at
-the middle level against $-1.10$~pp at the leaf, which is the composition that
-turns into $+7.43$~pp of FPA. LH-DNN behaves the same way on CUB and Aircraft,
-where coarse accuracy rises by $0.31$ and $0.78$~pp while both lower levels
-fall, and FPA still rises by $1.52$ and $2.98$~pp: the readout is not finding
-more leaves, it is stopping the leaves it already had from being orphaned by
-their own ancestors.
+The observed pattern is mainly reconciliation: coarse accuracy increases in
+twelve of the fifteen pairs, while leaf accuracy decreases in eleven. For HRN
+on CIFAR-100, the changes are $+2.39$~pp at the coarse level, $+2.59$~pp at the
+middle level and $-1.10$~pp at the leaf, producing a $7.43$~pp FPA gain. LH-DNN
+shows the same pattern on CUB and Aircraft: despite lower accuracy at the two
+deeper levels, its FPA rises by $1.52$ and $2.98$~pp because fewer correct leaves
+are paired with incorrect ancestors.
 
-Two qualifications follow from the same figure. First, the trade is not
-mandatory. H-CAST on Aircraft gains at the coarse level and at the leaf at once,
-$+0.17$ and $+0.80$~pp, so ancestor evidence can also remove a wrong
-cross-parent competitor rather than only exchanging leaf accuracy for coherence.
-Hier-COS moves by at most $0.17$~pp at any level on any dataset, as expected for
-a model already trained to be read this way. Second, the HT-CapsNet failures
-start at the top: $-5.90$~pp of coarse accuracy on CUB and $-8.57$~pp on
-Aircraft, against $-1.66$ and $-2.20$~pp at the middle level and $-1.59$ and
-$-0.62$~pp at the leaf. The damage shrinks monotonically with depth, which is
-the signature of a coarse subspace that aggregates a large and badly calibrated
-descendant set, not of a leaf-level recognition failure. On CIFAR-100, whose
-subtrees are uniform, the same model's coarse change is $+0.08$~pp.
+This trade-off is not universal. H-CAST on Aircraft improves at both the coarse
+level ($+0.17$~pp) and the leaf ($+0.80$~pp), while Hier-COS changes by at most
+$0.17$~pp at any level because it was already trained for this readout. The
+HT-CapsNet failures begin at the top: coarse accuracy falls by $5.90$~pp on CUB
+and $8.57$~pp on Aircraft, with progressively smaller losses at deeper levels.
+A coarse subspace aggregates many descendant coordinates, so it is especially
+sensitive to subtree size and calibration. This is consistent with a poorly
+calibrated transplant on the imbalanced fine-grained taxonomies, although the
+results cannot separate that effect from the $64$-pixel HT-CapsNet
+extrapolation. On the more uniform CIFAR-100 hierarchy, its coarse accuracy
+instead changes by $+0.08$~pp.
+
+\FloatBarrier
 
 \subsection{Independent vs. top-down decoding}
 \label{ssec:results_decoder}
 
-Top-down decoding sets TICE to zero by construction
-(\cref{prop:topdown_consistency}) and can only alter levels $l\ge2$, at the
-possible cost of fine-level accuracy: a sample whose coarse prediction is wrong
-is necessarily misclassified below it. The decoder is therefore a trade ---
-consistency bought against fine-level accuracy --- and, now that the readout has
-been fixed, the question is how much of that trade is still available. The answer
-is not a single number but a conditioning, so \cref{fig:baseline_decoder_gain}
-gives each readout its own plot on one shared scale.
+Top-down decoding restricts each prediction to the children of the class chosen
+at the previous level. It therefore guarantees zero TICE
+(\cref{prop:topdown_consistency}), but it also propagates an incorrect coarse
+decision to every deeper level. \Cref{fig:baseline_decoder_gain} measures this
+trade-off separately for the two readouts.
 
-\begin{figure}[p]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{images/experiments/inference/baseline_decoder_gain.pdf}
-\caption[Top-down FPA change under both readouts]{Relative test-FPA change from
-the independent to the top-down pipeline: one plot per untransformed readout,
-sharing a single horizontal scale so that the two are directly comparable. The
-difference is paired by seed, but each side uses its own validation-selected
-checkpoint. Error bars are one sample standard deviation of the paired effect and
-a dagger marks a change whose sign is not shared by all three seeds. A bar whose
-independent FPA is below $5\%$ --- the collapsed LH-DNN baselines --- carries no
-error bar and does not set the axis; where it also runs past the common scale it
-is drawn to the edge with an arrow and its value printed inside.}
+\caption[Top-down FPA change under both readouts]{Relative FPA change from the
+independent to the top-down pipeline, shown separately for each readout on a
+common scale. Results are paired by seed, but each decoder uses its own
+validation-selected checkpoint. Error bars show one sample standard deviation;
+a dagger marks a change whose sign differs across seeds. Bars based on an
+independent FPA below $5\%$ are shown without error bars and do not determine the
+axis range.}
 \label{fig:baseline_decoder_gain}
 \end{figure}
 
-Under the node-score readout the decoder is worth having. It raises FPA in all
-fifteen rows of \cref{tab:results_inference_grid} by $0.35$--$3.56$~pp, while
-setting TICE to zero. HRN on CIFAR-100 is the extreme case, $61.76\to65.32\%$.
-The gain is not better leaf recognition: the restricted decoder converts
-otherwise inconsistent tuples into correct complete paths while also propagating
-some coarse errors downwards, and the second effect costs fine accuracy --- under
-top-down decoding $\mathrm{Acc}_3$ equals the tabulated FPA, and it is the lower
-of the two fine accuracies in thirteen of the fifteen rows. Hier-COS, whose
-independent node-score TICE is already $2.32$--$2.91\%$, has only
-$0.35$--$0.80$~pp to gain. A large TICE does not imply a large repairable set
-either: LH-DNN's CUB and Aircraft TICE values of $63.05\%$ and $80.71\%$ yield
-only $1.33$ and $1.89$~pp more FPA, because a valid path remains wrong when the
-coarse decision that anchors it is wrong.
+With node scores, top-down decoding raises FPA in all fifteen pairs by
+$0.35$--$3.56$~pp while setting TICE to zero. The largest gain is for HRN on
+CIFAR-100, from $61.76$ to $65.32\%$. This improvement comes from repairing some
+inconsistent predictions, not from recognising more leaves. Indeed, top-down
+leaf accuracy is lower than independent leaf accuracy in thirteen pairs because
+coarse errors are propagated downward. Nor is every inconsistency repairable:
+LH-DNN has TICE values of $63.05\%$ on CUB and $80.71\%$ on Aircraft, yet gains
+only $1.33$ and $1.89$~pp in FPA because many paths remain consistently wrong.
 
-Under the subspace-norm readout the same decoder is worth almost nothing. Every
-top-down FPA in the right-hand block of \cref{tab:results_inference_grid} is
-within $0.59$~pp of the independent FPA beside it, the extremes being $-0.12$~pp
-for HRN on CUB and $+0.59$~pp for HT-CapsNet on Aircraft, and in ten of the
-fifteen rows the sign of the change is not shared by all three seeds. The two
-plots of \cref{fig:baseline_decoder_gain} are the same statement in relative
-terms: with node scores the complete pipeline improves FPA for every family and
-dataset, whereas after the readout the change is at most $0.42\%$ relative for
-the competitive H-CAST, HRN and Hier-COS rows.
+With the subspace norm, top-down decoding adds little. Its FPA is always within
+$0.59$~pp of independent decoding, from $-0.12$~pp for HRN on CUB to $+0.59$~pp
+for HT-CapsNet on Aircraft. The sign differs across seeds in ten of the fifteen
+pairs, and the relative change is at most $0.42\%$ for the competitive H-CAST,
+HRN and Hier-COS results. Large relative changes for LH-DNN on CUB and Aircraft
+are ratios to collapsed FPA values below $5\%$.
 
-The decoder effect is therefore conditional on the readout, and the conditioning
-runs one way: a soft aggregation of ancestor evidence has already performed the
-cross-level reconciliation that the hard decoder would otherwise supply, which
-is exactly the per-level signature of \cref{ssec:results_levels}. What remains
-after it is within seed noise. The large relative LH-DNN bars on CUB and
-Aircraft are ratios to collapsed FPA values below $5\%$ and are not evidence of
-a competitive result.
+The two readouts therefore leave different roles for the decoder. Node scores do
+not coordinate the levels, so the hard top-down restriction can help. The
+subspace norm already combines ancestor evidence with each node score and
+provides a soft form of the same reconciliation; after that, the remaining
+decoder effect is mostly within seed variation. \Cref{fig:baseline_topdown_recovery}
+then compares independent subspace-norm decoding directly with top-down decoding
+under each model's native readout.
 
-\begin{figure}[p]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{images/experiments/inference/baseline_topdown_recovery.pdf}
 \caption[Subspace-norm inference against native top-down decoding]{Independent
-subspace-norm FPA minus native-readout top-down FPA, in percentage points and
-paired by seed. Unlike \cref{fig:baseline_decoder_gain}, which holds the readout
-fixed and varies only the decoder, each bar here compares two complete
-pipelines: the subspace norm decoded independently against each checkpoint's own
-readout decoded top-down --- node score for H-CAST, HRN, HT-CapsNet and LH-DNN,
-and the subspace norm itself for Hier-COS, whose row is marked $*$ because it
-therefore holds the readout fixed and measures only the decoder. Each side uses
-the checkpoint selected for its own decoder. Positive bars mean that the soft
-readout matches or exceeds the hard decoder in FPA; they do not imply equal
-consistency, because only top-down decoding has TICE exactly zero. A dagger
-marks disagreement in the sign across seeds.}
+subspace-norm FPA minus top-down FPA with each model's native readout, in
+percentage points. Each pipeline uses the checkpoint selected for its decoder.
+Positive values favour the independent subspace-norm pipeline, although only
+top-down decoding guarantees zero TICE. Hier-COS rows are marked $*$ because its
+native readout is already the subspace norm. Results are paired by seed; a
+dagger marks disagreement in the sign across seeds.}
 \label{fig:baseline_topdown_recovery}
 \end{figure}
 
-\Cref{fig:baseline_topdown_recovery} puts the two pipelines head to head, which
-is the strongest form of the same statement: the soft readout under independent
-decoding against the hard decoder on each checkpoint's native readout.
-Independent subspace-norm FPA exceeds native top-down FPA by $0.20$--$0.33$~pp
-for H-CAST and by $1.58$--$3.87$~pp for HRN, while leaving at most $0.28\%$
-residual TICE. This is not an equivalence of rules or of checkpoints, and the
-residual TICE is not zero; but it does show that the useful part of top-down
-restriction can be expressed as a soft aggregation of ancestor evidence.
-The exceptions are again the two HT-CapsNet fine-grained transplants, at
-$-5.42$ and $-9.96$~pp, for the reason \cref{ssec:results_levels} located at the
-coarsest level. Hier-COS is not an exception but a degenerate row: the subspace
-norm already \emph{is} its native readout, so both sides of its bar share one
-readout and the comparison collapses to the decoder effect of
-\cref{fig:baseline_decoder_gain} with the sign reversed, $-0.06$ to
+Independent subspace-norm FPA exceeds native-readout top-down FPA by
+$0.20$--$0.33$~pp for H-CAST and $1.58$--$3.87$~pp for HRN, with at most
+$0.28\%$ residual TICE. Thus the soft readout captures most of the useful
+reconciliation supplied by top-down decoding, although it does not guarantee
+perfect consistency. HT-CapsNet on CUB and Aircraft remains the exception, with
+differences of $-5.42$ and $-9.96$~pp caused mainly by the coarse-level failure
+identified in \cref{ssec:results_levels}. For Hier-COS, both pipelines use the
+subspace norm, so the comparison reduces to the decoder effect: $-0.06$ to
 $-0.34$~pp.
+
+\FloatBarrier
 
 \subsection{Post-hoc HCC}
 \label{ssec:results_posthoc}
 
-The HCC transform can be applied to a checkpoint trained without it, at no
-training cost. This control separates a pure inference-time correction from the
-additional effect of training under the constraint (\cref{ssec:design_locus}),
-and a trained arm has to beat it before anything can be attributed to learning.
+HCC can also be applied to a checkpoint that was trained without it. This
+post-hoc setting measures the effect of the transform alone; a trained HCC model
+must improve on this control before a gain can be attributed to learning under
+the constraint (\cref{ssec:design_locus}).
 
-What the transform can move depends on the readout (\cref{ssec:inference_grid}).
-When \texttt{node\_score} ranks the coordinate value directly, the projection
-shifts every sibling group by one constant (\cref{cor:hcc_sibling_shift}), which
-cannot reorder a sibling set and so cannot change any top-down metric: the
-measurable effect is confined to independent decoding, where it comes from
-comparisons between classes with different parents. The invariance holds neither
-for the Hier-COS magnitude convention nor for a subspace norm, which mixes
-coordinates from more than one level. \Cref{fig:baseline_posthoc_hcc} therefore
-shows independent decoding only, and the last column of
-\cref{tab:results_posthoc_hcc} carries the top-down case as a check.
+The effect depends on the readout. With node scores, HCC adds the same constant
+to every sibling (\cref{cor:hcc_sibling_shift}). Their order is unchanged, so
+top-down predictions cannot change; only independent comparisons across
+different parents can move. This invariance does not apply to Hier-COS, which
+ranks magnitudes, or to the subspace norm, which combines coordinates from
+several levels. \Cref{fig:baseline_posthoc_hcc} summarises the independent
+effects, while \cref{tab:results_posthoc_hcc} gives the exact values. The
+top-down invariance was verified separately and is reported below.
 
-\begin{figure}[p]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{images/experiments/inference/baseline_posthoc_hcc.pdf}
-\caption[Post-hoc HCC on both metrics at once]{Effect of applying HCC post hoc
-to each frozen baseline under independent decoding, on both metrics at once.
-Each point is one family--dataset cell: its horizontal position is the FPA
-change and its vertical position the TICE change the transform makes on the same
-checkpoint and readout, in percentage points, formed per seed and then averaged
-over the three seeds; the bars are the sample standard deviation of those paired
-effects. Deltas are raw and not sign-adjusted, as in
-\cref{tab:results_posthoc_hcc}, so right is better on FPA and down is better on
-TICE, and the two shaded corners are the quadrants in which the two metrics
-agree. Both axes are symmetric-log with a linear region of $\pm1$~pp, because the
-effects span two orders of magnitude. The top-down invariance check of
-\cref{tab:results_posthoc_hcc} is not plotted: it is identically zero for every
-value-readout family.}
+\caption[Post-hoc HCC on both metrics at once]{Change in FPA and TICE after HCC
+is applied post hoc under independent decoding. Each point represents one
+family--dataset--readout combination on the same checkpoint; bars show one
+sample standard deviation over three paired seeds. Rightward movement improves
+FPA and downward movement improves TICE. The symmetric-log axes have a linear
+region of $\pm1$~pp.}
 \label{fig:baseline_posthoc_hcc}
 \end{figure}
 
 \begin{table}[htbp]
 \centering
-\caption{Effect of applying HCC post hoc to each frozen baseline under
-independent decoding. Each $\Delta$ is HCC-transform minus no-transform on the
-same checkpoint and readout, in percentage points, so a positive TICE difference
-is unfavourable. The last column gives the node-score FPA change under top-down
-decoding and tests the value-readout invariance. Entries are three-seed mean
-$\pm$ sample standard deviation.}
+\caption{Effect of post-hoc HCC under independent decoding. Each $\Delta$ is HCC
+minus no transform on the same checkpoint and readout, in percentage points; a
+positive TICE change is unfavourable. Entries are three-seed mean $\pm$ sample
+standard deviation.}
 \label{tab:results_posthoc_hcc}
 \resulttablesetup
-\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{1.7cm}|CC|CC|C@{}}
+\begin{tabularx}{\linewidth}{@{}L{1.7cm}L{1.7cm}|CC|CC@{}}
 \toprule
-& & \multicolumn{2}{c}{$\Delta$ at \texttt{node\_score}} & \multicolumn{2}{c}{$\Delta$ at \texttt{subspace\_norm}} & \textbf{Check} \\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(l){7-7}
-\textbf{Family} & \textbf{Dataset} & FPA$\uparrow$ & TICE$\downarrow$ & FPA$\uparrow$ & TICE$\downarrow$ & $\Delta\mathrm{FPA}^{\mathrm{t.d.}}_{\mathrm{node}}$ \\
+& & \multicolumn{2}{c}{$\Delta$ at \texttt{node\_score}} & \multicolumn{2}{c}{$\Delta$ at \texttt{subspace\_norm}} \\
+\cmidrule(lr){3-4}\cmidrule(l){5-6}
+\textbf{Family} & \textbf{Dataset} & FPA$\uparrow$ & TICE$\downarrow$ & FPA$\uparrow$ & TICE$\downarrow$ \\
 \midrule
-H-CAST     & CIFAR-100 & \baselinemeanstd{-1.57}{0.14} & \baselinemeanstd{+4.24}{0.05} & \baselinemeanstd{-0.06}{0.13} & \baselinemeanstd{-0.14}{0.03} & \baselinemeanstd{+0.00}{0.00} \\
-           & CUB-200   & \baselinemeanstd{-2.19}{0.18} & \baselinemeanstd{+3.53}{0.35} & \baselinemeanstd{-0.09}{0.07} & \baselinemeanstd{+0.05}{0.01} & \baselinemeanstd{+0.00}{0.00} \\
-           & Aircraft  & \baselinemeanstd{+0.22}{0.11} & \baselinemeanstd{+0.43}{0.48} & \baselinemeanstd{+0.06}{0.12} & \baselinemeanstd{-0.03}{0.03} & \baselinemeanstd{+0.01}{0.02} \\
+H-CAST     & CIFAR-100 & \baselinemeanstd{-1.57}{0.14} & \baselinemeanstd{+4.24}{0.05} & \baselinemeanstd{-0.06}{0.13} & \baselinemeanstd{-0.14}{0.03} \\
+           & CUB-200   & \baselinemeanstd{-2.19}{0.18} & \baselinemeanstd{+3.53}{0.35} & \baselinemeanstd{-0.09}{0.07} & \baselinemeanstd{+0.05}{0.01} \\
+           & Aircraft  & \baselinemeanstd{+0.22}{0.11} & \baselinemeanstd{+0.43}{0.48} & \baselinemeanstd{+0.06}{0.12} & \baselinemeanstd{-0.03}{0.03} \\
 \midrule
-Hier-COS   & CIFAR-100 & \baselinemeanstd{-32.45}{3.42} & \baselinemeanstd{+31.85}{3.42} & \baselinemeanstd{-19.23}{1.24} & \baselinemeanstd{+4.10}{1.63} & \baselinemeanstd{-32.24}{3.68} \\
-           & CUB-200   & \baselinemeanstd{-9.26}{3.19} & \baselinemeanstd{+5.11}{3.75} & \baselinemeanstd{-6.47}{1.57} & \baselinemeanstd{+0.89}{0.99} & \baselinemeanstd{-9.28}{3.06} \\
-           & Aircraft  & \baselinemeanstd{-22.76}{1.43} & \baselinemeanstd{+5.44}{2.84} & \baselinemeanstd{-21.82}{1.26} & \baselinemeanstd{+1.61}{0.99} & \baselinemeanstd{-22.85}{1.57} \\
+Hier-COS   & CIFAR-100 & \baselinemeanstd{-32.45}{3.42} & \baselinemeanstd{+31.85}{3.42} & \baselinemeanstd{-19.23}{1.24} & \baselinemeanstd{+4.10}{1.63} \\
+           & CUB-200   & \baselinemeanstd{-9.26}{3.19} & \baselinemeanstd{+5.11}{3.75} & \baselinemeanstd{-6.47}{1.57} & \baselinemeanstd{+0.89}{0.99} \\
+           & Aircraft  & \baselinemeanstd{-22.76}{1.43} & \baselinemeanstd{+5.44}{2.84} & \baselinemeanstd{-21.82}{1.26} & \baselinemeanstd{+1.61}{0.99} \\
 \midrule
-HRN        & CIFAR-100 & \baselinemeanstd{-5.37}{0.07} & \baselinemeanstd{+12.36}{0.54} & \baselinemeanstd{-2.81}{0.22} & \baselinemeanstd{+6.24}{0.07} & \baselinemeanstd{+0.00}{0.00} \\
-           & CUB-200   & \baselinemeanstd{-10.53}{0.24} & \baselinemeanstd{+14.57}{0.42} & \baselinemeanstd{-27.56}{0.10} & \baselinemeanstd{+31.88}{0.05} & \baselinemeanstd{+0.00}{0.00} \\
-           & Aircraft  & \baselinemeanstd{-13.35}{0.44} & \baselinemeanstd{+17.23}{0.51} & \baselinemeanstd{-10.79}{0.45} & \baselinemeanstd{+12.45}{0.48} & \baselinemeanstd{+0.00}{0.00} \\
+HRN        & CIFAR-100 & \baselinemeanstd{-5.37}{0.07} & \baselinemeanstd{+12.36}{0.54} & \baselinemeanstd{-2.81}{0.22} & \baselinemeanstd{+6.24}{0.07} \\
+           & CUB-200   & \baselinemeanstd{-10.53}{0.24} & \baselinemeanstd{+14.57}{0.42} & \baselinemeanstd{-27.56}{0.10} & \baselinemeanstd{+31.88}{0.05} \\
+           & Aircraft  & \baselinemeanstd{-13.35}{0.44} & \baselinemeanstd{+17.23}{0.51} & \baselinemeanstd{-10.79}{0.45} & \baselinemeanstd{+12.45}{0.48} \\
 \midrule
-HT-CapsNet & CIFAR-100 & \baselinemeanstd{+0.09}{0.02} & \baselinemeanstd{-0.39}{0.13} & \baselinemeanstd{+0.01}{0.02} & \baselinemeanstd{-0.09}{0.04} & \baselinemeanstd{+0.00}{0.00} \\
-           & CUB-200   & \baselinemeanstd{+0.02}{0.13} & \baselinemeanstd{+2.61}{0.34} & \baselinemeanstd{+0.46}{0.17} & \baselinemeanstd{-0.70}{0.42} & \baselinemeanstd{+0.00}{0.00} \\
-           & Aircraft  & \baselinemeanstd{+0.69}{0.19} & \baselinemeanstd{-2.03}{0.37} & \baselinemeanstd{+0.76}{0.14} & \baselinemeanstd{-1.88}{0.33} & \baselinemeanstd{+0.00}{0.00} \\
+HT-CapsNet & CIFAR-100 & \baselinemeanstd{+0.09}{0.02} & \baselinemeanstd{-0.39}{0.13} & \baselinemeanstd{+0.01}{0.02} & \baselinemeanstd{-0.09}{0.04} \\
+           & CUB-200   & \baselinemeanstd{+0.02}{0.13} & \baselinemeanstd{+2.61}{0.34} & \baselinemeanstd{+0.46}{0.17} & \baselinemeanstd{-0.70}{0.42} \\
+           & Aircraft  & \baselinemeanstd{+0.69}{0.19} & \baselinemeanstd{-2.03}{0.37} & \baselinemeanstd{+0.76}{0.14} & \baselinemeanstd{-1.88}{0.33} \\
 \midrule
-LH-DNN     & CIFAR-100 & \baselinemeanstd{-17.71}{0.32} & \baselinemeanstd{+47.11}{0.30} & \baselinemeanstd{-0.39}{0.33} & \baselinemeanstd{-0.16}{0.07} & \baselinemeanstd{+0.00}{0.00} \\
-           & CUB-200   & \baselinemeanstd{-1.96}{0.19} & \baselinemeanstd{+31.46}{3.17} & \baselinemeanstd{-0.23}{0.05} & \baselinemeanstd{+0.39}{0.13} & \baselinemeanstd{+0.00}{0.00} \\
-           & Aircraft  & \baselinemeanstd{-1.55}{0.12} & \baselinemeanstd{+17.22}{0.66} & \baselinemeanstd{-1.13}{0.30} & \baselinemeanstd{+0.93}{1.63} & \baselinemeanstd{+0.00}{0.00} \\
+LH-DNN     & CIFAR-100 & \baselinemeanstd{-17.71}{0.32} & \baselinemeanstd{+47.11}{0.30} & \baselinemeanstd{-0.39}{0.33} & \baselinemeanstd{-0.16}{0.07} \\
+           & CUB-200   & \baselinemeanstd{-1.96}{0.19} & \baselinemeanstd{+31.46}{3.17} & \baselinemeanstd{-0.23}{0.05} & \baselinemeanstd{+0.39}{0.13} \\
+           & Aircraft  & \baselinemeanstd{-1.55}{0.12} & \baselinemeanstd{+17.22}{0.66} & \baselinemeanstd{-1.13}{0.30} & \baselinemeanstd{+0.93}{1.63} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-Post-hoc HCC is not a generic consistency repair. Its affine equalities relate
-parent coordinates to sums of child coordinates; they do not require the
-largest child to belong to the independently predicted parent.
-\Cref{fig:baseline_posthoc_hcc} states the consequence jointly: of the thirty
-family--dataset--readout cells, twenty lose FPA and add TICE at once and only
-six improve both, five of those six being HT-CapsNet. At the signed
-node-score interface, the transform worsens both FPA and TICE for H-CAST on
-CIFAR-100 and CUB, for HRN on all three datasets, and for LH-DNN everywhere.
-The LH-DNN CIFAR row is especially clear: FPA falls by $17.71$~pp while TICE
-rises by $47.11$~pp. HT-CapsNet is the only family for which the node-score
-transform gives a small mean FPA gain on every dataset, $0.02$--$0.69$~pp, and
-even there TICE improves only on CIFAR-100 and Aircraft.
+Post-hoc HCC does not generally repair inconsistent predictions. Its affine
+equalities relate each parent coordinate to the sum of its children, but they do
+not force the largest child to belong to the independently selected parent. As a
+result, twenty of the thirty family--dataset--readout combinations lose FPA and
+increase TICE, while only six improve both metrics; five of those six are
+HT-CapsNet. With node scores, HCC worsens both metrics for H-CAST on CIFAR-100
+and CUB, for HRN on every dataset, and for LH-DNN everywhere. The largest example
+is LH-DNN on CIFAR-100, where FPA falls by $17.71$~pp and TICE rises by
+$47.11$~pp. HT-CapsNet is the only family with a mean FPA gain on all three
+datasets ($0.02$--$0.69$~pp), although its TICE improves only on CIFAR-100 and
+Aircraft.
 
-The interaction with the readout separates two regimes. For H-CAST the HCC
-transform changes subspace-norm FPA by no more than $0.09$~pp, compared with
-losses of $1.57$ and $2.19$~pp at node score on CIFAR-100 and CUB. This is
-consistent with the subspace norm already absorbing the ancestor evidence that
-the affine shift tries to introduce, which is the effect
-\cref{ssec:results_levels} located at the upper levels. HRN is not robust to the
-composition: HCC before the subspace readout loses $27.56$~pp of FPA on CUB and
-$10.79$~pp on Aircraft. This post-hoc HRN path projects the auxiliary leaf score
-used by evaluation, not the leaf tree branch corrected during HRN training, so
-it is a diagnostic of the common output interface rather than a reconstruction
-of a trained HRN--HCC forward pass.
+The subspace norm changes this interaction differently across families. For
+H-CAST, post-hoc HCC changes FPA by at most $0.09$~pp, compared with node-score
+losses of $1.57$~pp on CIFAR-100 and $2.19$~pp on CUB. This supports the earlier
+finding that the subspace norm already incorporates ancestor evidence. HRN is
+much less stable: applying HCC before the subspace readout reduces FPA by
+$27.56$~pp on CUB and $10.79$~pp on Aircraft. Here the post-hoc transform acts on
+the auxiliary leaf score used for evaluation, not on the leaf tree branch used
+during HRN training. It is therefore a test of the shared output interface, not
+a reconstruction of a trained HRN--HCC model.
 
-Hier-COS is harmed under both readouts. Its frame objective makes coordinate
-magnitude carry evidence while leaving sign unconstrained; a signed affine
-projection can therefore move or cancel evidence before the magnitude or norm
-is taken. The resulting FPA losses are $6.47$--$21.82$~pp even at its native
-subspace readout. These results do not contradict the HCC residual guarantee:
-the projected coordinates can satisfy the linear equalities while giving a
-worse argmax path.
+Hier-COS is harmed under both readouts. Its objective uses coordinate magnitude
+as evidence but does not constrain the sign, so a signed affine projection can
+weaken or cancel evidence before the magnitude or norm is computed. Even with
+its native subspace readout, FPA falls by $6.47$--$21.82$~pp. This does not
+violate the HCC guarantee: the projected coordinates can satisfy the affine
+equalities and still produce a worse argmax path.
 
-The final column supplies the algebraic check. At node score, top-down FPA is
-unchanged for the four value-readout families, apart from one Aircraft
-prediction across the three H-CAST seeds ($+0.01\pm0.02$~pp), consistent with a
-finite-precision tie. Hier-COS is not invariant because it ranks coordinate
-magnitudes. Consequently, the trained-HCC results below are compared with this
-value-readout, locus-specific post-hoc control rather than with an assumed universal
-benefit. The LH-DNN rows remain genuine measurements even though LH-DNN has no
-trained HCC arm: applying the transform requires logits and a taxonomy, not
-training support.
+Top-down decoding behaves as the algebra predicts. Under the node-score
+readout, top-down FPA is unchanged for the four value-readout families, the
+largest deviation being a single finite-precision tie for H-CAST on Aircraft
+($+0.01\pm0.02$~pp). Hier-COS is not invariant because it ranks magnitudes: its
+top-down FPA falls by $32.24\pm3.68$~pp on CIFAR-100, $9.28\pm3.06$~pp on CUB
+and $22.85\pm1.57$~pp on Aircraft, tracking its independent losses and showing
+that the damage occurs within sibling groups rather than only across parents. The trained-HCC results below are
+therefore compared with the appropriate post-hoc control rather than with an
+assumed benefit. LH-DNN has no trained HCC arm, but its post-hoc rows remain
+valid because the transform requires only logits and the taxonomy.
 
-\subsection{Baseline inference configuration}
+\FloatBarrier
+
+\subsection{Summary and reporting choices}
 \label{ssec:results_inference_summary}
 
-Three findings fix how the mechanism sections that follow are read.
+The study leads to three conclusions:
 
-First, the readout is the factor that matters, and it acts by reconciliation
-rather than recognition: the probability-space subspace norm improves thirteen
-of the fifteen rows and closes the leaf-to-path gap to at most $0.36$~pp in those
-thirteen, buying it at the coarse and middle levels, while the two HT-CapsNet
-fine-grained failures delimit the claim. Second, the decoder is worth having
-only under node scores; after the readout the difference between the two
-decoders is within seed noise, and the soft readout under independent decoding
-even matches or exceeds hard top-down decoding on FPA for H-CAST and HRN. Third,
-post-hoc HCC is a signed control, not a correction assumed to help: twenty of
-its thirty family--dataset--readout cells lose FPA and add TICE at once, and the
-effect ranges from a $0.76$~pp FPA gain for HT-CapsNet on Aircraft to losses
-above $20$~pp for Hier-COS and HRN.
+\begin{enumerate}
+    \item The subspace norm mainly improves agreement between levels, rather
+    than leaf recognition. It improves thirteen of fifteen pairs and reduces
+    their leaf-to-path gap to at most $0.36$~pp. HT-CapsNet on the two
+    fine-grained datasets is the exception.
+    \item Top-down decoding is useful with node scores, but adds little after the
+    subspace norm. Independent subspace-norm decoding matches or exceeds native
+    top-down FPA for H-CAST and HRN, although only top-down decoding guarantees
+    zero TICE.
+    \item Post-hoc HCC is a control, not a generally beneficial correction.
+    Twenty of thirty combinations lose FPA and increase TICE.
+\end{enumerate}
 
-The mechanism sections nonetheless retain each family's native readout --- node
-score for H-CAST, HRN, HT-CapsNet and LH-DNN, subspace norm for Hier-COS --- so
-that their main rows are not chosen after seeing this inference grid, and carry
-the subspace norm as a diagnostic instead. Independent and top-down results
-likewise remain separate and use their corresponding validation-selected
-checkpoints; top-down is not collapsed into independent despite the near-zero
-difference under the subspace norm, because only top-down decoding has TICE
-exactly zero.
+The following mechanism sections retain each family's native readout: node score
+for H-CAST, HRN, HT-CapsNet and LH-DNN, and subspace norm for Hier-COS. This
+avoids choosing the main configuration after observing the inference grid. Independent and top-down
+results also remain separate and use their own validation-selected checkpoints.
+The inference grid is revisited in \cref{sec:results_inference_priority} after
+lexicographic and LH-projection training.
 
 \FloatBarrier
 

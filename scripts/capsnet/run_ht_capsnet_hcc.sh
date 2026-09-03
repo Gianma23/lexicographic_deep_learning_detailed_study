@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the HT-CapsNet + HCC arm (HCC generalized from H-CAST, see
-# models/common/hcc.py) on top of the plain HT-CapsNet baseline configs:
-# - capsnet_<dataset>_hcc
-# for: cifar100, cub200, aircraft.
-#
-# HCC is a binary on/off switch; there is no onset/alpha/temperature ablation.
-# Caveat: HT-CapsNet's `logits_per_level` are capsule-length margins
-# (safe_norm, in [0, inf)), not free real-valued classifier logits, and the
-# margin loss compares them against fixed thresholds (margin_m_pos/
-# margin_m_neg). HCC's unconstrained linear correction can push corrected
-# values outside what the margin loss was designed for; treat results here as
-# an exploratory ablation, not evidence with the same strength as H-CAST/HRN.
+# HT-CapsNet + HCC arm on top of the plain baseline configs (cifar100, cub200,
+# aircraft). HCC is a binary on/off switch. Caveat: HT-CapsNet's per-level
+# logits are capsule-length margins, so HCC's unconstrained linear correction
+# can leave the range the margin loss assumes; treat this arm as exploratory.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

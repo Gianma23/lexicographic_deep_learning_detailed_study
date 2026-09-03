@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the selected H-CAST lexicographic matrix. Lexicographic projection is
-# always active for the whole run. Override with whitespace-separated DATASETS
-# or with LEX_PROJECTION_MODE to select another priority order.
-#
-# Starts from the plain H-CAST baseline config for each dataset and adds the
-# lexicographic block as CLI overrides, so `configs/hcast/` keeps only base
-# presets. `model.loss.globalkl=false` is required by lexicographic H-CAST.
+# H-CAST lexicographic arm: the plain baseline config plus the lexicographic
+# block as CLI overrides, active for the whole run. Select with DATASETS and
+# LEX_PROJECTION_MODE. `model.loss.globalkl=false` is required by lex H-CAST.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

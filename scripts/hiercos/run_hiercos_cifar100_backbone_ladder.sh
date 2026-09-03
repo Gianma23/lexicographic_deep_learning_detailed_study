@@ -1,54 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the CIFAR-100 Hier-COS backbone-capacity ladder: the same WideResNet
-# trunk at reduced depth/width, holding everything else at the settings of the
-# existing WRN-28-8 anchor runs.
-# - model.variant stays haframe_wide_resnet (the CIFAR-native from-scratch trunk)
-# - model.wide_depth / model.wide_widen_factor selected by WRN_SIZES
-# - model.loss=${LOSS_MODE}, model.weight_mode=${WEIGHT_MODE}
-# - model.fixed_frame_mode=${FIXED_FRAME_MODE}, per-level=${FIXED_FRAME_PER_LEVEL}
-# - one arm per entry in MECHANISMS (baseline / lex_coarse_first / lex_fine_first)
-# The planned sensitivity uses two training seeds per new rung; pass NUM_RUNS=2
-# explicitly because the project .env may supply the global three-seed default.
-# The existing WRN-28-8 anchors retain their three-seed coverage.
+# CIFAR-100 Hier-COS backbone-capacity ladder: the same WideResNet trunk at
+# reduced depth/width (WRN_SIZES), one arm per entry in MECHANISMS, everything
+# else held at the WRN-28-8 anchor settings. Pass NUM_RUNS=2 explicitly, since
+# the project .env may supply a three-seed default.
 #
-# Purpose: test whether the frame/lex/weight conclusions are conditional on the
-# feature extractor's capacity. The haframe_resnet50 arm
-# answers that badly, because it changes architecture, ImageNet pretraining, and
-# input resolution at once. Shrinking the WideResNet changes capacity alone:
-# the trunk implementation, the 32 px native resolution, the head, the frame,
-# and the loss are all untouched.
-#
-# Why depth and width are separate knobs (models/common/cifar_wide_resnet.py):
-# - wide_depth d sets blocks per stage as n = (d - 4) / 6, hence the
-#   (d - 4) % 6 == 0 constraint. Parameters scale roughly linearly in d.
-# - wide_widen_factor k sets stage channels [16, 16k, 32k, 64k]. Parameters
-#   scale quadratically in k.
-# WRN-16-8 (10.96M) and WRN-28-4 (5.85M) therefore sit in a similar size band
-# but get there by different mechanisms (fewer layers vs narrower layers), which
-# is the point of running both against the 23.35M WRN-28-8 anchor.
-#
-# Geometry note: WRN strides are fixed at 1, 2, 2 regardless of depth and width,
-# so a 32 px input always ends on an 8 x 8 map. The hard-coded avg_pool2d(out, 8)
-# in the Hier-COS WideResNet wrapper stays correct at every rung and the node
-# embedding dimension never changes. Do NOT combine this script with the 224 px
-# override from run_hiercos_cifar100_resnet50_pretrained.sh: at 224 px the same
-# pool yields a 7 x 7 map and the embedding becomes out_dim * 49.
-#
-# Comparability with the existing WRN-28-8 anchors, verified before writing this:
-# - The anchors ran with model.fixed_frame_per_level=false and
-#   model.projection.feature_dim=0; both are reproduced here.
-# - The lex anchors (2026-08-05) recorded projection_rule=orthogonalize_all,
-#   which no longer exists as a knob. The two commits that removed it (b8f4c41,
-#   3a81048) deleted only the unused conflict_only rule and the
-#   pairwise_orthogonal mode; the coarse_first / orthogonalize_all computation
-#   was not modified.
-# - The anchors predate train.gradient_blocks and so used the p123/p12/p1
-#   default, while this script passes [p123] like the current launchers. For
-#   Hier-COS that is inert: every trunk parameter receives gradient from all
-#   three levels, so p12/p1 are empty. The anchor logs confirm it
-#   (cos_t2_mid_coarse = 0.0, and the t2t1/t3t2t1 norms equal the t1 norms).
+# Do not combine this script with a 224 px override: the Hier-COS WideResNet
+# wrapper's hard-coded avg_pool2d(out, 8) assumes the 32 px native resolution.
+# Rationale and anchor comparability: docs/experiment_matrix.md.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

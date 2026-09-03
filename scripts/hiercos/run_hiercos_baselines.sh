@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs Hier-COS CE+regularization baselines:
-# - model.loss=${LOSS_MODE} (global_softmax_ce_reg or level_softmax_ce_reg)
-# - model.weight_mode=${WEIGHT_MODE}
-# - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - model.fixed_frame_per_level=${FIXED_FRAME_PER_LEVEL}
-# - model.projection.feature_dim=${FEATURE_DIM}
-# - train.lexicographic.enabled=false
-# Default dataset: cifar100. Override DATASETS to select any supported subset.
+# Hier-COS CE+regularization baselines, lexicographic disabled. Default dataset:
+# cifar100. Knobs: DATASETS, LOSS_MODE, WEIGHT_MODE, FIXED_FRAME_MODE,
+# FIXED_FRAME_PER_LEVEL, FEATURE_DIM.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

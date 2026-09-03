@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs one FGVC-Aircraft Hier-COS pretraining-ablation configuration:
-# - model.loss=${LOSS_MODE}
-# - model.weight_mode=${WEIGHT_MODE}
-# - model.pretrained=${PRETRAINED_MODE}
-# - model.fixed_frame_mode=${FIXED_FRAME_MODE}
-# - train.lexicographic.enabled=false
-# Three training seeds are used by default. Override the scalar mode variables
-# to select a different single configuration; this script does not run a grid.
+# One FGVC-Aircraft Hier-COS pretraining-ablation configuration, three seeds by
+# default. Override the scalar mode variables below to select another
+# configuration; this script does not run a grid.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

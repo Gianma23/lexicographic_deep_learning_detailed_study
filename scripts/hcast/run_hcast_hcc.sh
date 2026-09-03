@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the H-CAST + HCC arm on all supported HCC datasets:
-# - hcast_<dataset>_hcc
-# for: cifar100, cub200, aircraft.
-#
-# HCC is a binary on/off switch; there is no onset/alpha/temperature ablation.
-# Starts from the plain H-CAST baseline config for each dataset and adds the
-# whole HCC block as CLI overrides, so `configs/hcast/` keeps only base presets.
+# H-CAST + HCC arm on cifar100, cub200, aircraft: the plain baseline config plus
+# the HCC block as CLI overrides. HCC is a binary on/off switch.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -47,7 +42,7 @@ hcc_overrides=(
   "hcc.enabled=true"
   "hcc.eps=1e-12"
   "train.lexicographic.enabled=false"
-  "train.gradient_blocks=[p123,p12,p1]"
+  "train.gradient_blocks=[p123,p12,p1,p2,p3]"
 )
 
 run_output_dir() {

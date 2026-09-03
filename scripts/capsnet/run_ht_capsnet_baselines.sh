@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs native HT-CapsNet baselines on CIFAR-100, CUB-200-2011, and
-# FGVC-Aircraft. The model path follows the released TensorFlow implementation
-# while experimental hyperparameters follow the paper; CUB uses this
-# repository's unified 13/38/200 taxonomy, and Aircraft is a local extrapolation. Select a subset
-# with, for example:
-#   DATASETS="cub200 aircraft" NUM_RUNS=3 ./scripts/capsnet/run_ht_capsnet_baselines.sh
+# Native HT-CapsNet baselines on cifar100, cub200, aircraft. The model follows
+# the released implementation; CUB/Aircraft are local protocol extrapolations.
+# Example: DATASETS="cub200 aircraft" NUM_RUNS=3 ./scripts/capsnet/run_ht_capsnet_baselines.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

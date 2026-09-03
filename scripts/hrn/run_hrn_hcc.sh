@@ -1,22 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the HRN + HCC arm (HCC generalized from H-CAST, see
-# models/common/hcc.py) on top of the plain HRN baseline configs:
-# - hrn_<dataset>_level_conditional_hcc
-# for: cifar100, cub200, aircraft.
-#
-# HCC is a binary on/off switch; there is no onset/alpha/temperature ablation.
-# HCC constrains HRN's emitted score triple `logits_per_level`: the coarse and
-# middle pre-sigmoid tree logits (classifier_1/2) and the auxiliary leaf head
-# species_ce_logits (classifier_3_1), which is the head HRN decodes at the fine
-# level. The corrected coarse/middle values are re-sigmoided before they reach
-# the combinatorial marginal loss (_hierarchical_loss); the fine tree head
-# (classifier_3) keeps its raw logits, and the corrected triple is also what
-# evaluation decodes, so the constraint is active at train and test time.
-# model.loss is not constrained by HCC: level_conditional telescopes to the
-# `native` objective, so without lexicographic projection this arm optimises
-# exactly what `native` would, while also logging the three per-level terms.
+# HRN + HCC arm on top of the plain HRN baseline configs (cifar100, cub200,
+# aircraft). HCC constrains HRN's emitted score triple, at train and test time.
+# model.loss=level_conditional telescopes to the `native` objective, so it
+# changes nothing about what is optimised and only adds the per-level terms.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -36,7 +24,7 @@ install_job_traps
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hrn/run_hrn_hcc.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cifar100 cub200 aircraft" DATASETS \
+parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 # Start from the plain HRN baseline config; the model.loss/hcc.* overrides
@@ -73,7 +61,7 @@ for ds in "${DATASETS[@]}"; do
     "hcc.enabled=true" \
     "hcc.eps=1e-12" \
     "train.lexicographic.enabled=false" \
-    "train.gradient_blocks=[p123]"
+    "train.gradient_blocks=[p123,p23,p3]"
 done
 
 drain_jobs
