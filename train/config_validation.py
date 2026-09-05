@@ -67,7 +67,6 @@ _MODEL_KEYS: Dict[str, Set[str]] = {
     "hiercos": {
         "name",
         "loss",
-        "softmax_detach",
         "weight_mode",
         "weight_beta",
         "variant",
@@ -792,18 +791,11 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
 
     if model_name == "hiercos":
         _validate_optional_bool(model, "pretrained", "model.pretrained")
-        hiercos_loss = _require_enum(
+        _require_enum(
             model.get("loss", "kl_reg"),
             "model.loss",
             {"kl_reg", "global_softmax_ce_reg", "level_softmax_ce_reg"},
         )
-        _validate_optional_bool(model, "softmax_detach", "model.softmax_detach")
-        softmax_detach = bool(model.get("softmax_detach", False))
-        if softmax_detach and hiercos_loss != "global_softmax_ce_reg":
-            raise ValueError(
-                "`model.softmax_detach` requires `model.loss=global_softmax_ce_reg`; "
-                "a per-level softmax already normalises each level separately."
-            )
         weight_mode = _require_enum(
             model.get("weight_mode", "kl_leaf"),
             "model.weight_mode",
@@ -911,26 +903,9 @@ def _validate_model_compatibility(payload: Mapping[str, Any]) -> None:
 
     if hiercos_projection_enabled:
         effective_loss = model.get("loss", "kl_reg")
-        effective_detach = bool(model.get("softmax_detach", False))
-        if effective_loss == "global_softmax_ce_reg":
-            # A shared normaliser makes every level's loss gradient dense over
-            # every other level's nodes, so a lower level writes straight into a
-            # higher level's head -- a route the LH projection does not cover.
-            # `coarse_first` detaching confines each level's gradient to its own
-            # nodes (plus lower-priority ones), which is exactly the independence
-            # the LH-DNN guarantee is stated under.
-            if not effective_detach:
-                raise ValueError(
-                    "Enabled Hier-COS LH-style projection with "
-                    "`global_softmax_ce_reg` requires `model.softmax_detach=true`, "
-                    "so each level's loss reaches the shared vector only through "
-                    "its own head. Use `level_softmax_ce_reg` for the per-level "
-                    "normaliser instead."
-                )
-        elif effective_loss != "level_softmax_ce_reg":
+        if effective_loss != "level_softmax_ce_reg":
             raise ValueError(
                 "Enabled Hier-COS LH-style projection requires `level_softmax_ce_reg` "
-                "or `global_softmax_ce_reg` with `model.softmax_detach=true` "
                 "so each level loss uses its projected branch."
             )
         effective_frame_mode = model.get("fixed_frame_mode", "orthonormal_random")

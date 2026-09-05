@@ -16,7 +16,7 @@ init_seed_runs
 
 init_job_control
 LOSS_MODE="${LOSS_MODE:-level_softmax_ce_reg}"
-WEIGHT_MODE="${WEIGHT_MODE:-kl_leaf}"
+WEIGHT_MODE="${WEIGHT_MODE:-equal}"
 FIXED_FRAME_MODE="${FIXED_FRAME_MODE:-orthonormal_random}"
 FIXED_FRAME_PER_LEVEL="${FIXED_FRAME_PER_LEVEL:-true}"
 FEATURE_DIM="${FEATURE_DIM:-0}"

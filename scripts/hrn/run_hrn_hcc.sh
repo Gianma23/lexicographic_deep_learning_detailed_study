@@ -24,7 +24,7 @@ install_job_traps
 #   OUTPUTS_ROOT=/scratch/<user>/outputs ./scripts/hrn/run_hrn_hcc.sh
 OUTPUTS_ROOT="${OUTPUTS_ROOT:?Set OUTPUTS_ROOT in .env or the process environment}"
 
-parse_choice_list DATASETS "cub200 aircraft cifar100" DATASETS \
+parse_choice_list DATASETS "cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 # Start from the plain HRN baseline config; the model.loss/hcc.* overrides

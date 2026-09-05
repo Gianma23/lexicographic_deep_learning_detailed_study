@@ -92,6 +92,95 @@ native aspect ratio; columns do not represent related classes across rows.}
 \section{Supplementary baseline results}
 \label{app:figures_baselines}
 
+\subsection{Baseline configurations}
+\label{app:baseline_configs}
+
+\Cref{tab:app_baseline_configs} summarises the effective configurations of the
+fifteen baselines reported in \cref{sec:results_baselines}. These are the
+launcher-resolved experimental settings, which differ in two important cases
+from the defaults of the base YAML files: HRN uses the native-equivalent
+\texttt{level\_conditional} decomposition, and Hier-COS uses
+\texttt{global\_softmax\_ce\_reg} with \texttt{kl\_leaf} weights and a dense
+random orthonormal frame. Dataset splits and checkpoint selection are common and
+are therefore not repeated in the table. HCC, direct subspace supervision and
+explicit lexicographic optimisation are inactive in every row; the optional
+LH-projection is also inactive, while LH-DNN retains its native projection. The
+complete configurations, including
+normalisation constants and data-loader settings, and the commands that apply
+the baseline overrides are available in the
+\href{https://github.com/Gianma23/lexicographic_deep_learning_detailed_study}{project repository}.
+
+\begin{table}[p]
+\centering
+\caption{Effective parameters of the reported baselines. LR is the optimiser
+learning rate; the H-CAST values are the effective rates after batch-size
+scaling. ``Drop'' and ``keep'' state whether the final incomplete training batch
+is discarded; every validation and test batch is retained. Augmentation entries
+describe the training transform. All configurations use deterministic execution.
+The seeds used for reported aggregates are $0$, $1$ and $2$.}
+\label{tab:app_baseline_configs}
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\begin{tabularx}{\linewidth}{@{}L{1.15cm}L{1.35cm}L{2.35cm}L{2.65cm}L{2.85cm}L{1.55cm}Y@{}}
+\toprule
+\textbf{Family} & \textbf{Dataset} & \textbf{Model, initialisation, input} &
+\textbf{Objective} & \textbf{Optimiser and schedule} &
+\textbf{Batch / epochs / AMP} & \textbf{Training transform} \\
+\midrule
+H-CAST & CIFAR-100 & CAST-small, ImageNet; 32 px & level CE + global KL
+($0.5$); smoothing $0.1$ & AdamW, LR $2.5\!\times\!10^{-4}$, WD $0.05$;
+cosine, 5-epoch warm-up & 256 / 100 / on; drop & RandAugment, jitter $0.3$,
+erase $0.25$; MixUp $0.8$, CutMix $1.0$ \\
+& CUB-200 & CAST-small, ImageNet; 224 px & same & AdamW, LR
+$2.5\!\times\!10^{-4}$, WD $0.05$; cosine, 5-epoch warm-up & 256 / 100 /
+on; drop & same \\
+& Aircraft & CAST-small, ImageNet; 224 px & same & AdamW, LR
+$5\!\times\!10^{-4}$, WD $0.05$; cosine, 5-epoch warm-up & 256 / 100 / on;
+drop & same \\
+\midrule
+LH-DNN & CIFAR-100 & large LH-DNN, scratch; 32 px & unweighted level CE;
+smoothing $0$ & SGD, LR $10^{-3}$, momentum $0.9$, Nesterov, WD $0$;
+$\times0.2$ at epoch 11 & 128 / 15 / off; drop & no augmentation or soft
+labels \\
+& CUB-200 & large LH-DNN, scratch, $2\!\times\!2$ pre-head pool; 224 px &
+same & same & 128 / 15 / off; drop & fixed bicubic resize; no soft labels \\
+& Aircraft & large LH-DNN, scratch, $2\!\times\!2$ pre-head pool; 224 px &
+same & same & 128 / 15 / off; drop & fixed bicubic resize; no soft labels \\
+\midrule
+HT-CapsNet & CIFAR-100 & EfficientNet-B7, ImageNet, squash readout; 32 px & capsule margin
+($m^+=0.9$, $m^-=0.1$, $\lambda=0.5$); dynamic level weights & Adam, LR
+$10^{-3}$, WD $0$; exponential $0.95$ from epoch 10 & 64 / 100 / off; keep &
+fixed resize, split-scalar standardisation; element MixUp $0.2$ \\
+& CUB-200 & EfficientNet-B7, ImageNet, squash readout; $512\to64$ px & same & same & 32 /
+100 / off; keep & fixed resize, batch-scalar standardisation; element MixUp
+$0.2$ \\
+& Aircraft & EfficientNet-B7, ImageNet, squash readout; $512\to64$ px & same & same & 32 /
+100 / off; keep & same, after removing the 20-px footer \\
+\midrule
+HRN & CIFAR-100 & WRN-28-8, scratch; 32 px & native-equivalent
+\texttt{level\_conditional} tree loss + leaf CE & SGD, LR $0.002$, momentum
+$0.9$, WD $5\!\times\!10^{-4}$; cosine; trunk LR $\times0.1$ & 32 / 100 /
+off; drop & padded random crop and flip; no soft labels \\
+& CUB-200 & ResNet-50, ImageNet; $550\to448$ px & same & same & 32 / 100 /
+off; drop & resize, random crop and flip; no soft labels \\
+& Aircraft & ResNet-50, ImageNet; $550\to448$ px & same & same & 32 / 100 /
+off; drop & same \\
+\midrule
+Hier-COS & CIFAR-100 & WRN-28-8, scratch, dense random frame; 32 px & global
+softmax CE + regulariser, \texttt{kl\_leaf}; $\alpha=0.05$ & SGD, LR $0.1$,
+momentum $0.9$, WD $5\!\times\!10^{-4}$; cosine; backbone LR $\times0.1$ &
+64 / 100 / off; drop & padded random crop and flip; no soft labels \\
+& CUB-200 & ResNet-50, ImageNet, dense random frame; 224 px & same;
+$\alpha=0.15$ & same & 64 / 100 / off; drop & resize, random crop and flip; no
+soft labels \\
+& Aircraft & ResNet-50, ImageNet, dense random frame; 224 px & same;
+$\alpha=0.10$ & same & 64 / 100 / off; drop & same, with 20-px footer removal \\
+\bottomrule
+\end{tabularx}
+\endgroup
+\end{table}
+
 \subsection{Complete leaf-accuracy, wAP and AHD inference grid}
 \label{app:baseline_inference_metrics}
 

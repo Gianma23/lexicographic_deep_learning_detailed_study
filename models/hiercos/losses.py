@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 
-from .config import parse_bool, section_to_dict
+from .config import section_to_dict
 
 
 HierCosTargets = Union[torch.Tensor, Dict[str, Any]]
@@ -72,19 +72,6 @@ def _resolve_loss_mode(cfg: Any) -> str:
 
 def _resolve_weight_mode(cfg: Any) -> str:
     return _resolve_mode(cfg=cfg, key="weight_mode", valid_modes=_HIER_COS_WEIGHT_MODES)
-
-
-def _resolve_softmax_detach(cfg: Any) -> bool:
-    """`model.softmax_detach`: detach higher-priority levels in the normaliser.
-
-    Off by default, and meaningful only for `global_softmax_ce_reg`. The order is
-    always coarse-first, because that is the order the LH-DNN projection's
-    guarantee is stated for, and gradient-space lexicographic mode does not need
-    this flag at all -- it acts on parameter gradients and does not depend on
-    head independence.
-    """
-    settings, _source, _default, _alpha_default = _loss_settings(cfg)
-    return parse_bool(settings.get("softmax_detach", False), default=False)
 
 
 def _resolve_weight_beta(cfg: Any) -> float:
@@ -362,34 +349,6 @@ def _level_regularization_loss_from_level_logits(
     return leaf_targets.new_zeros((), dtype=torch.float32), level_losses
 
 
-def _asymmetric_global_log_probs(
-    abs_node_logits: torch.Tensor,
-    level_node_ids: List[torch.Tensor],
-) -> List[torch.Tensor]:
-    """One globally-normalised log_softmax per level, with the higher-priority
-    levels' logits detached inside that level's normaliser.
-
-    Level `level` keeps levels `>= level` live: it sees its own nodes plus the
-    lower-priority ones it may still push against, and is blind to the levels it
-    must yield to. The value of every normaliser is the plain global one --
-    detach changes only the Jacobian -- so the returned log-probabilities equal
-    `log_softmax(abs_node_logits)` numerically, while the gradient of level `l`'s
-    loss is supported only on the nodes of levels `>= l`.
-    """
-    device = abs_node_logits.device
-    total_nodes = int(abs_node_logits.size(1))
-    detached = abs_node_logits.detach()
-    out: List[torch.Tensor] = []
-    for level in range(len(level_node_ids)):
-        keep = torch.zeros(total_nodes, dtype=torch.bool, device=device)
-        for other, other_nodes in enumerate(level_node_ids):
-            if other >= level:
-                keep[other_nodes.to(device=device, dtype=torch.long)] = True
-        mixed = torch.where(keep.unsqueeze(0), abs_node_logits, detached)
-        out.append(F.log_softmax(mixed, dim=1))
-    return out
-
-
 def _weighted_target_ce_level_losses(
     abs_node_logits: torch.Tensor,
     level_node_ids: List[torch.Tensor],
@@ -397,32 +356,13 @@ def _weighted_target_ce_level_losses(
     leaf_to_level_local: torch.Tensor,
     level_weights: torch.Tensor,
     softmax_scope: str,
-    softmax_detach: bool = False,
 ) -> List[torch.Tensor]:
     if softmax_scope not in {"global", "level"}:
         raise ValueError(f"Unsupported Hier-COS softmax scope '{softmax_scope}'.")
-    if softmax_detach and softmax_scope != "global":
-        raise ValueError(
-            "Hier-COS `model.softmax_detach` only applies to `global_softmax_ce_reg`; "
-            "a per-level softmax already gives each level a disjoint normaliser."
-        )
 
     weights = level_weights / level_weights.sum().clamp_min(_EPS)
     row_ids = torch.arange(int(leaf_targets.size(0)), device=abs_node_logits.device, dtype=torch.long)
-    detached_normaliser = softmax_scope == "global" and softmax_detach
-    global_log_probs = (
-        F.log_softmax(abs_node_logits, dim=1)
-        if softmax_scope == "global" and not detached_normaliser
-        else None
-    )
-    level_log_probs_by_level = (
-        _asymmetric_global_log_probs(
-            abs_node_logits=abs_node_logits,
-            level_node_ids=level_node_ids,
-        )
-        if detached_normaliser
-        else None
-    )
+    global_log_probs = F.log_softmax(abs_node_logits, dim=1) if softmax_scope == "global" else None
     level_losses: List[torch.Tensor] = []
     for level, level_nodes in enumerate(level_node_ids):
         level_nodes = level_nodes.to(device=abs_node_logits.device, dtype=torch.long)
@@ -437,9 +377,7 @@ def _weighted_target_ce_level_losses(
             f"Hier-COS invalid target labels for CE at level {level}: expected [0, {level_size}).",
         )
 
-        if level_log_probs_by_level is not None:
-            target_log_probs = level_log_probs_by_level[level][row_ids, level_nodes[level_targets]]
-        elif global_log_probs is not None:
+        if global_log_probs is not None:
             target_log_probs = global_log_probs[row_ids, level_nodes[level_targets]]
         else:
             level_logits = abs_node_logits.index_select(dim=1, index=level_nodes)
@@ -676,11 +614,6 @@ def compute_loss(
                 leaf_to_level_local=leaf_to_level_local,
                 level_weights=level_weights,
                 softmax_scope="global" if loss_mode == "global_softmax_ce_reg" else "level",
-                softmax_detach=(
-                    _resolve_softmax_detach(cfg)
-                    if loss_mode == "global_softmax_ce_reg"
-                    else False
-                ),
             )
         ce = torch.stack(ce_level_losses).sum()
         level_losses = [

@@ -145,8 +145,9 @@ been run even once. Worth deciding deliberately which of those cells you actuall
 rather than inheriting the wider space by default.
 
 **Backbone capacity** — the controlled CIFAR-100 ladder is specified as WRN-28-8,
-WRN-16-8 and WRN-28-4, each crossed with baseline and `coarse_first`. The smaller
-rungs have not yet been run. Existing CIFAR-100 ResNet-50 and Aircraft
+WRN-16-8 and WRN-28-4 on the LH-projection arm only. It fixes the block frame,
+per-level softmax, `kl_leaf`, `feature_dim=512`, and all other LH settings. The
+smaller rungs have not yet been run. Existing CIFAR-100 ResNet-50 and Aircraft
 from-scratch pilots change more than capacity and are excluded from this ablation.
 
 ### Visible gaps
@@ -354,12 +355,14 @@ HCC-on-Hier-COS family is currently unrun.
 ## RQ7 — Backbone capacity as a threat to validity
 
 The controlled contrast stays within the from-scratch CIFAR-native WideResNet:
-WRN-28-8 versus WRN-16-8 and WRN-28-4, at the same 32-pixel input, head, frame,
-loss, weighting and optimiser. Baseline and `coarse_first` are paired within
-every rung. If their within-rung difference changes as the trunk shrinks, the
-CIFAR-100 lex/weight result is capacity-dependent [interp]. The separate
-ResNet-50/224-pixel pilot cannot answer this question because architecture,
-pretraining and resolution change together.
+WRN-28-8 versus WRN-16-8 and WRN-28-4, at the same 32-pixel input, LH head,
+block frame, per-level loss, `kl_leaf` weighting, `feature_dim=512`, and
+optimiser. Only the LH-projection arm is run. A systematic change as the trunk
+shrinks indicates capacity sensitivity of the complete LH configuration
+[interp]; without matched no-projection rows, it does not identify a
+capacity--projection interaction. The separate ResNet-50/224-pixel pilot cannot
+answer this question because architecture, pretraining and resolution change
+together.
 
 Per AGENTS.md this is also where the local-extrapolation caveats belong: HRN on CIFAR-100,
 Hier-COS on CUB, and this repo's CIFAR hierarchy construction are all deviations from the
@@ -473,9 +476,9 @@ Ranked by information gained per GPU-hour, not by convenience:
    `none` baseline. This is the thesis's central mechanistic claim: whether the in-graph
    differentiable formulation buys the same ordering as explicit projection. Requires
    `level_softmax_ce_reg` + identity frame on both arms, which the existing runs partly cover.
-3. **CIFAR-100 backbone-capacity ladder** (RQ7) — WRN-16-8 and WRN-28-4,
-   baseline versus `coarse_first`, two seeds as a sensitivity; the WRN-28-8
-   three-seed anchors are reused.
+3. **CIFAR-100 backbone-capacity ladder** (RQ7) — WRN-16-8 and WRN-28-4 on
+   LH-projection only, three seeds as a sensitivity; the WRN-28-8 `d512`
+   three-seed anchor is reused.
 4. **HCC on Hier-COS**, starting with the post-hoc inference notebook — cheapest decisive
    control, and RQ6 currently has no Hier-COS data at all.
 5. **Lex on HRN and HT-CapsNet** — turns lex from a two-model observation into a

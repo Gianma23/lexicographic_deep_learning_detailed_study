@@ -29,7 +29,7 @@ esac
 
 install_job_traps
 
-parse_choice_list DATASETS "cub200 cifar100" DATASETS \
+parse_choice_list DATASETS "aircraft" DATASETS \
   cifar100 cub200 aircraft
 
 config_for_dataset() {
@@ -55,7 +55,7 @@ hard_target_overrides=(
 
 run_output_dir() {
   local dataset="$1"
-  echo "$OUTPUTS_ROOT/hrn_${dataset}_level_conditional_lex_${LEX_PROJECTION_MODE}"
+  echo "$OUTPUTS_ROOT/hrn_${dataset}_level_conditional_lex_${LEX_PROJECTION_MODE}_new"
 }
 
 printf 'Outputs root: %s\n' "$OUTPUTS_ROOT"

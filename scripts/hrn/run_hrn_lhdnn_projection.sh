@@ -36,7 +36,7 @@ fi
 
 install_job_traps
 
-parse_choice_list DATASETS "cub200" DATASETS \
+parse_choice_list DATASETS "cifar100" DATASETS \
   cifar100 cub200 aircraft
 
 # Start from the plain HRN baseline config; the model.loss/model.projection.*

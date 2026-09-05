@@ -7,11 +7,7 @@ under common dataset partitions, label hierarchies and metrics, so that each hie
 mechanism can be compared against an unmodified model trained
 under the same settings.
 
-The question under examination is whether imposing a coarse-to-fine priority
-among the levels of a taxonomy improves hierarchical classification, and whether
-any observed benefit can be attributed to the priority itself; it is stated
-operationally as four research questions in \cref{ssec:design_questions}. The
-chapter first fixes the conditions of the comparison, namely the datasets,
+The chapter first fixes the conditions of the comparison, namely the datasets,
 metrics, implementations and protocol, and establishes the baselines. Inference
 rules are evaluated on those baselines before any retraining. The trained
 interventions are then organised by where they act: HCC on the outputs, direct
@@ -566,13 +562,22 @@ check that the decoder behaves as specified.
 
 The five baselines come from separate codebases, frameworks and evaluation
 protocols. A unified implementation was made to give them common data splits, metrics and
-checkpoint-selection rules. This section records the source of each baseline,
-the shared rules and any differences from the published settings.
+checkpoint-selection rules. This section records the source of each baseline
+and the choices that affect its comparability with the published setting.
+The paper, the released implementation and the local experiment are treated as
+three distinct sources of information: when the first two disagree, the model
+discussion identifies which behaviour is used locally. Shared evaluation rules
+are fixed in \cref{ssec:fidelity_protocol}, and the taxonomy choices and their
+provenance are already described in \cref{sec:hierarchy_construction}.
 
 Here, \emph{paper-aligned} means that the architecture, objective and inference
 rule match the cited source under the checks in
 \cref{ssec:fidelity_verification}. It does not mean that the published numbers
 are reproduced exactly. The framework, protocol, hardware and seeds may differ.
+The effective baseline training parameters are summarised in
+\cref{tab:app_baseline_configs}; the complete runnable configurations and
+launch commands are available in the
+\href{https://github.com/Gianma23/lexicographic_deep_learning_detailed_study}{project repository}.
 
 \subsection{Reference implementations}
 \label{ssec:fidelity_anchors}
@@ -601,49 +606,208 @@ from the equations, figures and experiment description in
 \cite{fiaschi2024informed}. Differences from the paper may therefore come from
 this reconstruction.
 
-\subsection{Model adaptations}
+\subsection{Reproduction scope}
 \label{ssec:fidelity_classes}
 \label{ssec:fidelity_families}
 
-Three types of difference matter when reading the results. A
-\emph{protocol adaptation} applies the common rules of
-\cref{ssec:fidelity_protocol} without changing the
-main computation of the method. A \emph{local extension}, such as HCC or
-lexicographic mode, adds a contribution of this thesis to a baseline. An
-\emph{unsupported extrapolation} runs a family on a dataset or hierarchy not
-used in its source. Such rows describe the local implementation, not the
-published method.
+The local reproductions differ from their sources in four ways. A
+\emph{protocol adaptation} applies the common data splits, evaluation rules
+and checkpoint selection of \cref{ssec:fidelity_protocol} without changing the
+architecture, training objective or native inference rule. An \emph{adapted}
+setting contains a stated change to the source implementation, objective,
+training schedule or taxonomy. A \emph{paper reconstruction} implements a
+model from its published description because no reference code is available.
+An \emph{extrapolation}
+applies a family to a dataset or hierarchy that was not evaluated in its
+source. The last case validates the local implementation in the unified
+setting, but is not a reproduction of a published experiment.
 
-\paragraph{H-CAST.} The CAST and H-CAST components, segmentation path and losses
-are kept. The wrapper only converts outputs to the common coarse-to-fine
-order. For FGVC-Aircraft, the local hierarchy is built from the official
-manufacturer, family and variant annotations because the upstream helper relies
-on a repository-local, partly hard-coded taxonomy. Compatibility guards for
-current PyTorch and \texttt{timm} versions are covered by tests. HCC and
-lexicographic mode are local extensions.
+\Cref{tab:fidelity_status} assigns those qualifications to every baseline
+setting before the results are compared. The qualifications can coexist: an
+extrapolation may also change the backbone, and a source-supported dataset may
+use an adapted schedule or a corrected implementation. An exact loss
+decomposition is identified separately because exposing level terms need not
+change their summed gradient. The classifications concern the experimental
+setting, not whether the repository can execute it.
 
-\paragraph{LH-DNN.} The reconstruction follows the reported
-$8\to20\to100$ CIFAR hierarchy, large convolutional architecture, detached branch
-projections, advantage connections, unweighted level losses and 15-epoch
-schedule. CUB-200-2011 and FGVC-Aircraft are extrapolations. On their larger
-$224$-pixel inputs, fixed average pooling preserves the paper's input size for
-the dense head and prevents that head from growing with image area.
+\begin{table}[htbp]
+\centering
+\caption{Comparability status of the fifteen local baseline settings. The common
+evaluation protocol applies to every cell; the entries highlight further
+qualifications explained in the model discussions. Loss decomposition denotes
+a regrouping with the same summed gradient at matched weights and regularisation.
+LH-DNN is reconstructed from the paper in every setting.}
+\label{tab:fidelity_status}
+\experimenttablesetup
+\begin{tabularx}{\linewidth}{@{}L{2.2cm}YYY@{}}
+\toprule
+\textbf{Family} & \textbf{CIFAR-100} & \textbf{CUB-200-2011} & \textbf{FGVC-Aircraft} \\
+\midrule
+H-CAST & dataset extrapolation & protocol adaptation & protocol and taxonomy adaptation \\
+LH-DNN & paper reconstruction and protocol adaptation & dataset extrapolation & dataset extrapolation \\
+HT-CapsNet & corrected port and schedule adaptation & corrected port, taxonomy and schedule adaptation & corrected-port dataset extrapolation \\
+HRN & dataset and backbone extrapolation & training-schedule adaptation & training-schedule adaptation \\
+Hier-COS & hierarchy extrapolation and loss decomposition & dataset extrapolation and loss decomposition & implementation adaptation and loss decomposition \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
-\paragraph{HT-CapsNet.} The TensorFlow/Keras source was ported to PyTorch while
-retaining its capsule stages, routing, taxonomy mask, attention, margin loss and
-dynamic level weighting. Except for the capsule readout described below, where
-the paper and code differ the port follows the released training code. In
-particular, it uses
-$1-\mathrm{acc}_l^{(t)}\omega_l^{\mathrm{init}}$ inside the dynamic-weight
-callback. The paper instead gives
-$(1-\mathrm{acc}_l^{(t)})\omega_l^{\mathrm{init}}$; the two versions are derived
-and contrasted in \cref{subsec:htcapsnet}. It also retains the saved
-taxonomy-temperature settings. The attention implementation is tested against
-the Keras projection behaviour.
+These labels delimit the reproduction claim made for each row. The resulting
+cross-family tables compare complete local implementations under the unified
+protocol; they do not constitute exact reruns of all published experiments or
+establish a ranking among the original publications.
 
-The post-attention capsule readout is changed to correct a problem in the
-published setup. The
-paper and released implementation apply layer normalisation to the sum of the
+\subsubsection{H-CAST}
+\label{sssec:fidelity_hcast}
+
+The local baseline retains the released CAST-small backbone, H-CAST components,
+segmentation path, level cross-entropies and global KL term
+\cite{park2024visually}. The wrapper converts the outputs to the common
+coarse-to-fine order. The fine-grained presets retain the source-style
+initialisation, augmentation and learning-rate scaling. Compatibility guards
+accommodate the current PyTorch and \texttt{timm} interfaces; they are engineering
+changes around the retained computation.
+
+For FGVC-Aircraft, the upstream hierarchy helper relies on a repository-local,
+partly hard-coded taxonomy. The local adapter instead joins the official
+manufacturer, family and variant annotations, using the tree described in
+\cref{sec:hierarchy_construction}. CIFAR-100 is a dataset extrapolation, with
+native $32$-pixel inputs. Its results therefore describe H-CAST under this
+local input and hierarchy choice. On all datasets, validation and checkpoint
+selection follow the common protocol. HCC and explicit lexicographic training
+are separate experimental interventions and are inactive in the baseline.
+
+\subsubsection{LH-DNN}
+\label{sssec:fidelity_lhdnn}
+
+LH-DNN has no released implementation against which to resolve ambiguities, so
+the reference is the published description \cite{fiaschi2024informed}. The
+CIFAR-100 reconstruction follows its large convolutional architecture,
+detached branch projections, advantage connections and unweighted sum of level
+cross-entropies. It uses the reported $8\to20\to100$ hierarchy and 15-epoch
+schedule, including the learning-rate reduction at epoch 11. The common
+validation and checkpoint rules are applied to this reconstruction.
+
+CUB-200-2011 and FGVC-Aircraft are absent from the paper and require additional
+local choices. Their inputs are resized to $224$ pixels, producing a
+$14\times14$ final feature map in the large topology. A fixed $7\times7$
+average pool reduces that map to $2\times2$, preserving the input geometry of
+the paper's dense head. At this geometry it agrees with adaptive average
+pooling to $2\times2$ and supports deterministic execution. Without that
+reduction, the dense head would grow with the image area.
+
+The two fine-grained presets use fixed bicubic resizing and ImageNet channel
+normalisation, train from scratch, and carry over the 15-epoch SGD recipe with
+momentum, Nesterov acceleration and zero weight decay. They use no stochastic
+image augmentation or mixed labels. These preprocessing and training settings
+are local extrapolations of the CIFAR recipe. In particular, the Aircraft
+fixed-resize path retains the image's $20$-pixel footer: it has neither an
+explicit footer removal nor an evaluation centre crop. This differs from the
+Aircraft preprocessing of the other families and remains a limitation of that
+comparison.
+
+\subsubsection{HT-CapsNet}
+\label{sssec:fidelity_htcapsnet}
+
+HT-CapsNet requires both a framework port and a choice between conflicting
+public specifications. The local model retains the released capsule stages,
+routing, taxonomy mask, hierarchical agreement, attention and margin loss,
+expressed in PyTorch. Where the paper and source disagree about these
+computations, the port follows the executable source, except for the
+post-attention readout correction discussed below. Experimental hyperparameters
+are taken from the paper \cite{noor2025taxonomy} where specified; the shorter
+training horizon and the remaining framework differences are explicit local
+choices.
+
+\paragraph{Paper and released-code discrepancies.}
+The paper describes a separate primary-capsule representation for each level
+(Eq.~4 and Fig.~2). The released implementation instead constructs one
+squashed $8$-dimensional primary tensor and reshapes it into $64$- and
+$32$-dimensional capsules for the later stages. The local model retains that
+reuse. Similarly, Eq.~13 weights the taxonomy mask with the parent capsule's
+length, while the source first applies a softmax across parent-capsule
+lengths. The local routing includes that softmax, so the mask depends on the
+parents' relative activations.
+
+The paper also describes taxonomy-biased initialisation of the hierarchical
+agreement parameters without supplying the numerical edge and non-edge
+values. The released code initialises every gate parameter to $0.5$ and the
+dimension transformation from a zero-mean normal distribution with standard
+deviation $0.1$; those are the values retained locally. The source additionally
+tiles the taxonomy rows across the primary and previous-level capsule inputs,
+using the first row for any remainder. The port reproduces this mapping, which
+is not fully specified in the paper.
+
+The dynamic loss weights contain a further discrepancy. Writing
+$\omega_l^{\mathrm{init}}$ for the normalised initial class-count weight and
+$a_l^{(t)}$ for accuracy, the paper's Eq.~21 uses the unnormalised factor
+$(1-a_l^{(t)})\omega_l^{\mathrm{init}}$. The released callback and the local
+baseline instead use
+\[
+\tau_l^{(t)}=1-a_l^{(t)}\omega_l^{\mathrm{init}},
+\qquad
+\omega_l^{(t+1)}=\frac{\tau_l^{(t)}}{\sum_j\tau_j^{(t)}}.
+\]
+The placement of the parentheses changes the relative weights: even at zero
+accuracy, the callback's update is uniform, whereas the paper's expression
+retains the initial class-count weighting. The port also preserves callback
+timing. Accuracy is accumulated from the start of the epoch, and the weights
+computed after one training batch are used by the next. The running
+accuracies and current weights are saved with the checkpoint so resumption
+preserves this state.
+
+The public training recipes also disagree. The local decay factor is $0.95$
+after epoch 10, as reported in the paper; the released parser uses $0.9$, which
+the shell launcher does not override. The local upper taxonomy-mask bound is
+$0.99$, matching the paper and the notebook's example arguments, whereas the
+parser default inherited by the launcher is $0.9$. The taxonomy temperature
+is $0.5$, supported by the paper and saved run arguments, although the layer
+constructor has a different default. Thus neither the constructor defaults nor
+an unmodified invocation of the released launcher defines all the settings
+used here.
+
+\paragraph{Framework port and input pipeline.}
+The PyTorch attention layer retains Keras's $16$ heads with key and value
+dimension $32$ per head. It also reproduces the rank-three Glorot
+initialisation used by Keras's attention projections; treating the flattened
+PyTorch matrices as ordinary Xavier-initialised linear layers would change
+that distribution. The backbone uses the Keras-compatible
+\texttt{tf\_efficientnet\_b7.aa\_in1k} conversion and the final spatial feature
+map, with equivalent BatchNorm momentum and progressive drop-path settings.
+Features are flattened in the source's channel-last order before primary
+capsules are formed.
+
+Preprocessing follows the released data pipeline, including its successive
+normalisations. CIFAR-100 uses one scalar mean and standard deviation for each
+complete split. The CUB path loader first resizes images to $512$ pixels and
+then to $64$ pixels, using bilinear interpolation without antialiasing; scalar
+standardisation is computed over the resulting batch. The local backbone
+also retains the embedded Keras division by $255$ and ImageNet normalisation
+after this standardisation. This additional rescaling reduces the input
+variation presented to EfficientNet and is preserved as source behaviour.
+
+MixUp retains one coefficient per example, sampled from
+$\operatorname{Beta}(0.2,0.2)$, and mixes the images and all label levels with
+the same coefficient. Partner selection differs: the released pipeline zips
+two independently shuffled dataset streams, whereas the common trainer uses a
+random permutation within the current batch. For path-loaded data, the two
+source streams also have separately computed batch statistics. Local shuffling
+uses a full permutation each epoch, while the source uses a finite shuffle
+buffer. These choices preserve the MixUp formula but change which examples and
+normalisation statistics are paired.
+
+Optimisation uses stock PyTorch Adam with learning rate $0.001$ and
+$\epsilon=10^{-8}$. The released notebook instantiates Keras Adam, whose
+default is $\epsilon=10^{-7}$ and whose update uses the Keras epsilon-hat
+convention. The port does not reproduce that update exactly, so agreement of
+the model equations does not imply identical optimisation trajectories.
+During training the margin loss consumes raw capsule lengths; during
+validation and test it consumes their softmax values, matching the released
+\texttt{LengthLayer}. The per-level argmax is unchanged by that softmax.
+
+\paragraph{Capsule-readout correction and reproduction evidence.}
+The post-attention capsule readout is changed to address a problem shared by the
+paper and released implementation. Both apply layer normalisation to the sum of the
 routed capsule and its attention residual. This is incompatible with the
 subsequent readout: class evidence is the Euclidean length of each capsule, and
 the margin loss compares that length with $m^+=0.9$ and $m^-=0.1$. At the
@@ -655,8 +819,8 @@ margins and are almost constant across classes. The normalisation therefore
 removes the length information that the capsule loss uses as evidence that a
 class is present.
 
-All HT-CapsNet experiments in this work instead apply the standard capsule
-squash function to the same residual sum,
+All reported local HT-CapsNet baseline and mechanism runs apply the standard
+capsule squash function to the same residual sum,
 \[
 \operatorname{squash}(x)
 =\frac{\lVert x\rVert_2^2}{1+\lVert x\rVert_2^2}
@@ -699,64 +863,202 @@ small matched test in the text changes only the readout.}
 \label{fig:htcapsnet_reproduction}
 \end{figure}
 
-With squash, the three-seed local baseline reaches test accuracies of
+With squash, the three-seed local baseline reaches independent-decoding test
+accuracies of
 $84.52/75.61/61.62\%$ (\cref{tab:results_baseline_cifar}), respectively
-$2.65$, $4.61$ and $5.96$ percentage points below the paper. The corrected model
-is close to, but does not exactly reproduce, the published result. The
-validation protocol may explain part of the remaining gap. The
-released code trains on all 50,000 CIFAR-100 training images and reuses the test
-set for validation, whereas this work trains on 45,000 and reserves 5,000 for
-checkpoint selection. The split alone cannot explain the gap. The local run also
-uses 100 epochs and batch size 64, while the released setup uses 200 epochs and
-batch size 32. The local code is also a PyTorch port of the released TensorFlow
-implementation.
+$2.65$, $4.61$ and $5.96$ percentage points below the paper. These rows use the
+independently selected checkpoints. They describe the corrected model under the
+local training and evaluation protocol; the remaining difference from the
+paper cannot be assigned to a single cause because the protocol and framework
+differences were not isolated experimentally.
 
-Because squash changes a computation used in both the paper and its source code,
-the HT-CapsNet rows report a corrected local version, not an exact reproduction.
-The unified CUB hierarchy also
-differs from the paper's hierarchy, and FGVC-Aircraft is an extrapolation.
+\paragraph{Training horizon, selection and dataset scope.}
+The paper and released shell launcher specify 200 epochs, while the local
+experiments use the common 100-epoch budget. The exponential decay factor and
+onset are retained from the selected paper recipe, so the schedule is truncated
+at 100 epochs rather than rescaled to decay faster. The released notebook also
+enables finest-level validation-accuracy early stopping by default, with
+patience 20 and restoration of the best weights. Local training has a fixed
+horizon without that stopping rule. The source saves a best checkpoint for
+each output and reloads the finest output's best weights for evaluation;
+local selection instead uses the common FPA, TICE and weighted-AP ranking,
+separately for each decoder.
 
-\paragraph{HRN.} The local model retains the ResNet-50 trunk, residual branches,
-tree scores, leaf classifier, residual fusion and native sigmoid/softmax readout.
-Fine-grained preprocessing and optimisation follow the source. The common
-protocol changes evaluation and checkpoint selection; partial-label training is
-out of scope, and mixup and cutmix are disabled. CIFAR-100 is an extrapolation
-and uses its native $32$-pixel inputs. The HRN baseline throughout the results is
-the \texttt{level\_conditional} run. This mode exposes the three differentiable
-level objectives required by the mechanism experiments through the chain rule of
-\cref{ssec:lex_family_adaptation}; because the terms telescope to the native
-objective, the baseline reports the family's own objective rather than a
-substitute for it.
+The validation sets differ as well. The released CIFAR loader trains on all
+50,000 training images and, under its default zero validation fraction, reuses
+the test set for validation. Local training uses 45,000 images and reserves
+5,000 training images for selection. The released CUB loader takes $49.9\%$
+of the test split as validation and reports on the remainder. Local CUB
+validation comes from the official training split, and the full official test
+split is retained (\cref{tab:protocol_splits}). The change to the CUB taxonomy
+is described in \cref{sec:hierarchy_construction}.
 
-\paragraph{Hier-COS.} The taxonomy-node coordinates, fixed orthonormal frame,
-backbones, preprocessing and subspace-norm inference are kept. The Hier-COS
-baseline throughout the results is the matched global-softmax cross-entropy
-reference with regularisation and \texttt{kl\_leaf} weights, rather than the
-paper's node-wide KL objective. The released scripts use inconsistent
-feature-space flags across datasets, so the local fine-grained preset is a
-documented adaptation. The decomposed objectives of
-\cref{ssec:lhproj_hiercos} are further local extensions whose cost is measured
-separately in \cref{ssec:design_substrate}; the three-level CIFAR hierarchy also
-departs from the source's five-level setting.
+FGVC-Aircraft is absent from the HT-CapsNet paper and code; its preset transfers
+the CUB input pipeline and training settings. Removing the $20$-pixel footer
+before resizing is an additional local preprocessing choice. The Aircraft
+experiment therefore evaluates an extrapolation of the corrected port.
+Together, the readout correction, schedule and protocol choices delimit what
+can be concluded from all three local HT-CapsNet settings.
 
-The unsupported family--dataset settings are therefore HRN on CIFAR-100;
-Hier-COS on CUB-200-2011 and on the three-level CIFAR hierarchy; HT-CapsNet on
-FGVC-Aircraft and on the unified CUB hierarchy; and LH-DNN on CUB-200-2011 and
-FGVC-Aircraft.
+\subsubsection{HRN}
+\label{sssec:fidelity_hrn}
 
-\subsection{Verification and limitations}
+For CUB-200-2011 and FGVC-Aircraft, the local model retains the released
+ImageNet-pretrained ResNet-50 trunk, residual feature branches, tree scores,
+leaf classifier and residual fusion \cite{chen2022label}. Native inference
+uses sigmoid scores at the two coarser levels and softmax scores at the leaf
+level. The source's fine-grained preprocessing is retained: resizing to
+$550\times550$, a $448$-pixel random crop and horizontal flip during training,
+and a centre crop during evaluation, with channel normalisation centred at
+$0.5$. MixUp and CutMix remain disabled. The experiments cover the full-label
+setting; the paper's partial-label and degraded-image experiments and the
+source's associated alternative schedule are outside this comparison.
+
+The SGD settings and the trunk learning rate of one tenth of the branch rate
+follow the source. Training duration differs from the paper's 200 epochs:
+the local presets run for 100. Because the cosine scheduler is parameterised
+by the total epoch count, its annealing is compressed to this horizon; it
+still reaches its terminal minimum. This is a training-schedule adaptation,
+even though the optimiser and the functional form of the decay are retained.
+The common protocol also changes training-set membership and selection. For
+example, the paper reports 6,667 Aircraft training images, combining the
+official training and validation partitions; the local experiment uses 3,334
+for training and keeps the official 3,333-image validation partition for
+checkpoint selection. Incomplete evaluation batches dropped by the source
+are retained locally.
+
+CIFAR-100 requires a larger adaptation because it is absent from the HRN
+experiments. The local model uses a WRN-28-8 trunk trained from scratch at the
+native $32$-pixel resolution, with CIFAR normalisation, padded random cropping
+and horizontal flipping. This preserves an $8\times8$ spatial map for the
+residual branches; a standard ResNet-50 would reduce these inputs to
+approximately $1\times1$. HRN and Hier-COS share the same CIFAR backbone
+implementation and geometry, while their subsequent hierarchical computations
+remain different. The resulting setting is therefore explicitly HRN-WRN-28-8,
+with changes to backbone, initialisation and input recipe relative to the
+fine-grained HRN reference.
+
+The HRN baseline throughout the results uses \texttt{level\_conditional}.
+This local decomposition expresses the native tree loss through successive
+conditional terms and assigns the leaf cross-entropy to the fine term
+(\cref{ssec:lex_family_adaptation}). Finer-level scores are detached inside
+the coarser marginal terms to define their gradient support. Each such
+marginal is reused with opposite signs in adjacent terms, so both its value
+and its gradient cancel in the scalar sum. Consequently, the unprojected
+baseline retains the native total objective and gradient. This regrouping
+supports the later mechanism comparisons without adding another scalar
+training objective to the baseline.
+
+\subsubsection{Hier-COS}
+\label{sssec:fidelity_hiercos}
+
+The local model retains the taxonomy-node coordinates, fixed dense random
+orthonormal frame and taxonomy-subspace projection norms used by Hier-COS
+\cite{sani2025hiercos}. The reported baselines use a scratch-trained WRN-28-8
+on CIFAR-100 and an ImageNet-pretrained ResNet-50 on Aircraft. Their backbone
+and transformation modules, SGD parameter-group scaling and 100-epoch cosine
+recipe follow the released Hier-COS implementation. Aircraft preprocessing
+includes the source's explicit $20$-pixel footer removal before resizing and
+cropping. Native independent inference ranks the raw subspace norms directly.
+
+The target weights require a choice between the paper and the executable
+implementation. For a path of depth $h$, the paper assigns weights
+proportional to $\exp(1/(h+1-l))$ and normalises them to sum to one. The
+released code first $L_2$-normalises those values and then squares them,
+which instead gives
+\[
+\bar w_l^{\mathrm{code}}
+=\frac{\exp(2/(h+1-l))}{\sum_{j=1}^{h}\exp(2/(h+1-j))}.
+\]
+For three levels, the paper's normalisation gives approximately
+$(0.242,0.286,0.472)$, whereas the code gives $(0.162,0.225,0.613)$ in
+coarse-to-fine order. The local \texttt{kl\_leaf} setting follows the released
+code, so its target distribution is more concentrated on the leaf than the
+paper's stated formula. These weights apply to the classification term;
+the level regularisers are summed without this weighting.
+
+The reported baseline uses \texttt{global\_softmax\_ce\_reg}, which exposes
+separate level contributions under the same global node softmax. At fixed
+target distribution $q$ and model distribution $p$,
+$\operatorname{KL}(q\|p)=\operatorname{CE}(q,p)-H(q)$, where the target
+entropy is independent of the model parameters. With matched weights and
+regularisers, the sum of the local level terms therefore has the same
+gradient as the node-wide KL formulation, as derived in
+\cref{ssec:lex_family_adaptation}. This changes the organisation and reported
+value of the loss while preserving the scalar training gradient. The
+\texttt{level\_softmax\_ce\_reg} alternative changes the normalisation scope
+and is a separate experimental condition. The reported reference also uses
+one dense frame over all nodes; identity and per-level frames belong to the
+later ablations.
+
+There is a separate implementation difference in the regulariser's boundary
+handling. The released loss tests whether any label at a level is strictly
+positive before computing its fully labelled regularisation term. It therefore
+skips that term if every example has local class index zero.\footnote{See
+\texttt{HierCOS\_Loss.forward} in the pinned
+\href{https://github.com/Depanshu-Sani/Hier-COS/blob/122b01df/util/hiercos_construction.py}{released loss implementation},
+whose guard tests \texttt{level\_labels > 0}.} The local loss
+evaluates every fully labelled level and clamps the norm denominator away
+from zero. The CE/KL gradient identity holds with the same regulariser on
+both sides; it does not establish numerical identity with this source guard
+or with an unguarded division at zero norm.
+
+The released experiment scripts introduce another ambiguity. The CIFAR
+script selects \texttt{feature\_space=hier-cos}, but the Aircraft script
+named \texttt{hier-cos.sh} selects \texttt{feature\_space=haf++} for both
+training and testing.\footnote{Compare the pinned
+\href{https://github.com/Depanshu-Sani/Hier-COS/blob/122b01df/experiments/cifar-100/hier-cos.sh}{CIFAR launcher}
+with the
+\href{https://github.com/Depanshu-Sani/Hier-COS/blob/122b01df/experiments/fgvc-aircraft/hier-cos.sh}{Aircraft launcher}.}
+The local Aircraft baseline explicitly uses the
+Hier-COS construction and loss. It follows the intended Hier-COS model
+with the declared Aircraft hyperparameters, while differing from a literal
+execution of that script. This ambiguity concerns the released launcher;
+it does not establish which code path produced the paper's reported numbers.
+
+The local CIFAR hierarchy has three levels rather than the source's five,
+and CUB-200-2011 is an additional dataset extrapolation. The taxonomy choices
+are explained in \cref{sec:hierarchy_construction}. CUB transfers the
+fine-grained backbone and input recipe, with locally selected
+$\alpha=0.15$ and learning rate $0.10$; the validation-only search and its
+asymmetry across families are documented in
+\cref{ssec:design_hyperparameters}. The source CIFAR and Aircraft scripts
+run five seeds, $0$--$4$, whereas the local aggregates use $0$, $1$ and $2$.
+This smaller seed coverage limits replication precision independently of the
+implementation and taxonomy differences.
+
+\subsection{Shared evaluation changes and verification limits}
 \label{ssec:fidelity_verification}
 
-Automated tests cover the ported capsule equations and attention shapes, the
-taxonomy mask, the HRN objective and schedule, and the model presets. They also
-verify that disabling HCC leaves the unconstrained computation unchanged, that
-HCC satisfies its hierarchy constraints, that top-down decoding matches a
-reference implementation, and that the subspace-norm readout reproduces native
-Hier-COS inference.
+The model-specific choices above are combined with the evaluation protocol in
+\cref{ssec:fidelity_protocol}. The released HT-CapsNet, HRN and Hier-COS
+readouts make independent decisions at each level. The local framework
+additionally evaluates top-down decoding, with a separate validation-selected
+checkpoint for that mode. A top-down result therefore includes a local
+decoding and selection procedure; it must not be attributed to the native
+independent readout. Comparisons use each decoder's own selected checkpoint
+throughout (\cref{ssec:design_checkpoints}).
 
-These tests check the equations, tensor shapes and required properties. They do
-not show that a trained local model is numerically identical to a published
-checkpoint. The comparisons below do not require such an exact match.
+The shared metric suite also changes the reporting question. For HT-CapsNet,
+source exact match corresponds to FPA, and source whole-path consistency to
+$1-\mathrm{TICE}$ under independent decoding. The common AHD and weighted AP
+do not reproduce the complete source metric suite: in particular, weighted AP
+must not be read as the released implementation's mAP. The source's other
+hierarchical precision, recall and ranking summaries are not all reported
+here. Seed values and deterministic execution are likewise fixed locally.
+For example, the released Keras notebook seeds its random generators, while
+the local trainer additionally requests deterministic operations and seeds
+data-loader workers. These controls aid repetition within this environment
+without implying identical randomness across frameworks.
+
+The verification evidence has a limited scope. Source inspection identifies
+the retained computations and explicit divergences; algebra establishes the
+summed-gradient identities and the initial LayerNorm length problem; and the
+matched capsule test probes the readout on a small training task. None of these
+checks establishes equality of trained local and published checkpoints.
+Consequently, the results compare the specified local implementations, with
+the reproduction qualifications in \cref{tab:fidelity_status}, and mechanism
+effects are assessed through matched comparisons within each family.
 
 % ======================================================================
 \section{Experimental protocol}
@@ -765,47 +1067,24 @@ checkpoint. The comparisons below do not require such an exact match.
 \subsection{Research questions}
 \label{ssec:design_questions}
 
-\paragraph{General question.} Does a coarse-to-fine priority improve
-hierarchical classification, and which measures does it improve? If there is a
-gain, does it come from the priority itself, or from level weights, model changes
-or inference rules? The experiments also test whether applying the constraint at
-different points changes the balance between accuracy and consistency.
+The \hyperref[rq:general]{general question stated in the introduction} is
+divided into four more specific research questions:
 
-\cref{tab:design_overview} divides this general question into four research
-questions. The last column states what evidence is needed to answer each one. It
-does not set the order in which results are presented.
+\begin{enumerate}[label=\textbf{Q\arabic*.},leftmargin=*]
+    \item Compared with scalar training using the same level weights, does
+    coarse-to-fine priority improve accuracy, full-path correctness, or
+    structural consistency?
 
-\begin{table}[htbp]
-\centering
-\caption{Research questions and the evidence required to identify them.}
-\label{tab:design_overview}
-\experimenttablesetup
-\begin{tabularx}{\linewidth}{@{}L{0.8cm}Y Y@{}}
-\toprule
-& \textbf{Research question} & \textbf{Identifying evidence} \\
-\midrule
-\textbf{Q1} & Compared with scalar training using the same level weights, does
-coarse-to-fine priority improve accuracy, full-path correctness, or structural
-consistency?
-& Within-family, within-dataset comparison of each applicable priority arm with
-its matched \emph{none} baseline, supported by mechanism-activation diagnostics \\
-\textbf{Q2} & Is the ordering itself responsible for the effect, or can it be
-reproduced by inverted priority or by coarse-heavy scalar weighting? & Matched
-\texttt{coarse\_first}, \texttt{fine\_first}, ordinary baseline, and
-    coarse-heavy scalar-weighted arms \\
-\textbf{Q3} & Do HCC, the LH-projection, and explicit lexicographic mode have
-different effects? Do the differences depend on where they act, and do they
-arise during training or inference? & Within-family
-deltas at the shared mechanism axis, the baseline and gradient-priority
-frozen-checkpoint inference grids, trained-HCC versus post-hoc-HCC comparisons,
-and separate accounting for the Hier-COS frame, normaliser and weighting
-ablations \\
-\textbf{Q4} & Under which model families, taxonomies, gradient scales and model
-settings does an effect persist? & Repetition across supported family--dataset pairs and the frame, softmax,
-    gradient-scale, width, and parameter-form ablations \\
-\bottomrule
-\end{tabularx}
-\end{table}
+    \item Is the ordering itself responsible for the effect, or can it be
+    reproduced by inverted priority or by coarse-heavy scalar weighting?
+
+    \item Do HCC, the LH-projection, and explicit lexicographic mode have
+    different effects? Do the differences depend on where they act, and do they
+    arise during training or inference?
+
+    \item Under which model families, taxonomies, gradient scales and model
+    settings does an effect persist?
+\end{enumerate}
 
 The three \emph{priority mechanisms} are not mathematically the same. Explicit
 lexicographic mode and the LH-projection order gradient contributions, but they
@@ -815,45 +1094,106 @@ after another. Direct subspace supervision changes the objective without
 ordering it, so it is not one of the three mechanisms in Q3. It tests whether a
 different training target can change the same metrics without a priority order.
 
-Q1 asks whether there is an effect, and Q2 asks what causes it. Q3 tests whether
-the point of application matters and separates training effects from inference
-effects. Q4 tests how broadly the result holds. A positive answer to Q1 requires
-evidence that the mechanism was active, and Q2--Q4 limit how that answer can be
-interpreted.
-
-All claims about cause use comparisons within the same family, dataset,
-training recipe and, where available, matched seeds. Cross-family results answer
-questions about how well the implementations match their sources and help answer Q4, but they do not
-isolate a mechanism because the complete architectures and training recipes
-differ. \Cref{sec:fidelity} treats reproducibility and comparability as setup
-requirements, not as separate research questions.
+The questions form a progression. Q1 asks whether coarse-to-fine priority has an
+effect, while Q2 asks whether that effect belongs specifically to the ordering
+rather than to a more general change in optimisation. Q3 compares the three
+priority mechanisms and asks whether their point of application matters,
+including the distinction between effects produced during training and those
+produced during inference. Q4 then asks how far any conclusion extends across
+architectures, taxonomies and model settings. Q1 therefore establishes the
+phenomenon of interest, whereas Q2--Q4 determine its interpretation and scope.
 
 \subsection{Common evaluation protocol}
 \label{ssec:fidelity_protocol}
 
 All families use the same coarse-to-fine label order, dataset splits
 and label indices. Validation and test include every sample, and checkpoints are
-selected on validation data only. A run retains the mode-specific candidates
-defined in \cref{ssec:design_checkpoints}, but every paired post-hoc inference
-comparison uses one fixed, independently selected checkpoint. Metrics, logging,
-mixed-precision checks and resume validation are also shared.
+selected on validation data only. A separate checkpoint is retained for each
+decoding mode according to the rule in \cref{ssec:design_checkpoints}, and every
+paired post-hoc inference comparison uses the checkpoint selected for that same
+mode. Metric computation, logging and resume validation are shared. Training
+precision is part of the family-specific recipe.
 
-Every configuration is trained three times with seeds $0$, $1$ and $2$. The
-seed changes network initialisation and other random parts of training, but not
+FPA is the primary path-correctness outcome and independent-decoding TICE is the
+primary structural-consistency outcome. Per-level accuracy, wAP and AHD are
+secondary outcomes used to locate and interpret movement on those two axes.
+This ordering governs the interpretation throughout the chapter; it does not
+replace the metric definitions or directions in \cref{ssec:inference_metrics}.
+
+The common protocol fixes the sample membership of each split, the taxonomy,
+label indices, evaluation batches, metrics, seeds and checkpoint-selection
+rule. It does not impose one training recipe across families. Backbones,
+pretraining, input resolution, augmentation, objective, optimiser, batch size,
+training-batch dropping, numerical precision and epoch schedule retain their
+family-specific settings. These differences are summarised in
+\cref{tab:app_baseline_configs}. Consequently, a cross-family row compares
+complete implementations, whereas a mechanism effect is identified only by a
+within-family comparison that holds the applicable recipe fixed.
+
+The target protocol trains every configuration three times with seeds $0$, $1$
+and $2$. The seed changes network initialisation and other random parts of training, but not
 the data splits. The CIFAR-100 and CUB-200-2011 validation splits
 (\cref{sec:dataset_analysis}) are built once with seed $0$ and reused in every
-run. All the runs therefore use the same data. The same three training
-seeds are also used for every arm. This is called \emph{matched seeds} in the
-rest of the chapter. When two arms share seeds, their difference is computed for
-each seed before the results are averaged. Three runs allow a sample standard
-deviation to be reported, but they are not enough for a significance test. Thus, no
-such test is applied
+run. All arms therefore use the same split membership. The same three training
+seeds are used for every matched arm. When two arms share seeds, their difference is computed
+within seed before the mean and sample standard deviation of those paired
+differences are reported. Three seeds are used for descriptive replication, not
+for inferential testing; no significance test is applied
 (\cref{ssec:design_threats}).
 
 These choices correct two behaviours present in some reference codebases:
 dropping incomplete evaluation batches and selecting results on test data. They
 also mean that the experiments below are controlled comparisons inside this
 framework, not exact reproductions of the published runs.
+
+\subsection{Execution environment}
+\label{ssec:design_environment}
+
+The reported runs were executed on one NVIDIA GH200 Grace Hopper Superchip,
+using its single H100 GPU with 96~GB of HBM3, a 72-core Arm Neoverse-V2 Grace
+CPU and 480~GB of LPDDR5X memory; no distributed training was used. The
+software environment was 64-bit Arm Linux
+\texttt{6.2.0-1015-nvidia-64k}, Python~3.10.12 and PyTorch~2.10.0 built for
+CUDA~12.8, with cuDNN~9.10.2. Automatic mixed precision follows the resolved
+configuration of each run. Paired baseline and mechanism runs use the same
+hardware class, software environment and precision setting.
+
+\subsection{Training duration and termination}
+\label{ssec:design_termination}
+
+There is no validation-patience early stopping. LH-DNN uses its fixed 15-epoch
+budget and every other family uses 100 epochs (\cref{tab:app_baseline_configs}).
+Validation after each epoch may update either mode-specific best checkpoint,
+but does not terminate training; scheduler patience controls only learning-rate
+reduction. Pre-empted runs resume from the most recent training state until the
+fixed budget is reached. Deliberate truncation is used only for preliminary
+checks and resumability tests; a run that does not reach its budget is reported
+as incomplete and does not count toward the target three seeds.
+
+\subsection{Hyperparameter selection}
+\label{ssec:design_hyperparameters}
+
+Automated selection was confined to the unmodified Hier-COS baseline on
+CUB-200-2011. Both stages used training seed~0, an exhaustive Optuna
+\texttt{GridSampler} with sampler seed~0 and no pruning. The first stage covered
+all $5\times2\times2=20$ combinations of
+$\alpha\in\{0.001,0.003,0.01,0.03,0.1\}$, transformation learning-rate scale
+$s_{\mathrm{transform}}\in\{0.1,1.0\}$, and either the base augmentation or an
+advanced timm recipe. Since the advanced augmentation was consistently inferior
+and the scale showed weak separation, the second stage fixed the base recipe and
+$s_{\mathrm{transform}}=1.0$, then covered all $4\times4=16$ combinations of
+$\alpha\in\{0.08,0.10,0.15,0.20\}$ and learning rate in
+$\{0.05,0.075,0.10,0.15\}$.
+
+All 36 trials completed their 100-epoch budget. Both searches maximised
+independent-decoding validation FPA and minimised validation TICE under the
+checkpoint rule of \cref{ssec:design_checkpoints}; test metrics were excluded.
+The refined search produced two Pareto points: $(\alpha,\mathrm{LR})=(0.15,0.10)$
+with $(\mathrm{FPA},\mathrm{TICE})=(78.125\%,0.000\%)$, and $(0.20,0.05)$ with
+$(78.776\%,0.521\%)$. The final configuration was chosen from this front by
+minimising TICE and using FPA as a tie-break, giving $\alpha=0.15$ and learning
+rate~$0.10$. It was fixed before the three reported seeds were run, and no
+intervention was tuned separately.
 
 \subsection{Checkpoint selection}
 \label{ssec:design_checkpoints}
@@ -869,7 +1209,10 @@ checkpoints are ranked by lexicographic maximisation of
 Full-path accuracy is compared first. Ties are resolved by lower TICE
 and then by higher weighted AP. When hierarchical metrics are unavailable,
 deepest-level accuracy is used on its own. Test data are never used for
-checkpoint selection.
+checkpoint selection. Ranking uses the unrounded validation values and strict
+tuple comparison. If all three components tie exactly, the earlier retained
+checkpoint remains selected. Because top-down decoding makes TICE identically
+zero, its effective order is FPA followed by weighted AP.
 
 The protocol separates two types of comparison. End-to-end results use the
 checkpoint selected for each decoding mode. They may therefore differ in both
@@ -889,8 +1232,11 @@ The experiments compare four changes with an unmodified baseline: HCC,
 explicit lexicographic gradient ordering, the LH-projection, and direct
 supervision of taxonomy-subspace scores. They are tested as separate
 \emph{experimental conditions} (\cref{sec:methodology_axis}). The study tests
-one at a time, not combinations. Each trained change is compared
-with its corresponding unmodified family at matched dataset and training recipe.
+one at a time, not combinations. Each trained change is compared with its
+corresponding unmodified family at matched dataset and at every training setting
+that the mechanism leaves unchanged. Required objective or architectural
+changes are controls or confounds that must be reported rather than attributed
+to the mechanism.
 
 \paragraph{HCC: training effect or inference correction?} HCC changes the
 forward computation both during training and at inference
@@ -904,7 +1250,13 @@ training.
 \texttt{fine\_first}, which reverses priority while using the same projection
 operator (\cref{ssec:lex_modes}). Taxonomy-based level scales are varied
 separately. Projection changes gradient directions but does not set the relative
-size of the remaining contributions (\cref{ssec:problem_lr}).
+size of the remaining contributions (\cref{ssec:problem_lr}). H-CAST must omit
+its coupled global KL term to expose three admissible level objectives. A direct
+comparison with the unprojected H-CAST baseline, which retains that term,
+therefore does not isolate projection unless an unprojected
+\texttt{globalkl=false} control is used. HT-CapsNet instead passes its configured
+dynamic weighted level contributions to both scalar and lexicographic updates;
+the resolved configuration is checked before treating those weights as matched.
 
 \paragraph{LH-projection against explicit ordering.} Both methods implement
 coarse-to-fine protection, but at different points of the computation. The
@@ -920,234 +1272,75 @@ changes the objective. Each is compared with the shared \emph{none} condition.
 These are separate alternatives. Their combinations are outside the design in
 \cref{ssec:design_axis}.
 
-\subsection{Direct supervision of subspace scores}
-\label{ssec:design_objective}
-
-This experiment uses Hier-COS only. Other families could use the same target
-geometry if they exposed taxonomy-subspace scores, but the implemented loss is
-written for Hier-COS outputs and weights. Hier-COS is also the only baseline
-whose native decoder already ranks these scores. Its native loss supervises
-taxonomy-node coordinates, while inference ranks taxonomy-subspace norms
-(\cref{ssec:problem_scores}). Direct subspace supervision changes the training
-target but keeps the readout and decoder fixed. In a classifier-head family, the
-same objective would also replace the native node-score readout and would test a
-different change. That case is not included here.
-
-The minimum target margin decreases from coarse to fine
-(\cref{prop:subspace_margin}), so results may depend on the temperature $\tau$.
-Only $\tau=0.1$ was evaluated; the planned sweep was not run. The effect of this
-missing comparison is discussed in \cref{ssec:results_subspace_tau}. This arm uses
-hard path labels, with label smoothing, mixup and cutmix disabled as required by
-\cref{ssec:subspace_setting}.
-
-\subsection{Hier-COS adaptations}
-\label{ssec:design_substrate}
-
-The LH-projection cannot be added directly to published Hier-COS. It requires
-independent level heads, an orthonormal frame that does not mix levels, and a
-loss whose level terms depend only on their corresponding heads
-(\cref{ssec:lhproj_hiercos}). Two ablations measure the cost of these required
-changes. A third then fixes the relative level scale
-before the LH-projection is compared with explicit lexicographic training.
-
-\begin{enumerate}
-    \item \textbf{Frame.} Dense, block-diagonal and identity frames are compared
-    with the readout and node layout fixed. This separates mixing between levels
-    from rotation within each level and measures the cost of replacing the
-    dense frame before the LH-projection is enabled.
-    \item \textbf{Softmax scope.} Global and per-level normalisation are compared
-    at the same frame and weights. Explicit lexicographic training only requires
-    separate differentiable losses and can retain the global normaliser. The
-    LH-projection requires per-level normalisation, because each loss must depend
-    on its own branch alone.
-    \item \textbf{Level weighting.} Uniform, Hier-COS leaf-heavy and
-    class-count-derived weights are evaluated on the LH-projection arm at the
-    selected frame and per-level normaliser. The unmodified and
-    \texttt{coarse\_first} arms use one fixed rule and are not rerun for every
-    weight setting. Only the in-graph method carries the weights into its reserved
-    subspace (\cref{ssec:results_lhproj_weight_transfer}). As a result, this test
-    cannot fully separate the effect of the weights from their interaction with
-    the mechanism. Aircraft also uses the marginal-branching rule, whose largest
-    weight is assigned to the middle level.
-\end{enumerate}
-
-The frame and softmax ablations first select one LH-compatible configuration per
-dataset. The weight ablation is then run on that fixed
-configuration in three matched arms: unmodified, \texttt{coarse\_first} and the LH-projection.
-This order keeps frame and normaliser changes out of the weight--mechanism
-interaction. The frame and softmax steps are reported before
-the LH-projection (\cref{sec:results_substrate}); the weight cross is reported
-with it (\cref{sec:results_lhprojection}), because the weighting cannot be fixed
-on the lexicographic arm and transferred to the in-graph arm.
-
 \subsection{Controls}
 \label{ssec:design_controls}
 
-Two controls test other possible explanations for a gain from
-coarse-first gradient ordering.
-
-\begin{enumerate}
-    \item \textbf{Inverted priority.} \texttt{fine\_first} applies the same
-    projection operator as \texttt{coarse\_first}, but reverses the order. It
-    separates coarse-first priority from the general effect of
-    modifying gradients.
-    \item \textbf{Coarse-heavy weighting.} A scalar baseline with greater weight
-    on coarse losses tests whether simple reweighting can reproduce any observed
-    gain in hierarchical consistency. If it can, projection is not required to
-    reach that accuracy--consistency trade-off.
-\end{enumerate}
+Two controls test alternative explanations for a gain from coarse-first
+gradient ordering. \texttt{fine\_first} uses the same projection operator as
+\texttt{coarse\_first} but reverses the order, separating coarse-first priority
+from the general effect of modifying gradients. A coarse-heavy scalar baseline
+tests whether reweighting alone can reproduce the observed
+accuracy--consistency trade-off; if it can, projection is not required to reach
+that trade-off.
 
 \subsection{Limitations}
 \label{ssec:design_threats}
 
-The following limitations affect how the result tables should be read.
+The reproduction qualifications in \cref{sec:fidelity} also bound the result
+claims. HT-CapsNet uses the corrected capsule readout and a 100-epoch budget;
+backbones, pretraining and other family-specific settings are not uniform; and
+unsupported family--dataset pairs are extrapolations. Cross-family tables
+therefore compare complete local implementations, while causal claims rely on
+matched comparisons within a family.
 
-\begin{itemize}
-    \item \textbf{HT-CapsNet capsule readout.} Every HT-CapsNet arm replaces the
-    released post-attention LayerNorm with capsule squash, as explained in
-    \cref{ssec:fidelity_classes}. This common correction keeps comparisons
-    between local HT-CapsNet arms matched, but it limits direct comparison with
-    the published implementation. The local results therefore do not describe
-    that implementation without changes.
-    \item \textbf{Level weights.} Whenever possible, an intervention and its
-    baseline use the same objective weights. H-CAST and HT-CapsNet expose
-    unweighted level losses to lexicographic mode, whereas the native HT-CapsNet
-    baseline uses dynamic weighting; comparisons that cannot match this variable
-    are labelled explicitly.
-    \item \textbf{Training budget.} The native HT-CapsNet baseline and its
-    explicit lexicographic configuration both use the shared 100-epoch budget,
-    not the 200 epochs of the released launcher. The lexicographic arm
-    still costs more per epoch because it evaluates and combines three gradients
-    per batch; equal epoch counts therefore do not imply equal compute.
-    \item \textbf{Backbone and pretraining.} CIFAR experiments use a
-    from-scratch wide residual network where supported, whereas fine-grained
-    experiments commonly use ImageNet-pretrained backbones. Effects that change
-    between these settings are reported as backbone-dependent.
-    \item \textbf{Dataset coverage.} The three taxonomies differ substantially,
-    and the unsupported family--dataset pairs listed in
-    \cref{ssec:fidelity_classes} are not used to make claims about the published
-    methods.
-    \item \textbf{Cross-family comparison.} Model families also differ in
-    backbone, optimiser, augmentation, input resolution and training budget.
-    Cross-family tables compare complete implementations. Claims about a
-    mechanism use matched comparisons within a family.
-    \item \textbf{Hyperparameter search.} One family--dataset setting received an
-    automated search over learning rate, weighting and transform choices; the
-    others use published or preset values. This asymmetry affects cross-family
-    rankings, although no intervention was tuned separately from its baseline.
-    \item \textbf{Resource use.} The operation and storage costs of
-    explicit lexicographic mode are derived in \cref{ssec:lex_cost}. The matched
-    empirical comparison of the baseline, explicit lexicographic mode and the
-    LH-projection is structured in \cref{sec:results_computational_cost}; its
-    timing protocol and measurements are not yet complete. Until then, the
-    chapter does not rank the measured efficiency of the mechanisms.
-    \item \textbf{Statistical scope.} Results are descriptive. Means include the
-    sample standard deviation and seed count when multiple seeds exist; paired
-    differences are computed per seed where possible. No significance test is
-    applied. Non-native cells of the inference grid are used only as diagnostics
-    and are not selected after the results are seen.
-    \item \textbf{Incomplete coverage.} Not every supported configuration was
-    run. Missing cells remain marked \tbd in their corresponding tables and are
-    treated as unanswered questions, not as negative results.
-\end{itemize}
+Two within-family qualifications remain. H-CAST lexicographic mode removes the
+coupled global KL term, so without an unprojected
+\texttt{globalkl=false} control its baseline delta combines that removal with
+projection. HT-CapsNet retains its configured dynamic level weights in both
+scalar and lexicographic updates; historical or unit-weight runs are different
+conditions. Equal epoch budgets also do not imply equal compute because the
+lexicographic update evaluates three gradients per batch.
+
+Hyperparameter selection is asymmetric: only Hier-COS on CUB-200-2011 used the
+two-stage automated search detailed in \cref{ssec:design_hyperparameters}.
+Other settings use published or preset values. This asymmetry limits
+cross-family rankings even though no intervention was tuned separately from its
+matched baseline. Results remain descriptive: no significance test is applied,
+and incomplete cells are treated as unanswered rather than negative evidence.
+The empirical timing comparison in \cref{sec:results_computational_cost} is also
+incomplete, so measured efficiency is not ranked.
 
 \subsection{Reporting protocol}
 \label{ssec:design_protocol}
 
-The following rules are applied throughout the chapter.
+Each intervention is varied separately against a matched baseline. Required
+Hier-COS changes are evaluated before the LH-projection, and their effects are
+not included in the projection delta. Main results use each family's native
+readout; non-native inference cells are labelled as diagnostics. Independent
+and top-down results use their mode-specific checkpoints
+(\cref{ssec:design_checkpoints}), and percentage differences are reported in
+percentage points following the directions in \cref{tab:metrics_summary}.
 
-\begin{itemize}
-    \item \textbf{One mechanism at a time.} The main experiments vary a single
-    intervention against a matched baseline.
-    \item \textbf{Required changes before mechanisms.} Required changes to
-    Hier-COS are evaluated separately before the LH-projection is enabled. Their
-    effect is never included in the delta attributed to the projection.
-    \item \textbf{Native inference is the main result.} Each family is
-    reported under its native readout. Other cells of the inference grid are
-    labelled as diagnostics and are not selected after results are known.
-    \item \textbf{Both decoders are reported.} Independent and top-down results
-    use checkpoints selected for their respective decoding modes
-    (\cref{ssec:design_checkpoints}); a decoder is not treated as an intrinsic
-    property of a model family.
-    \item \textbf{Activation is checked from logs.} HCC is verified through
-    \texttt{proj\_constraint\_alpha}. Gradient ordering is verified through the
-    logged cosine similarities, removed norms and degeneracy-guard rate. A
-    configuration name alone is not evidence that an intervention was active.
-    \item \textbf{Metric direction is fixed.} Each metric is read in the
-    direction given in \cref{tab:metrics_summary}. Percentage differences
-    are expressed in percentage points.
-    \item \textbf{Comparisons are descriptive.} Every aggregate reports its seed
-    count and, for multiple seeds, the sample standard deviation; paired
-    differences are computed seed by seed where possible. No significance test
-    is applied. A single-seed result, or a difference smaller than the observed
-    seed-to-seed spread, is not used to claim stable superiority. Truncated epoch
-    logs are excluded before curves are averaged.
-    \item \textbf{A common figure set accompanies every trained mechanism.}
-    Each mechanism is accompanied by the independent-decoding validation
-    trajectories of FPA, TICE, wAP and AHD, with the mean and one sample
-    standard deviation over seeds and the independently selected checkpoint
-    marked on every curve; the per-run, per-level training-objective curves
-    produced by \texttt{plot\_per\_run\_per\_level\_training\_losses()}; and
-    test accuracy by hierarchy level at the independently selected checkpoint,
-    produced by \texttt{plot\_final\_level\_test\_accuracy()}. The plotted
-    \texttt{loss\_level\_*} values are the configured contributions to that
-    run's objective. They support comparisons across depth within one arm, but
-    not numerical comparisons between arms whose objectives differ. The main
-    section retains the views needed for its argument; redundant endpoint and
-    checkpoint-selection views are placed in the supplementary-figures
-    appendix.
-    \item \textbf{Each constraint mechanism has its own diagnostic.} HCC is
-    diagnosed by constraint activation, score displacement, argmax flips and
-    ground-truth parent mass; explicit lexicographic training by pre- and
-    post-projection gradient cosines, removed norm and guard skips; and the
-    LH-projection by its singular spectrum, effective rank and remaining
-    unused representation capacity. Direct subspace supervision changes only the
-    objective and therefore uses the common metric, loss and level-accuracy
-    figures without an additional mechanism-specific diagnostic. FPA--TICE
-    trade-off figures are kept for the later comparison and are not part of
-    this common per-mechanism set.
-\end{itemize}
+Every aggregate reports its seed count and, when applicable, the sample
+standard deviation. Matched differences are aggregated from within-seed deltas.
+A single seed is not used to claim stable superiority; sign disagreement or a
+paired difference no larger than its sample standard deviation is described as
+seed-sensitive. Truncated epoch logs are excluded before curves are averaged.
 
-\subsection{Experiment overview}
-\label{sec:results_campaign}
+Each trained condition is accompanied by independent-decoding validation
+trajectories for FPA, TICE, wAP and AHD, per-level training-objective curves, and
+test accuracy by level at the selected checkpoint. Loss contributions may be
+compared across depth within one arm, but not numerically across different
+objectives. The main text retains the views required by the argument, while
+redundant views are placed in the supplementary-figures appendix.
 
-The results are presented in the following order:
-
-\begin{enumerate}
-    \item \Cref{sec:results_baselines} reports the unmodified reference for
-    each family.
-    \item \Cref{sec:results_inference} applies alternative readouts, HCC and both
-    decoders to frozen baseline checkpoints only. This measures inference-time
-    effects before the trained changes are considered.
-    \item \Cref{sec:results_hcc,sec:results_subspace,sec:results_lex} compare
-    three directly trained interventions with their matched baselines, ordered by
-    where each acts: on the outputs, on the objective, then on the gradient.
-    \item \Cref{sec:results_substrate} changes the Hier-COS frame and normaliser
-    once. It selects an LH-compatible configuration and measures the cost of the
-    change. Everything before it uses the published dense,
-    globally normalised configuration.
-    \item \Cref{sec:results_lhprojection} reports the LH-projection on that
-    configuration. It is compared first with explicit lexicographic mode, then
-    with different level weights on each arm, and finally across the CIFAR-100
-    backbone-capacity ladder.
-    \item \Cref{sec:results_mechanisms} places the four alternative
-    interventions in one comparison.
-    \item \Cref{sec:results_inference_priority} returns to the inference grid on
-    the explicit lexicographic and LH-projection checkpoints, after both
-    mechanisms and their matched comparison have been established.
-    \item \Cref{sec:results_computational_cost} compares model size and training
-    cost for the matched baseline, explicit lexicographic and LH-projection arms.
-    \item \Cref{sec:results_summary} summarises the conclusions supported by the
-    results and lists the remaining limitations.
-\end{enumerate}
-
-The target protocol of \cref{ssec:fidelity_protocol} uses three seeds per table
-row. Each table reports the number of completed seeds in the $n$ column when it
-varies by row, and in the caption otherwise. Incomplete cells remain marked
-until all planned runs are complete.
-\cref{tab:framework_support} fixes which configurations a family does not
-admit at all. Supported configurations that were not run are listed in the
-corresponding result section and are not treated as negative evidence.
+Activation is established from diagnostics rather than configuration names.
+HCC uses constraint activation, score displacement, argmax flips and
+ground-truth parent mass; explicit lexicographic training uses pre- and
+post-projection gradient cosines, removed norm and guard skips; and the
+LH-projection uses its singular spectrum, effective rank and unused
+representation capacity. Direct subspace supervision requires no additional
+diagnostic beyond the common metric, loss and level-accuracy figures.
 
 % ======================================================================
 \section{Unified baselines}
@@ -1386,7 +1579,7 @@ LH-DNN     & \baselinemeanstd{1.96}{0.23} & \baselinemeanstd{80.71}{1.31} & \bas
 \label{ssec:results_readout}
 
 The subspace norm was introduced as part of Hier-COS, together with an
-orthonormal frame and a level regulariser (\cref{ssec:design_substrate}). The
+orthonormal frame and a level regulariser (\cref{subsec:hiercos}). The
 readout itself, however, can be applied to any model. Applying it to checkpoints
 that were not trained with such a frame separates the effect of the readout from
 the effect of Hier-COS training.
@@ -1907,24 +2100,24 @@ mechanism is inactive at inference, so the readout and both decoders are those o
 the baseline row and any difference measured below is a difference in what was
 learned.
 
-The mechanism is applicable to every family compared here. The subspace norm is
-definable on all of them (\cref{ssec:inference_readout}), and so therefore is
-supervision of it (\cref{ssec:subspace_setting}); nothing in the objective is
-specific to the fixed-frame family. It is nevertheless run on Hier-COS alone,
-and the restriction is a decision about the campaign rather than a limit of the
-mechanism. Hier-COS is the most favourable host available: its readout is native
-and its coordinate magnitudes are calibrated by the objective itself, whereas the
-classifier-head families reach the same scores only through their own output
-activations, whose magnitudes nothing in their training calibrates
-(\cref{ssec:inference_readout}). The mechanic is negative on that most favourable
+The subspace norm is definable for every family compared here
+(\cref{ssec:inference_readout}), and the same supervision could in principle be
+defined for each one (\cref{ssec:subspace_setting}). The implemented loss,
+however, uses Hier-COS outputs and weights, and the campaign evaluates it only on
+that family. Hier-COS is also the most favourable host available: its readout is
+native and its coordinate magnitudes are calibrated by the objective itself,
+whereas the classifier-head families reach the same scores only through their
+own output activations, whose magnitudes nothing in their training calibrates
+(\cref{ssec:inference_readout}). The mechanism is negative on that most favourable
 host, at a substantial accuracy cost and with no compensating gain
 (\cref{ssec:results_subspace_summary}), so it was not extended to hosts where
 the objective would start from a weaker footing.
 
-The supervision and its baseline share the disabled label smoothing, mixup and cutmix that
-\cref{ssec:subspace_setting} requires, or the contrast is confounded with the
-augmentation; they share the level weighting by construction, since the
-mechanism reuses the one the native objective applies. All nine completed
+The supervision uses hard path labels. It and its baseline share the disabled
+label smoothing, mixup and cutmix that \cref{ssec:subspace_setting} requires, or
+the contrast is confounded with the augmentation; they share the level weighting
+by construction, since the mechanism reuses the one the native objective
+applies. All nine completed
 direct-subspace runs use $\tau=0.1$ and the dense random orthonormal frame, with
 three matched seeds per dataset. The direct objective replaces the native loss
 in full, including its coordinate regulariser, so the comparison estimates the
@@ -2082,9 +2275,8 @@ parameter-scale and parameter-movement curves are not included.
 \label{ssec:results_subspace_tau}
 
 The temperature rescales the depth-dependent target margins of
-\cref{prop:subspace_margin} inside the softmax, which is why
-\cref{ssec:design_objective} treats it as an axis of the mechanism rather than
-a constant to be selected from a single result. The only full runs available
+\cref{prop:subspace_margin} inside the softmax, so it is an axis of the mechanism
+rather than a constant to be selected from a single result. The only full runs available
 use $\tau=0.1$; runs at other temperatures are smoke tests and do not satisfy
 the three-seed reporting protocol.
 Tables~\ref{tab:results_subspace_cifar}--\ref{tab:results_subspace_aircraft}
@@ -2369,9 +2561,9 @@ control of \cref{ssec:results_lex_ordering} is available at matched weighting,
 and holding it fixed is what makes the four mechanisms comparable in
 \cref{sec:results_mechanisms}.
 
-The LH-projection cannot be trained on it. It requires a frame that does not mix
-levels and a per-level normaliser, so that each level loss depends on its own
-branch alone (\cref{ssec:design_substrate}). This section changes those two
+The LH-projection cannot be trained on it. It requires independent level heads,
+a frame that does not mix levels and a per-level normaliser, so that each level
+loss depends on its own branch alone (\cref{ssec:lhproj_hiercos}). This section changes those two
 components once, and only once, and measures what the change costs before any LH
 row is reported. The frame ladder first identifies the best frame on which
 independent level heads remain admissible; the softmax ablation then measures
@@ -2401,8 +2593,9 @@ related only through the matched within-cell contrasts of
 
 The three rungs are the dense random orthonormal frame, the per-level
 block-diagonal frame and the identity, at matched backbone, loss, weighting,
-representation width and readout; \cref{ssec:design_substrate} explains what
-each step removes. This first ablation uses the unmodified, globally normalised
+representation width and readout. This separates mixing between levels from
+rotation within each level and measures the cost of replacing the dense frame.
+This first ablation uses the unmodified, globally normalised
 \texttt{kl\_leaf} baseline only. It asks what the frame contributes before a
 gradient intervention is introduced and selects the best LH-compatible frame
 within each dataset. Dense random orthonormal frames are retained as the
@@ -2451,7 +2644,7 @@ The two are compared on the unmodified \texttt{kl\_leaf} baseline at the
 LH-compatible frame selected above: the per-level block frame on CIFAR-100 and
 the identity on CUB-200 and Aircraft. The LH-projection requires the per-level
 normaliser because its guarantee is stated at a branch point and each level loss
-must depend on that branch alone (\cref{ssec:design_substrate}). The movement
+must depend on that branch alone (\cref{ssec:lhproj_hiercos}). The movement
 from global to per-level normalisation is therefore the second and final
 structural entry cost measured before the weight--mechanism interaction.
 

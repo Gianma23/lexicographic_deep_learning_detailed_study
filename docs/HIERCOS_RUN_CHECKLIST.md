@@ -1,31 +1,29 @@
 # Hier-COS Ablation Run Checklist
 
-Audited 2026-08-27 from `config_resolved.yaml` and `test_metrics.yaml` under
-`/scratch/g.saggini1/outputs`, not from directory names.
+Audited 2026-09-03 from `config_resolved.yaml`, `test_metrics.yaml`, and final
+`test` events in `run_log.jsonl` under `/scratch/g.saggini1/outputs`, not from
+directory names.
 
 LH execution order amended 2026-09-03: the `kl_leaf` LH base is followed
 immediately by the `feature_dim` ablation, and every later LH ablation uses
 `feature_dim=512`.
 
-3 seeds (`0`,`1`,`2`) + split seed `0` for any thesis-table row; 2 seeds allowed
-where marked *sensitivity*. Everything not named by the question stays fixed.
+3 seeds (`0`,`1`,`2`) + split seed `0` for every thesis-table row, including
+the capacity sensitivity. Everything not named by the question stays fixed.
 
 ## Run queue
 
 | P | Section | What | Seed-runs | Blocked by |
 |---|---|---|---|---|
-| 0 | C | `equal` x `{none, lex}` on all datasets | 10 | baseline dataset matrix; CIFAR lex seed 2 |
-| 0 | D | LH `kl_leaf` base at `feature_dim=0` | 3 | only CIFAR-100 block is missing |
-| 1 | E | immediate LH `kl_leaf` width contrast, `0` vs `512` | 8 | each dataset's D base row |
-| 2 | F | later LH ablations, always at `feature_dim=512` | 3 + TBD | the corresponding E `d512` row |
+| 0 | C | `equal` x `{none, lex}` on all datasets | 9 | baseline dataset matrix |
 | 3 | C | cumulative beta=1 x `{none, lex}` on all datasets | 18 | weight-mode/beta launcher support |
 | 3 | C | Aircraft marginal x `{none, lex}` | 6 | weight-mode launcher support |
-| 4 | G | CIFAR-100 WRN ladder at dense/global, 2 seeds | 8 | — |
+| 4 | G | CIFAR-100 WRN ladder on LH-projection, 3 seeds | 6 | — |
 
-Sections A and B are complete. Section C can proceed independently of the first
-two LH phases. Within the LH lane, however, the order is strict and local to
-each dataset: run D, then E immediately, then F. Do not launch an LH weighting,
-advantage, capacity or other mechanism ablation from the automatic-width row.
+Sections A, B, D, E and F are complete. Section C can proceed independently of
+the LH lane. The D-to-E sequencing gate has now been satisfied on every dataset;
+all later LH weighting, advantage, capacity or other mechanism ablations must
+still use the `d512` row rather than the automatic-width row.
 
 The three LH phases differ as follows:
 
@@ -39,9 +37,9 @@ The launcher defaults to `FEATURE_DIM=512`. Therefore phase D must pass
 `FEATURE_DIM=0` explicitly; an unqualified launcher call belongs to phase E or
 F, never to the pre-width base.
 
-Section G belongs to the Hier-COS ablation section of the thesis, but it is a
-non-blocking capacity sensitivity: it may run after or alongside D and does not
-choose D's frame, normaliser or weighting.
+Section G belongs to the Hier-COS ablation section of the thesis. It is a
+non-blocking sensitivity of the corrected LH configuration and reuses E's
+CIFAR-100 `d512` row as its WRN-28-8 anchor.
 
 ## Vocabulary
 
@@ -97,7 +95,7 @@ Result: per-level softmax is free. CIFAR-100 .7731 -> .7780 FPA and .0094 ->
 .0087 TICE; Aircraft .8274 -> .8248 and .0035 -> .0032; CUB-200 .7656 -> .7649
 and .0021 -> .0023. This establishes the structural substrate for section C.
 
-## C. Level-weight ablation — 34 outstanding
+## C. Level-weight ablation — 33 outstanding
 
 Isolates: the numerical level weights, crossed with **both** `{none,
 lex_coarse_first}` at the structural substrate on all three datasets. A
@@ -186,11 +184,11 @@ All cells use seeds 0--2 and split seed 0.
 
 **CIFAR-100 at block/level** — run in the order given:
 
-- [ ] **(1)** `equal` x none: **3 seed-runs**. Blocking: without it the `equal`
+- [x] **(1)** `equal` x none: **3 seed-runs**. Blocking: without it the `equal`
   column has no baseline, so the 2x2 cannot separate a generally better
   scalarisation from a weight--lex interaction. Everything else in this section
   rests on a half-filled square until it lands.
-- [x] **(1)** `equal` x lex: seeds 0--1 complete; **finish seed 2**.
+- [x] **(1)** `equal` x lex: seeds 0--2 complete.
 - [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete. This is the failing cell:
   unweighted train CE 0.859/1.072/0.252 at epoch 50 against the baseline's
   0.124/0.196/0.261, FPA .7659 vs .7780+-.0018, TICE .0137 vs .0087. It is the
@@ -201,7 +199,7 @@ All cells use seeds 0--2 and split seed 0.
 
 **Aircraft at identity/level:**
 
-- [ ] `equal` x none: **3 seed-runs**.
+- [x] `equal` x none: **3 seed-runs**.
 - [x] `equal` x lex: seeds 0--2 complete.
 - [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete.
 - [ ] cumulative beta=1 x `{none, lex}`: **6 seed-runs**.
@@ -209,7 +207,7 @@ All cells use seeds 0--2 and split seed 0.
 
 **CUB-200 at identity/level:**
 
-- [ ] `equal` x none: **3 seed-runs**.
+- [x] `equal` x none: **3 seed-runs**.
 - [x] `equal` x lex: seeds 0--2 complete.
 - [x] `kl_leaf` x `{none, lex}`: seeds 0--2 complete.
 - [ ] cumulative beta=1 x `{none, lex}`: **6 seed-runs**.
@@ -221,7 +219,7 @@ are a plain scalarisation choice and 4.1.4's framing needs weakening.
 - [ ] Report `w_2` next to every rule name.
 - [ ] Report unweighted per-level train CE, not only test metrics.
 
-## D. LH-projection base (`kl_leaf`, `feature_dim=0`) — 3 outstanding
+## D. LH-projection base (`kl_leaf`, `feature_dim=0`) — COMPLETE (0 outstanding)
 
 Establishes the pre-width LH anchor at the structural substrate. Here, "base"
 means `weight_mode=kl_leaf`, `projection.feature_dim=0`, no advantage and no
@@ -230,11 +228,11 @@ width: 128 for CIFAR-100, 251 for CUB-200 and 200 for Aircraft.
 
 - [x] Aircraft identity/level/`kl_leaf`/LH, `feature_dim=0`, seeds 0--2.
 - [x] CUB-200 identity/level/`kl_leaf`/LH, `feature_dim=0`, seeds 0--2.
-- [ ] CIFAR-100 block/level/`kl_leaf`/LH, `feature_dim=0`, seeds 0--2:
-  **3 seed-runs**. The existing identity bundle is off-substrate and remains
-  only an LH frame-sensitivity point.
+- [x] CIFAR-100 block/level/`kl_leaf`/LH, `feature_dim=0`, seeds 0--2. The
+  existing identity bundle is off-substrate and remains only an LH
+  frame-sensitivity point.
 
-For example, the missing base row is launched explicitly as:
+The CIFAR-100 base row is reproduced explicitly as:
 
 ```bash
 FEATURE_DIM=0 WEIGHT_MODE=kl_leaf DATASETS=cifar100 \
@@ -242,14 +240,12 @@ FIXED_FRAME_MODE=orthonormal_random FIXED_FRAME_PER_LEVEL=true \
   scripts/hiercos/run_hiercos_lhdnn_projection.sh
 ```
 
-As soon as a dataset's base row is complete, run its `d512` row in E. Do not
-wait for the level-weight sweep in C, and do not start a different LH ablation
-between these two rows.
+All three base rows now have their matched `d512` row in E.
 
 The base row is the reference for the width ablation, not the final reference
 configuration for later LH experiments.
 
-## E. Immediate LH representation-width ablation — 8 outstanding
+## E. Immediate LH representation-width ablation — COMPLETE (0 outstanding)
 
 Isolates the representation correction by changing only
 `projection.feature_dim`: `0` (the D row) versus `512`. The weighting remains
@@ -268,13 +264,16 @@ reserved on CIFAR-100, 51/251 on CUB-200 and 100/200 on Aircraft. The fixed
 on every dataset, especially Aircraft, where the automatic representation
 leaves half of the width in the protected non-leaf span.
 
-- [ ] Aircraft identity/level/`kl_leaf`/LH, `feature_dim=512`, seeds 0--2:
-  **3 seed-runs**.
-- [ ] CUB-200 identity/level/`kl_leaf`/LH, `feature_dim=512`: resume seed 1 from
-  its epoch-8 checkpoint and start seed 2; do not rerun seed 0
-  (0.7698/.0047 at `d512` vs .7586/.0070 at auto width, n=1). **2 seed-runs**.
-- [ ] CIFAR-100 block/level/`kl_leaf`/LH, `feature_dim=512`, seeds 0--2:
-  **3 seed-runs**.
+- [x] Aircraft identity/level/`kl_leaf`/LH, `feature_dim=512`, seeds 0--2.
+- [x] CUB-200 identity/level/`kl_leaf`/LH, `feature_dim=512`, seeds 0--2.
+- [x] CIFAR-100 block/level/`kl_leaf`/LH, `feature_dim=512`, seeds 0--2.
+
+Independent-selected checkpoint means (FPA/TICE), automatic width -> `d512`:
+CIFAR-100 .7646/.0108 -> .7714/.0055; Aircraft .7952/.0072 ->
+.8058/.0043; CUB-200 .7586/.0070 -> .7639/.0051. Thus the width correction
+improves mean FPA by 0.68, 1.06 and 0.53 percentage points, respectively, while
+also lowering mean TICE in all three cells. This establishes the corrected LH
+reference; it does not isolate the projection operator from the wider adapter.
 
 The launcher already defaults to `FEATURE_DIM=512`; set it explicitly in run
 notes and dry runs anyway. These output directories must contain `_d512`.
@@ -285,46 +284,58 @@ identifies the complete corrected LH configuration, not a width-matched effect
 of the projection operator alone. A width-matched control would require the
 backbone output dimension to be decoupled from `projection.enabled`.
 
-## F. Post-width LH ablations — `feature_dim=512` only
+## F. Post-width LH ablations — `feature_dim=512` only — COMPLETE (0 outstanding)
 
 Every LH row after E inherits the `d512` representation. Change only the named
 axis; never use the automatic-width D row as the parent for these experiments.
 
-- [ ] CIFAR-100 block/level/`equal`/LH, `feature_dim=512`, seeds 0--2:
+- [x] CIFAR-100 block/level/`equal`/LH, `feature_dim=512`, seeds 0--2:
   **3 seed-runs**. Together with E's CIFAR-100 `kl_leaf`/`d512` row, this is the
   matched LH weight contrast motivated in C.
-- [ ] After C, record the weighting used for the headline comparison. Add any
-  missing LH rows on all three datasets at that weighting and at
-  `feature_dim=512`.
-- [ ] If the advantage variant is revived, compare it with the no-advantage
-  `d512` row; keep `feature_dim=512` on both sides.
+- [x] Aircraft identity/level/`equal`/LH, `feature_dim=512`, seeds 0--2.
+- [x] CUB-200 identity/level/`equal`/LH, `feature_dim=512`, seeds 0--2.
+- [x] Aircraft identity/level/`kl_leaf`/LH + advantage, `feature_dim=512`,
+  seeds 0--2; its matched no-advantage comparator in E is complete.
+- [x] The matched headline comparison uses `kl_leaf`. E already supplies its
+  LH-projection/`feature_dim=512` row at seeds 0--2 on all three datasets, so
+  this check schedules no additional run. The `equal` rows above are the
+  separate within-LH weight contrast; they do not replace the `kl_leaf`
+  headline rows.
+
+Completion is not evidence of stability: CUB-200 `equal`/LH has independent
+FPA .7537/.6907/.2931 across seeds, and the Aircraft advantage pilot collapses
+at seed 2 (FPA .0132, TICE .7351). Keep those outcomes in the analysis rather
+than silently rerunning or averaging them away.
 
 The LH arm adds learnable per-level heads and a terminal PReLU as well as the
 backward projection. Until an adapter-only control exists, F identifies the
 complete LH adaptation package rather than the projection operator alone.
 
-## G. CIFAR-100 backbone capacity ladder — 8 outstanding (*sensitivity*)
+## G. CIFAR-100 backbone capacity ladder — 6 outstanding (*sensitivity*)
 
-Isolates: capacity. Use
-`NUM_RUNS=2 ./scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh`; it
-shrinks the WRN at fixed implementation, 32 px, head, frame, and loss. The ResNet-50/224
+Isolates: backbone capacity within the corrected LH-projection configuration.
+Use `NUM_RUNS=3 ./scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh`; it
+shrinks the WRN while fixing 32 px inputs, the block frame, per-level softmax,
+`kl_leaf`, `feature_dim=512`, no advantage, and LH-projection. The ResNet-50/224
 script changes architecture, pretraining, and resolution at once and cannot
 answer this — it stays permanently on hold.
 
-Base arm dense/global x {none, lex}: both WRN-28-8 anchors already exist at
-seeds 0--2 (.7752/.0104 and .7732/.0058), so that rung is free, and it is the
-arm carrying the headline explicit-lex claim.
+The WRN-28-8 anchor is E's completed CIFAR-100 block/level/`kl_leaf`/LH/`d512`
+row at seeds 0--2, so that rung is free.
 
-- [x] WRN-28-8 x {none, lex}: reuse the dense/global anchors.
-- [ ] WRN-16-8 x {none, lex}, 2 seeds each. **4 seed-runs.**
-- [ ] WRN-28-4 x {none, lex}, 2 seeds each. **4 seed-runs.**
-- [ ] Do **not** run the ladder at the block/level substrate as well.
+- [x] WRN-28-8 LH-projection: reuse E's `d512` anchor.
+- [ ] WRN-16-8 LH-projection, seeds 0--2. **3 seed-runs.**
+- [ ] WRN-28-4 LH-projection, seeds 0--2. **3 seed-runs.**
+- [ ] Do **not** add baseline or explicit-lex arms to this ladder. Without a
+  no-projection row at every rung, this is a capacity sensitivity of the
+  complete LH configuration, not a capacity--projection interaction.
 - [ ] Do **not** combine with the 224 px override: the hard-coded
   `avg_pool2d(out, 8)` then yields 7x7 and the embedding becomes `out_dim * 49`.
 
-Prediction: less capacity means harder level competition, so the lex-minus-
-baseline gap in coarse CE and TICE should widen monotonically as capacity falls.
-A flat gap would mean the CIFAR-100 regression is purely the weight mechanism.
+Interpretation: systematic deterioration across both reduced rungs would show
+that the complete LH configuration is capacity-sensitive. Stability across the
+depth-reduced and width-reduced rungs would make a simple parameter-count
+explanation less plausible; this three-point sensitivity is not a scaling law.
 
 ---
 
@@ -336,7 +347,9 @@ A flat gap would mean the CIFAR-100 regression is purely the weight mechanism.
   package**, not the projection operator. State that limitation wherever it is
   reported. A
   projection-only claim needs adapter-only none / adapter-only lex / adapter+LH.
-- [ ] **LH advantage** (`ADVANTAGE_ENABLED=true`) — separate model variant.
+- [ ] **Further LH advantage expansion** — the Aircraft `kl_leaf`/`d512` pilot
+  is complete at seeds 0--2; CIFAR-100 and CUB-200 remain unscheduled. Treat it
+  as a separate model variant.
 - [ ] **Direct subspace supervision** — separate research question (tau=0.1).
 - [ ] **CIFAR-100 ResNet-50 / 224 px** — superseded by G. The Aircraft
   from-scratch bundle stays a documented negative pilot; do not extend it.
@@ -370,10 +383,14 @@ A flat gap would mean the CIFAR-100 regression is purely the weight mechanism.
 Reuse as-is:
 
 - [x] All section A and B bundles; `kl_leaf` x `{none, lex}` at all three
-  structural substrates; Aircraft and CUB-200 `kl_leaf` LH bundles;
-  dense/global `fine_first`, HCC, and `coarse_first` lex bundles.
-- [x] `equal`/lex at Aircraft and CUB-200 identity, seeds 0--2; at CIFAR-100
-  block, seeds 0--1. Finish only CIFAR-100 seed 2.
+  structural substrates; all three structural-substrate `kl_leaf` LH bundles
+  at both automatic width and `d512`; dense/global `fine_first`, HCC, and
+  `coarse_first` lex bundles.
+- [x] `equal`/lex at Aircraft and CUB-200 identity and CIFAR-100 block, seeds
+  0--2.
+- [x] `equal`/LH/`d512` at Aircraft and CUB-200 identity, seeds 0--2; Aircraft
+  `kl_leaf`/LH/`d512` advantage pilot, seeds 0--2. Preserve the collapsed seeds
+  as observed outcomes.
 - [x] `..._cifar100_..._projection_kl_leaf_identity` — off-substrate LH point.
 - [x] `..._cifar100_..._lex_coarse_first` (dense, `equal`, 2 seeds) and
   `..._lex_coarse_first_identity` (identity, `equal`, 3 seeds) — the evidence

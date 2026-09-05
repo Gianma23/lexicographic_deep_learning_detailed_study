@@ -17,11 +17,12 @@ The four are distinct mechanisms and are not interchangeable. The thesis text
 lives in this repository as `docs/04-methodology.tex` (methods) and
 `docs/05-experiments.tex` (protocol, fidelity and results).
 
-All shipped presets are tagged `runtime.protocol: corrected_unified_v1`. The
-protocol fixes one canonical taxonomy per dataset, evaluates every validation
+The training entrypoint applies the corrected unified protocol to all shipped
+presets. It fixes one canonical taxonomy per dataset, evaluates every validation
 and test sample, and selects checkpoints on validation data only — deliberately
 departing from reference codebases that drop evaluation batches or select on
-test data. Historical results are never silently relabelled with this tag.
+test data. The protocol is enforced by configuration validation rather than by
+a `runtime.protocol` field in each preset.
 
 ## Repository structure
 
@@ -285,8 +286,8 @@ DATASETS="cub200 aircraft" FIXED_FRAME_MODE=identity FIXED_FRAME_PER_LEVEL=false
   scripts/hiercos/run_hiercos_lhdnn_projection.sh
   # -> hiercos_<ds>_level_softmax_ce_reg_projection_d512_kl_leaf_<frame>
 
-# (d) CIFAR-100 backbone-capacity ladder (2 seeds, sensitivity only)
-NUM_RUNS=2 WRN_SIZES="16-8 28-4" MECHANISMS="baseline lex_coarse_first" \
+# (d) CIFAR-100 backbone-capacity ladder (3 seeds, sensitivity only)
+NUM_RUNS=3 WRN_SIZES="16-8 28-4" \
   scripts/hiercos/run_hiercos_cifar100_backbone_ladder.sh
 ```
 
